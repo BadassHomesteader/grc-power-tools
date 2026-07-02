@@ -5,7 +5,7 @@ import ServiceManagement
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var controller: AppController!
-    private let config = Config.load()
+    private var config = Config.load()
     private let store = Store()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -134,25 +134,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func setPolishMode(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let mode = Config.PolishMode(rawValue: raw) else { return }
-        var cfg = Config.load()
-        cfg.polish = mode
-        cfg.save()
-        relaunchNotice(ifChanged: false)
+        config.polish = mode
+        config.save()
+        controller?.config.polish = mode // applies live; read per-utterance
+        statusItem.menu = buildMenu()
     }
 
     @objc private func setHotkey(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let hk = Config.Hotkey(rawValue: raw) else { return }
-        var cfg = Config.load()
-        let changed = cfg.hotkey != hk
-        cfg.hotkey = hk
-        cfg.save()
-        relaunchNotice(ifChanged: changed)
-    }
-
-    private func relaunchNotice(ifChanged changed: Bool) {
+        let changed = config.hotkey != hk
+        config.hotkey = hk
+        config.save()
         statusItem.menu = buildMenu()
         if changed {
+            // The event tap is created once at startup; swapping it live is phase 2.
             let alert = NSAlert()
             alert.messageText = "Hotkey saved"
             alert.informativeText = "Quit and reopen GRC Whisper to apply the new hotkey."

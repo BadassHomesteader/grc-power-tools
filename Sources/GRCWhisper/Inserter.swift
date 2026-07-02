@@ -33,13 +33,12 @@ enum Inserter {
 
         let pb = NSPasteboard.general
 
-        // 1. Full-fidelity snapshot.
-        let snapshot: [[NSPasteboard.PasteboardType: Data]] = (pb.pasteboardItems ?? []).map { item in
-            var entry: [NSPasteboard.PasteboardType: Data] = [:]
-            for type in item.types {
-                if let data = item.data(forType: type) { entry[type] = data }
+        // 1. Full-fidelity snapshot. Order matters: item.types is richest-first and
+        // consumers walk it in order, so store an ordered array, not a dictionary.
+        let snapshot: [[(NSPasteboard.PasteboardType, Data)]] = (pb.pasteboardItems ?? []).map { item in
+            item.types.compactMap { type in
+                item.data(forType: type).map { (type, $0) }
             }
-            return entry
         }
 
         // 2. Write transcript, marked as ours + concealed.

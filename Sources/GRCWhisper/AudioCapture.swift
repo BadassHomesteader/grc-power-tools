@@ -5,16 +5,20 @@ import AVFoundation
 ///
 /// The engine runs continuously so the ~500ms macOS mic spin-up never eats the
 /// first syllable (Handy #1283 / Wispr's "missing first words" class). While idle,
-/// buffers land in a short ring; when recording starts the ring is flushed to the
-/// consumer first, then live buffers stream through.
+/// buffers land in a short ring; at key-down `beginHold()` stops trimming the ring
+/// (so nothing is lost while the speech analyzer spins up), and `beginRecording`
+/// flushes the ring to the consumer then streams live buffers.
 final class AudioCapture {
     private let engine = AVAudioEngine()
     private let queue = DispatchQueue(label: "grc-whisper.audio")
     private var ring: [AVAudioPCMBuffer] = []
     private var ringDuration: Double = 0
     private let preRollSeconds: Double
-    private var recording = false
+    /// While false (between beginHold and beginRecording/endRecording) the ring grows unbounded.
+    private var trimRing = true
+    private var streaming = false
     private var consumer: ((AVAudioPCMBuffer) -> Void)?
+    private var observerInstalled = false
     private(set) var currentFormat: AVAudioFormat?
 
     /// Smoothed input level 0...1 for the overlay meter.
@@ -48,10 +52,15 @@ final class AudioCapture {
         engine.prepare()
         try engine.start()
 
-        NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-        ) { [weak self] _ in
-            self?.queue.async { self?.restartAfterConfigChange() }
+        // Register exactly once: restartAfterConfigChange() re-enters start(), and a
+        // per-start observer would double the observer count on every device change.
+        if !observerInstalled {
+            observerInstalled = true
+            NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+            ) { [weak self] _ in
+                self?.queue.async { self?.restartAfterConfigChange() }
+            }
         }
         log("audio: engine running, input \(Int(format.sampleRate))Hz x\(format.channelCount)ch")
     }
@@ -79,38 +88,55 @@ final class AudioCapture {
             let rms = sqrtf(sum / Float(n))
             smoothedLevel = smoothedLevel * 0.7 + min(rms * 8, 1.0) * 0.3
             let level = smoothedLevel
-            if recording { onLevel?(level) }
+            if streaming { onLevel?(level) }
         }
 
         queue.async { [self] in
-            if recording {
+            if streaming {
                 consumer?(copy)
             } else {
                 ring.append(copy)
                 ringDuration += seconds
-                while ringDuration > preRollSeconds, !ring.isEmpty {
-                    let dropped = ring.removeFirst()
-                    ringDuration -= Double(dropped.frameLength) / dropped.format.sampleRate
-                }
+                if trimRing { trim(to: preRollSeconds) }
             }
         }
     }
 
-    /// Begin streaming to `consumer`, starting with the pre-roll ring.
+    private func trim(to seconds: Double) {
+        while ringDuration > seconds, !ring.isEmpty {
+            let dropped = ring.removeFirst()
+            ringDuration -= Double(dropped.frameLength) / dropped.format.sampleRate
+        }
+    }
+
+    /// Key-down: keep everything captured from here on, even if the analyzer
+    /// takes a while to start — the whole utterance must survive in the ring.
+    func beginHold() {
+        queue.async { self.trimRing = false }
+    }
+
+    /// Begin streaming to `consumer`, starting with the ring contents. Idempotent.
     func beginRecording(consumer: @escaping (AVAudioPCMBuffer) -> Void) {
         queue.async { [self] in
+            guard !streaming else { return }
             self.consumer = consumer
             for buffered in ring { consumer(buffered) }
             ring.removeAll()
             ringDuration = 0
-            recording = true
+            streaming = true
         }
+    }
+
+    var isStreaming: Bool {
+        queue.sync { streaming }
     }
 
     func endRecording() {
         queue.async { [self] in
-            recording = false
+            streaming = false
             consumer = nil
+            trimRing = true
+            trim(to: preRollSeconds)
         }
     }
 }
@@ -119,11 +145,8 @@ extension AVAudioPCMBuffer {
     func deepCopy() -> AVAudioPCMBuffer? {
         guard let copy = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else { return nil }
         copy.frameLength = frameLength
-        let src = audioBufferList.pointee
-        let dst = copy.mutableAudioBufferList.pointee
         let srcBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: audioBufferList))
         let dstBuffers = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
-        _ = src; _ = dst
         for (s, d) in zip(srcBuffers, dstBuffers) {
             guard let sd = s.mData, let dd = d.mData else { continue }
             memcpy(dd, sd, Int(s.mDataByteSize))

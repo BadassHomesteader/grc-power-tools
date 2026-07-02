@@ -38,7 +38,7 @@ enum Doctor {
         checks.append(Check(
             name: "Accessibility",
             ok: ax,
-            detail: ax ? "granted" : "needed for the hotkey tap + paste — System Settings ▸ Privacy & Security ▸ Accessibility"
+            detail: ax ? "granted" : "needed for the hotkey tap + paste — System Settings ▸ Privacy & Security ▸ Accessibility (if it already shows enabled after a rebuild, toggle it off and on — ad-hoc signatures invalidate the grant)"
         ))
 
         let listen = CGPreflightListenEventAccess()

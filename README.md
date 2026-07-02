@@ -48,6 +48,8 @@ Then verify with the menu bar ▸ **Permission Doctor…**, or:
 
 After a macOS update or if the hotkey dies, re-run the doctor — event taps occasionally need Accessibility re-granted.
 
+**After every rebuild/reinstall**: toggle GRC Whisper **off and on** in the Accessibility list. Ad-hoc signatures pin the build hash, so a rebuilt binary silently loses the grant even though the checkbox still shows enabled.
+
 ## CLI
 
 The same binary doubles as a test/administration CLI:

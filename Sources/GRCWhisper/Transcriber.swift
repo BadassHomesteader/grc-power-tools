@@ -12,9 +12,13 @@ final class AppleSpeechUtterance {
     private let inputContinuation: AsyncStream<AnalyzerInput>.Continuation
     private let inputStream: AsyncStream<AnalyzerInput>
     private var converter: AVAudioConverter?
+    private var converterSourceFormat: AVAudioFormat?
     private var analyzerFormat: AVAudioFormat?
     private var resultsTask: Task<String, Error>?
     private var started = false
+    /// Frames actually yielded to the analyzer. If zero, the results stream never
+    /// terminates after finalize (verified on macOS 26.2) — finish() must not await it.
+    private var fedFrames: Int = 0
 
     /// Called with the running transcript (finalized + current volatile tail).
     var onPartial: ((String) -> Void)?
@@ -50,15 +54,12 @@ final class AppleSpeechUtterance {
         log("speech: assets installed")
     }
 
-    func start(sourceFormat: AVAudioFormat) async throws {
+    func start() async throws {
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
             throw NSError(domain: "GRCWhisper", code: 3,
                           userInfo: [NSLocalizedDescriptionKey: "No compatible analyzer audio format"])
         }
         analyzerFormat = format
-        if format != sourceFormat {
-            converter = AVAudioConverter(from: sourceFormat, to: format)
-        }
 
         // Reader must be running before audio flows.
         resultsTask = Task { [transcriber, onPartial] in
@@ -83,46 +84,82 @@ final class AppleSpeechUtterance {
     }
 
     /// Feed a captured buffer (any format); converted to the analyzer format here.
+    /// Rebuilds the converter if the buffer format changes (audio device switch mid-hold).
     func feed(_ buffer: AVAudioPCMBuffer) {
         guard started, let analyzerFormat else { return }
-        if let converter {
-            let ratio = analyzerFormat.sampleRate / buffer.format.sampleRate
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
-            guard let out = AVAudioPCMBuffer(pcmFormat: analyzerFormat, frameCapacity: capacity) else { return }
-            var fed = false
-            var error: NSError?
-            converter.convert(to: out, error: &error) { _, status in
-                if fed {
-                    status.pointee = .noDataNow
-                    return nil
-                }
-                fed = true
-                status.pointee = .haveData
-                return buffer
-            }
-            if let error {
-                log("speech: convert error \(error)")
-                return
-            }
-            guard out.frameLength > 0 else { return }
-            inputContinuation.yield(AnalyzerInput(buffer: out))
-        } else {
+        if buffer.format == analyzerFormat {
             inputContinuation.yield(AnalyzerInput(buffer: buffer))
+            fedFrames += Int(buffer.frameLength)
+            return
         }
+        if converter == nil || converterSourceFormat != buffer.format {
+            converter = AVAudioConverter(from: buffer.format, to: analyzerFormat)
+            converterSourceFormat = buffer.format
+        }
+        guard let converter else { return }
+        let ratio = analyzerFormat.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
+        guard let out = AVAudioPCMBuffer(pcmFormat: analyzerFormat, frameCapacity: capacity) else { return }
+        var fed = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if fed {
+                status.pointee = .noDataNow
+                return nil
+            }
+            fed = true
+            status.pointee = .haveData
+            return buffer
+        }
+        if let error {
+            log("speech: convert error \(error)")
+            return
+        }
+        guard out.frameLength > 0 else { return }
+        inputContinuation.yield(AnalyzerInput(buffer: out))
+        fedFrames += Int(out.frameLength)
     }
 
     /// Stop input and return the final transcript.
     func finish() async throws -> String {
         inputContinuation.finish()
+
+        // Zero audio fed: finalize returns instantly but transcriber.results never
+        // terminates, so awaiting resultsTask would hang forever. Bail out.
+        guard fedFrames > 0 else {
+            resultsTask?.cancel()
+            try? await analyzer.finalizeAndFinishThroughEndOfInput()
+            return ""
+        }
+
         try await analyzer.finalizeAndFinishThroughEndOfInput()
-        let text = try await resultsTask?.value ?? ""
+
+        // Watchdog: the results stream ends promptly after finalize; if the engine
+        // ever stalls, fail the cycle instead of wedging the app in .processing.
+        let reader = resultsTask
+        let text: String = try await withThrowingTaskGroup(of: String?.self) { group in
+            group.addTask { try await reader?.value ?? "" }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                return nil
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next(), let value = first else {
+                reader?.cancel()
+                throw NSError(domain: "GRCWhisper", code: 4,
+                              userInfo: [NSLocalizedDescriptionKey: "Speech engine stalled"])
+            }
+            return value
+        }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func cancel() async {
         inputContinuation.finish()
         resultsTask?.cancel()
-        try? await analyzer.finalizeAndFinishThroughEndOfInput()
+        if started {
+            try? await analyzer.finalizeAndFinishThroughEndOfInput()
+        }
     }
 }
 
@@ -133,7 +170,7 @@ func transcribeFile(url: URL, locale: Locale) async throws -> String {
     let file = try AVAudioFile(forReading: url)
     log("transcribe: file format \(file.processingFormat)")
     let utterance = AppleSpeechUtterance(locale: locale)
-    try await utterance.start(sourceFormat: file.processingFormat)
+    try await utterance.start()
     log("transcribe: analyzer started")
 
     let chunk: AVAudioFrameCount = 4096

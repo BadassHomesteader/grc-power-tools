@@ -50,13 +50,18 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signature with a FIXED identifier: keeps TCC grants across rebuilds.
+# Ad-hoc signature with a fixed identifier. NOTE: ad-hoc signatures pin the
+# per-build code hash, so rebuilding invalidates the Accessibility grant even
+# though System Settings still shows it enabled — toggle it off/on after each
+# rebuild. (A real signing identity would fix this; not worth it for local use.)
 # No hardened runtime — it would require audio-input entitlements and buys
 # nothing for a local ad-hoc build.
 echo "==> codesign (ad-hoc, identifier $BUNDLE_ID)"
 codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
 
 echo "==> built $APP"
+echo "NOTE: if this replaced a previously-granted build, toggle GRC Whisper"
+echo "      OFF and ON in System Settings > Privacy & Security > Accessibility."
 
 if [[ "${1:-}" == "--install" ]]; then
     echo "==> installing to /Applications"

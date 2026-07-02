@@ -31,6 +31,9 @@ final class HotkeyMonitor {
     private var heldSince: Date?
     /// Set when a foreign key interrupts the hold; ignore events until hotkey release.
     private var interrupted = false
+    /// An Esc keyDown was swallowed; its keyUp must be swallowed too, or apps
+    /// with keyup-driven Escape handling still close their dialogs.
+    private var swallowedEscape = false
 
     private static let kVK_Function: Int64 = 63
     private static let kVK_RightOption: Int64 = 61
@@ -153,12 +156,19 @@ final class HotkeyMonitor {
         if held && type == .keyDown {
             if keyCode == Self.kVK_Escape {
                 interrupted = true
+                swallowedEscape = true
                 dispatch(.cancel)
                 return nil // swallow the Esc so it doesn't close the user's dialogs
             }
             interrupted = true
             dispatch(.cancel)
             return Unmanaged.passUnretained(event)
+        }
+
+        // ...and its paired keyUp, which may arrive after the hotkey is released.
+        if type == .keyUp && keyCode == Self.kVK_Escape && swallowedEscape {
+            swallowedEscape = false
+            return nil
         }
 
         return Unmanaged.passUnretained(event)

@@ -64,7 +64,12 @@ final class OverlayPanel {
     }
 
     private func position() {
-        guard let screen = NSScreen.main else { return }
+        // NSScreen.main is the primary display for an accessory app with no key
+        // window — use the screen the cursor is on, where the user is working.
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+            ?? NSScreen.main
+        guard let screen else { return }
         let f = screen.visibleFrame
         panel.setFrameOrigin(NSPoint(x: f.midX - Self.width / 2, y: f.minY + 24))
     }
