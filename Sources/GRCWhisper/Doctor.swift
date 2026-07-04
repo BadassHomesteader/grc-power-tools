@@ -34,11 +34,19 @@ enum Doctor {
             detail: "status: \(micStatus.label)" + (micStatus == .notDetermined ? " (will prompt on first use)" : "")
         ))
 
-        let ax = AXIsProcessTrusted()
+        // AXIsProcessTrusted() can report a STALE "granted" after a rebuild while the
+        // event tap still can't be created — so test the real thing: try to make a
+        // tap that can alter events (same requirement the hotkey needs).
+        let axTrusted = AXIsProcessTrusted()
+        let tapWorks = Doctor.canCreateEventTap()
         checks.append(Check(
             name: "Accessibility",
-            ok: ax,
-            detail: ax ? "granted" : "needed for the hotkey tap + paste — System Settings ▸ Privacy & Security ▸ Accessibility (if it already shows enabled after a rebuild, toggle it off and on — ad-hoc signatures invalidate the grant)"
+            ok: tapWorks,
+            detail: tapWorks
+                ? "granted (event tap verified)"
+                : (axTrusted
+                    ? "shows enabled but the event tap CANNOT be created — a rebuild invalidated the grant. In System Settings ▸ Privacy & Security ▸ Accessibility, select GRC Whisper, click −, then relaunch and re-enable it."
+                    : "not granted — add GRC Whisper in System Settings ▸ Privacy & Security ▸ Accessibility")
         ))
 
         let listen = CGPreflightListenEventAccess()
@@ -83,6 +91,19 @@ enum Doctor {
         ))
 
         return checks
+    }
+
+    /// True if a tap that can alter events can be created — the actual capability
+    /// the hotkey needs, which AXIsProcessTrusted() does not reliably reflect.
+    static func canCreateEventTap() -> Bool {
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+            eventsOfInterest: mask, callback: { _, _, event, _ in Unmanaged.passUnretained(event) },
+            userInfo: nil
+        ) else { return false }
+        CFMachPortInvalidate(tap)
+        return true
     }
 
     static func report() async -> String {
