@@ -5,7 +5,7 @@ final class WaveformView: NSView {
     private var samples: [CGFloat]
     var barColor: NSColor = NSColor(srgbRed: 0.36, green: 0.42, blue: 0.92, alpha: 1)
 
-    init(bars: Int = 42) {
+    init(bars: Int = 64) {
         samples = Array(repeating: 0.06, count: bars)
         super.init(frame: .zero)
     }
@@ -43,12 +43,13 @@ final class WaveformView: NSView {
     }
 }
 
-/// The white rounded pill background, drawn (not layer-only) so it also renders
-/// into an offscreen bitmap for previews.
+/// The white rounded-rect pill background, drawn (not layer-only) so it also
+/// renders into an offscreen bitmap for previews.
 final class PillView: NSView {
+    var cornerRadius: CGFloat = 22
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
-                                xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+                                xRadius: cornerRadius, yRadius: cornerRadius)
         NSColor(srgbRed: 0.98, green: 0.98, blue: 0.99, alpha: 1).setFill()
         path.fill()
         NSColor(white: 0, alpha: 0.08).setStroke()
@@ -57,19 +58,23 @@ final class PillView: NSView {
     }
 }
 
-/// Bottom-center recording lozenge, Wispr-style: light pill + live waveform +
-/// text. Non-activating so it never takes focus from the app you're dictating into.
+/// Bottom-center recording card, Wispr-style: light rounded box with the text on
+/// top and a full-width live waveform along the bottom. Non-activating so it
+/// never takes focus from the app you're dictating into.
 final class OverlayPanel {
-    static let width: CGFloat = 480
-    static let height: CGFloat = 46
+    static let width: CGFloat = 460
+    static let height: CGFloat = 90
 
     private let panel: NSPanel
-    private let waveform = WaveformView()
+    private let waveform = WaveformView(bars: 64)
     private let label = NSTextField(labelWithString: "")
     private var hideTimer: Timer?
 
-    private static let padding: CGFloat = 18
-    private static let waveWidth: CGFloat = 96
+    private static let padX: CGFloat = 20
+    private static let bottomMargin: CGFloat = 16
+    private static let waveH: CGFloat = 30
+    private static let gap: CGFloat = 12
+    private static let textH: CGFloat = 22
 
     init() {
         panel = NSPanel(
@@ -87,33 +92,39 @@ final class OverlayPanel {
         panel.appearance = NSAppearance(named: .aqua) // keep it light even in dark mode
 
         let content = PillView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.height))
-        waveform.frame = NSRect(x: Self.padding, y: (Self.height - 22) / 2, width: Self.waveWidth, height: 22)
+        waveform.frame = Self.waveFrame
         content.addSubview(waveform)
-        label.frame = NSRect(x: Self.padding + Self.waveWidth + 12, y: (Self.height - 20) / 2,
-                             width: Self.width - (Self.padding * 2) - Self.waveWidth - 12, height: 20)
-        label.font = .systemFont(ofSize: 14, weight: .medium)
-        label.textColor = NSColor(white: 0.1, alpha: 1)
-        label.lineBreakMode = .byTruncatingHead
-        label.maximumNumberOfLines = 1
-        label.cell?.usesSingleLineMode = true
+        label.frame = Self.textFrame
+        Self.styleLabel(label)
         content.addSubview(label)
         panel.contentView = content
     }
 
-    /// Builds the pill + waveform + label at the fixed size. Used by the live
+    private static var waveFrame: NSRect {
+        NSRect(x: padX, y: bottomMargin, width: width - 2 * padX, height: waveH)
+    }
+    private static var textFrame: NSRect {
+        NSRect(x: padX, y: bottomMargin + waveH + gap, width: width - 2 * padX, height: textH)
+    }
+    private static func styleLabel(_ label: NSTextField) {
+        label.font = .systemFont(ofSize: 14, weight: .medium)
+        label.textColor = NSColor(white: 0.1, alpha: 1)
+        label.alignment = .center
+        label.lineBreakMode = .byTruncatingHead
+        label.maximumNumberOfLines = 1
+        label.cell?.usesSingleLineMode = true
+    }
+
+    /// Builds the card + waveform + label at the fixed size. Used by the live
     /// panel and by the `render-overlay` preview command.
     static func buildContent() -> (PillView, WaveformView, NSTextField) {
         let content = PillView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        let wave = WaveformView()
-        wave.frame = NSRect(x: padding, y: (height - 22) / 2, width: waveWidth, height: 22)
+        let wave = WaveformView(bars: 64)
+        wave.frame = waveFrame
         content.addSubview(wave)
         let text = NSTextField(labelWithString: "")
-        text.frame = NSRect(x: padding + waveWidth + 12, y: (height - 20) / 2,
-                            width: width - (padding * 2) - waveWidth - 12, height: 20)
-        text.font = .systemFont(ofSize: 14, weight: .medium)
-        text.textColor = NSColor(white: 0.1, alpha: 1)
-        text.lineBreakMode = .byTruncatingHead
-        text.maximumNumberOfLines = 1
+        text.frame = textFrame
+        styleLabel(text)
         content.addSubview(text)
         return (content, wave, text)
     }

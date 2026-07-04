@@ -88,7 +88,12 @@ case "render-overlay":
     let out = args.count >= 2 ? args[1] : "overlay-preview.png"
     MainActor.assumeIsolated {
         let (content, wave, text) = OverlayPanel.buildContent()
-        wave.setSamples([0.1,0.2,0.15,0.35,0.6,0.45,0.8,0.55,0.3,0.5,0.7,0.9,0.6,0.4,0.55,0.75,0.5,0.3,0.2,0.4,0.65,0.85,0.6,0.35,0.25,0.45,0.7,0.5,0.3,0.5,0.6,0.4,0.25,0.35,0.55,0.7,0.45,0.3,0.2,0.15,0.1,0.08])
+        let fake: [CGFloat] = (0..<64).map { i in
+            let t = Double(i)
+            let env = 0.5 + 0.45 * sin(t / 7) * cos(t / 3)
+            return CGFloat(min(max(0.08, abs(env)), 1))
+        }
+        wave.setSamples(fake)
         text.stringValue = "meeting on Wednesday at 3 p.m."
         guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { exit(1) }
         content.cacheDisplay(in: content.bounds, to: rep)
