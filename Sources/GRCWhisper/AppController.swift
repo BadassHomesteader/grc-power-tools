@@ -306,7 +306,9 @@ final class AppController {
         }
     }
 
-    /// hold + S: copy a screen region as an image. hold + G: same, then open Google Lens.
+    /// hold + S: copy a screen region as an image. hold + G: same, then open
+    /// Google Lens for you to paste (⌘V) — we don't upload the image ourselves,
+    /// so it only leaves your Mac when you choose to paste it into Google.
     func captureScreenshot(search: Bool) {
         guard state == .idle, ensureScreenRecording() else { return }
         state = .processing
@@ -318,21 +320,15 @@ final class AppController {
                 return
             }
             await MainActor.run {
-                AppController.putImageOnClipboard(png)
-                self.overlay.showResult(search ? "Searching Google Lens…" : "Screenshot copied to clipboard")
-            }
-            guard search else {
-                await MainActor.run { self.finishCycle() }
-                return
-            }
-            let url = await ScreenCapture.googleLensURL(png)
-            await MainActor.run {
                 defer { self.finishCycle() }
-                if let url {
-                    NSWorkspace.shared.open(url)
-                    self.overlay.showResult("Opened Google Lens · image on clipboard")
+                AppController.putImageOnClipboard(png)
+                if search {
+                    if let url = URL(string: "https://lens.google.com/") {
+                        NSWorkspace.shared.open(url)
+                    }
+                    self.overlay.showResult("Image copied — press ⌘V in Google Lens to search")
                 } else {
-                    self.overlay.showError("Couldn't reach Google Lens — image is on your clipboard")
+                    self.overlay.showResult("Screenshot copied to clipboard")
                 }
             }
         }
