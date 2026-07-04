@@ -259,10 +259,14 @@ final class AppController {
     func captureScreenText() {
         guard state == .idle else { return }
         // OCR needs THIS app to hold Screen Recording (even though the system
-        // screencapture tool does the grab). Nudge the grant on first use.
+        // screencapture tool does the grab). If it's missing, prompt + open the
+        // exact settings pane; the grant needs a quit & reopen to take effect.
         if !CGPreflightScreenCaptureAccess() {
             _ = CGRequestScreenCaptureAccess()
-            overlay.showError("Enable Screen Recording for GRC Whisper in System Settings, then try again")
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                NSWorkspace.shared.open(url)
+            }
+            overlay.showError("Turn on Screen Recording for GRC Whisper, then quit & reopen the app")
             return
         }
         state = .processing
