@@ -42,8 +42,8 @@ final class AppController {
         }
         try await AppleSpeechUtterance.ensureAssets(locale: Locale(identifier: config.localeIdentifier))
         try audio.start()
-        audio.onLevel = { [weak self] level in
-            Task { @MainActor in self?.overlay.setLevel(level) }
+        audio.onLevels = { [weak self] levels in
+            Task { @MainActor in self?.overlay.setLevels(levels) }
         }
 
         let monitor = HotkeyMonitor(hotkey: config.hotkey)

@@ -154,8 +154,8 @@ final class OverlayPanel {
         label.stringValue = text
     }
 
-    func setLevel(_ level: Float) {
-        waveform.push(CGFloat(level))
+    func setLevels(_ levels: [Float]) {
+        for l in levels { waveform.push(CGFloat(l)) }
     }
 
     func showProcessing() {

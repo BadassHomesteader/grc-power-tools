@@ -22,8 +22,8 @@ final class AudioCapture {
     private(set) var currentFormat: AVAudioFormat?
 
     /// Smoothed input level 0...1 for the overlay meter.
-    var onLevel: ((Float) -> Void)?
-    private var smoothedLevel: Float = 0
+    /// Per-slice peak amplitudes (0.06...1), several per buffer, for the live waveform.
+    var onLevels: (([Float]) -> Void)?
 
     init(preRollSeconds: Double = 1.0) {
         self.preRollSeconds = preRollSeconds
@@ -81,14 +81,22 @@ final class AudioCapture {
         guard let copy = buffer.deepCopy() else { return }
         let seconds = Double(copy.frameLength) / copy.format.sampleRate
 
-        if let data = copy.floatChannelData?[0], copy.frameLength > 0 {
-            var sum: Float = 0
+        // Waveform: peak amplitude per ~12ms slice (several per buffer). Peak per
+        // short slice tracks each syllable, so the scrolling bars vary like a real
+        // voice waveform — a running average would flatten them into one blob.
+        if streaming, let data = copy.floatChannelData?[0], copy.frameLength > 0 {
             let n = Int(copy.frameLength)
-            for i in 0..<n { sum += data[i] * data[i] }
-            let rms = sqrtf(sum / Float(n))
-            smoothedLevel = smoothedLevel * 0.7 + min(rms * 8, 1.0) * 0.3
-            let level = smoothedLevel
-            if streaming { onLevel?(level) }
+            let sliceFrames = max(256, Int(copy.format.sampleRate * 0.012))
+            var levels: [Float] = []
+            var i = 0
+            while i < n {
+                let end = min(i + sliceFrames, n)
+                var peak: Float = 0
+                for j in i..<end { peak = max(peak, abs(data[j])) }
+                levels.append(min(1, max(0.06, peak * 2.4)))
+                i = end
+            }
+            if !levels.isEmpty { onLevels?(levels) }
         }
 
         queue.async { [self] in
