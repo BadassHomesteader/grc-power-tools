@@ -90,9 +90,17 @@ History, dictionary, and logs live in the same folder. Delete the folder to rese
 - **Secure fields**: dictation into password fields is refused with a visible message (secure input also blocks the tap — nothing would work anyway).
 - **LLM guardrails**: the polish output is sanity-checked (length ratio, refusal prefixes) and deadline-raced against Tier-0; the raw transcript is always preserved in history. Dictated text is treated as data — "ignore your instructions…" gets typed, not obeyed.
 
-## Screenshot to text (OCR)
+## Leader chords (hold your hotkey, tap a letter)
 
-Press **⌥⌘T** (or menu bar ▸ Capture Text from Screen), drag a region, and the recognized text is pasted at your cursor — fully local via Apple's Vision framework, no network. Uses the system region selector, so it needs no extra permission of its own.
+Your dictation hotkey doubles as a leader — hold it and tap a letter instead of speaking:
+
+- **hold + speak + release** → dictation (as normal).
+- **hold + T** → **OCR**: drag a screen region, its text is pasted at your cursor (fully local via Apple Vision).
+- **hold + A** → **AI** (routes to Claude, falling back to OpenAI, then on-device):
+  - *nothing selected* → this dictation is cleaned by the cloud AI instead of the on-device model ("smart cleanup").
+  - *text selected* → **command mode**: keep holding, speak an instruction ("make this formal", "translate to Spanish"), release → the AI rewrites your selection in place.
+
+⌥⌘T also works as a standalone OCR shortcut.
 
 ## Cloud cleanup (optional, opt-in)
 

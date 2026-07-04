@@ -75,10 +75,11 @@ final class Polisher {
     /// Full pipeline. Cleanup engine + deadline come from config. Every engine
     /// falls back to the deterministic Tier-0 text on failure/timeout; the raw
     /// transcript is preserved separately in history.
-    func polish(_ raw: String, config: Config, appName: String) async -> String {
+    func polish(_ raw: String, config: Config, appName: String,
+                engineOverride: Config.PolishMode? = nil) async -> String {
         let entries = store.dictionary()
         let tier0 = Polisher.tier0(raw, dictionary: entries)
-        let mode = config.polish
+        let mode = engineOverride ?? config.polish
 
         if mode == .off { return raw }
         if mode == .basic || tier0.isEmpty { return tier0 }
@@ -134,6 +135,54 @@ final class Polisher {
             return tier0
         }
         return polished
+    }
+
+    /// The cloud engine for the AI shortcut: Claude, else OpenAI, else on-device.
+    static func preferredCloud(_ config: Config) -> Config.PolishMode {
+        if let k = Keychain.get("claude"), !k.isEmpty { return .claude }
+        if let k = Keychain.get("openai"), !k.isEmpty { return .openai }
+        return .apple
+    }
+
+    private static let rewriteInstructions = """
+    You edit text by applying a spoken instruction. Apply the INSTRUCTION to the TEXT \
+    and return ONLY the resulting text — no preamble, no quotes, no explanation. \
+    Preserve the author's meaning; output the transformed text alone.
+    """
+
+    /// Command mode: apply a spoken `instruction` to the user's selected `selection`.
+    /// Prefers Claude, then OpenAI, then the on-device model.
+    func rewrite(instruction: String, selection: String, config: Config) async -> String? {
+        let user = "<INSTRUCTION>\(instruction)</INSTRUCTION>\n<TEXT>\(selection)</TEXT>"
+        if let key = Keychain.get("claude"), !key.isEmpty {
+            return try? await CloudPolish.claude(instructions: Polisher.rewriteInstructions,
+                                                 prompt: user, model: config.claudeModel, apiKey: key)
+        }
+        if let key = Keychain.get("openai"), !key.isEmpty {
+            return try? await CloudPolish.openai(instructions: Polisher.rewriteInstructions,
+                                                 prompt: user, model: config.openaiModel, apiKey: key)
+        }
+        guard Polisher.llmAvailable else { return nil }
+        return await appleGeneric(instructions: Polisher.rewriteInstructions, prompt: user)
+    }
+
+    private func appleGeneric(instructions: String, prompt: String) async -> String? {
+        let s = LanguageModelSession(instructions: instructions)
+        do {
+            let textProp = DynamicGenerationSchema.Property(
+                name: "text", description: "The resulting text",
+                schema: DynamicGenerationSchema(type: String.self))
+            let root = DynamicGenerationSchema(name: "Result", description: "Transformed text",
+                                               properties: [textProp])
+            let schema = try GenerationSchema(root: root, dependencies: [])
+            let response = try await s.respond(to: prompt, schema: schema,
+                                               options: GenerationOptions(temperature: 0.2))
+            return try response.content.value(String.self, forProperty: "text")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            log("rewrite: apple error \(error)")
+            return nil
+        }
     }
 
     private func appleRespond(prompt: String) async -> String? {

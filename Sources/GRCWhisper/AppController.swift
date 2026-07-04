@@ -51,9 +51,11 @@ final class AppController {
             guard let self else { return }
             switch event {
             case .down: self.keyDown()
-            case .up: self.keyUp()
+            case .up(let cmd): self.keyUp(ai: cmd == .ai)
             case .cancel: self.cancel()
-            case .ocr: self.captureScreenText()
+            case .ocr:
+                if self.state == .recording { self.cancel() }
+                self.captureScreenText()
             }
         }
         guard monitor.start() else {
@@ -112,7 +114,7 @@ final class AppController {
             Task { @MainActor in
                 guard let self, self.cycle == gen, self.state == .recording else { return }
                 log("controller: max utterance reached, finishing")
-                self.keyUp()
+                self.keyUp(ai: false)
             }
         }
 
@@ -128,7 +130,7 @@ final class AppController {
         }
     }
 
-    private func keyUp() {
+    private func keyUp(ai: Bool = false) {
         guard state == .recording, let utt = utterance else { return }
         maxUtteranceTimer?.invalidate()
         let gen = cycle
@@ -186,11 +188,23 @@ final class AppController {
                     self.finishCycle()
                     return
                 }
-                let polished = await self.polisher.polish(
-                    raw, config: cfg, appName: ctx?.appName ?? "unknown"
-                )
+                let appName = ctx?.appName ?? "unknown"
+                let final: String
+                if ai {
+                    self.overlay.showProcessing()
+                    // Command mode when text is selected; otherwise smart cloud cleanup.
+                    let selection = await Inserter.copySelection()?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let sel = selection, !sel.isEmpty {
+                        final = await self.polisher.rewrite(instruction: raw, selection: sel, config: cfg) ?? raw
+                    } else {
+                        final = await self.polisher.polish(raw, config: cfg, appName: appName,
+                                                           engineOverride: Polisher.preferredCloud(cfg))
+                    }
+                } else {
+                    final = await self.polisher.polish(raw, config: cfg, appName: appName)
+                }
                 guard self.cycle == gen else { return }
-                self.deliver(raw: raw, polished: polished, durationMs: heldMs, ctx: ctx)
+                self.deliver(raw: raw, polished: final, durationMs: heldMs, ctx: ctx)
             } catch {
                 guard self.cycle == gen else { return }
                 self.utterance = nil

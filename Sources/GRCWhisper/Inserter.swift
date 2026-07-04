@@ -75,9 +75,35 @@ enum Inserter {
         }
     }
 
-    private static func postCmdV() {
+    private static func postCmdV() { postCmd(key: CGKeyCode(kVK_ANSI_V)) }
+
+    /// Copy the current selection to a temporary pasteboard, read it, and restore
+    /// the user's clipboard. Used by AI command mode to read the selected text.
+    /// Returns nil if nothing was copied (no selection).
+    static func copySelection() async -> String? {
+        guard !IsSecureEventInputEnabled() else { return nil }
+        let pb = NSPasteboard.general
+        let snapshot: [[(NSPasteboard.PasteboardType, Data)]] = (pb.pasteboardItems ?? []).map { item in
+            item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
+        }
+        let before = pb.changeCount
+        postCmd(key: CGKeyCode(kVK_ANSI_C))
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        let copied: String? = (pb.changeCount != before) ? pb.string(forType: .string) : nil
+
+        pb.clearContents()
+        let restored = snapshot.compactMap { entry -> NSPasteboardItem? in
+            guard !entry.isEmpty else { return nil }
+            let item = NSPasteboardItem()
+            for (type, data) in entry { item.setData(data, forType: type) }
+            return item
+        }
+        if !restored.isEmpty { pb.writeObjects(restored) }
+        return copied
+    }
+
+    private static func postCmd(key vKey: CGKeyCode) {
         guard let source = CGEventSource(stateID: .privateState) else { return }
-        let vKey = CGKeyCode(kVK_ANSI_V) // virtual key 9: physical V, layout-proof
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false) else { return }
         down.flags = .maskCommand

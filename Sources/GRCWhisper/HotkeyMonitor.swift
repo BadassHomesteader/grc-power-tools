@@ -14,8 +14,12 @@ let kSyntheticEventMagic: Int64 = 0x4752_4357 // 'GRCW'
 /// - periodic health check that re-enables a silently-dead tap (VoiceInk #735)
 /// - a non-hotkey keypress during a hold cancels dictation (user was doing Fn+arrow)
 final class HotkeyMonitor {
+    enum Command { case dictate, ai }
     enum Callback {
-        case down, up, cancel, ocr
+        case down
+        case up(Command)
+        case cancel
+        case ocr
     }
 
     var handler: ((Callback) -> Void)?
@@ -31,15 +35,19 @@ final class HotkeyMonitor {
     private var heldSince: Date?
     /// Set when a foreign key interrupts the hold; ignore events until hotkey release.
     private var interrupted = false
-    /// An Esc keyDown was swallowed; its keyUp must be swallowed too, or apps
-    /// with keyup-driven Escape handling still close their dialogs.
-    private var swallowedEscape = false
+    /// keyCode whose paired keyUp should also be swallowed (a key we consumed
+    /// mid-hold), so apps don't see an orphan keyUp.
+    private var swallowedKeyUp: Int64?
+    /// Leader action armed by tapping a letter while the hotkey is held.
+    private enum Pending { case none, ocr, ai }
+    private var pending: Pending = .none
 
     private static let kVK_Function: Int64 = 63
     private static let kVK_RightOption: Int64 = 61
     private static let kVK_RightCommand: Int64 = 54
     private static let kVK_Escape: Int64 = 53
     private static let kVK_ANSI_T: Int64 = 17
+    private static let kVK_ANSI_A: Int64 = 0
 
     init(hotkey: Config.Hotkey) {
         self.hotkey = hotkey
@@ -161,23 +169,32 @@ final class HotkeyMonitor {
             }
         }
 
-        // While holding: Esc cancels; any other real keypress means the user is
-        // doing a key combo (e.g. Fn+arrow) — cancel and let the event through.
+        // Leader chords: while the hotkey is held, a tapped letter selects a mode
+        // instead of dictating. T = capture text from screen; A = AI (command mode
+        // if text is selected, else route this dictation through the cloud AI).
+        // Esc cancels; any other key means an unrelated combo (e.g. Fn+arrow).
         if held && type == .keyDown {
-            if keyCode == Self.kVK_Escape {
-                interrupted = true
-                swallowedEscape = true
+            switch keyCode {
+            case Self.kVK_Escape:
+                interrupted = true; swallowedKeyUp = keyCode
                 dispatch(.cancel)
-                return nil // swallow the Esc so it doesn't close the user's dialogs
+                return nil // swallow so it doesn't close the user's dialogs
+            case Self.kVK_ANSI_T:
+                pending = .ocr; swallowedKeyUp = keyCode
+                return nil // OCR fires on release; recording continues harmlessly until then
+            case Self.kVK_ANSI_A:
+                pending = .ai; swallowedKeyUp = keyCode
+                return nil // keep recording — the user is about to speak the instruction
+            default:
+                interrupted = true
+                dispatch(.cancel)
+                return Unmanaged.passUnretained(event)
             }
-            interrupted = true
-            dispatch(.cancel)
-            return Unmanaged.passUnretained(event)
         }
 
-        // ...and its paired keyUp, which may arrive after the hotkey is released.
-        if type == .keyUp && keyCode == Self.kVK_Escape && swallowedEscape {
-            swallowedEscape = false
+        // Swallow the paired keyUp of a key we consumed mid-hold.
+        if type == .keyUp, let sk = swallowedKeyUp, keyCode == sk {
+            swallowedKeyUp = nil
             return nil
         }
 
@@ -189,11 +206,20 @@ final class HotkeyMonitor {
             held = true
             heldSince = Date()
             interrupted = false
+            pending = .none
             dispatch(.down)
         } else if !isDown && held {
             held = false
             heldSince = nil
-            if !interrupted { dispatch(.up) }
+            let p = pending
+            pending = .none
+            if !interrupted {
+                switch p {
+                case .none: dispatch(.up(.dictate))
+                case .ai: dispatch(.up(.ai))
+                case .ocr: dispatch(.ocr)
+                }
+            }
             interrupted = false
         }
         return suppress ? nil : Unmanaged.passUnretained(event)

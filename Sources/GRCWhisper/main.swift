@@ -78,6 +78,17 @@ case "polish":
     }
     print(text)
 
+case "rewrite":
+    // grc-whisper rewrite "<instruction>" "<text to transform>"  (AI command mode)
+    guard args.count >= 3 else { usage() }
+    let store = Store()
+    let cfg = Config.load()
+    let out = try! runBlocking {
+        let p = Polisher(store: store)
+        return await p.rewrite(instruction: args[1], selection: args[2], config: cfg) ?? "(rewrite failed)"
+    }
+    print(out)
+
 case "doctor":
     let report = try! runBlocking { await Doctor.report() }
     print(report)
