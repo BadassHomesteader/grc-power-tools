@@ -81,9 +81,10 @@ final class AudioCapture {
         guard let copy = buffer.deepCopy() else { return }
         let seconds = Double(copy.frameLength) / copy.format.sampleRate
 
-        // Waveform: peak amplitude per ~12ms slice (several per buffer). Peak per
-        // short slice tracks each syllable, so the scrolling bars vary like a real
-        // voice waveform — a running average would flatten them into one blob.
+        // Waveform: loudness (RMS) per ~12ms slice, several per buffer. RMS per
+        // short slice tracks each syllable so the scrolling bars vary like a real
+        // voice waveform. Gain 20 is tuned for real mic input, which runs far
+        // quieter than a full-scale file — a lower gain flatlines live speech.
         if streaming, let data = copy.floatChannelData?[0], copy.frameLength > 0 {
             let n = Int(copy.frameLength)
             let sliceFrames = max(256, Int(copy.format.sampleRate * 0.012))
@@ -91,9 +92,10 @@ final class AudioCapture {
             var i = 0
             while i < n {
                 let end = min(i + sliceFrames, n)
-                var peak: Float = 0
-                for j in i..<end { peak = max(peak, abs(data[j])) }
-                levels.append(min(1, max(0.06, peak * 2.4)))
+                var sumSq: Float = 0
+                for j in i..<end { sumSq += data[j] * data[j] }
+                let rms = sqrtf(sumSq / Float(max(end - i, 1)))
+                levels.append(min(1, max(0.05, rms * 20)))
                 i = end
             }
             if !levels.isEmpty { onLevels?(levels) }
