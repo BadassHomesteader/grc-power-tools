@@ -138,8 +138,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(.separator())
         }
 
-        let ocrItem = NSMenuItem(title: "Capture Text from Screen", action: #selector(captureScreenText), keyEquivalent: "t")
-        ocrItem.keyEquivalentModifierMask = [.command, .option]
+        let ocrItem = NSMenuItem(title: "Capture Text from Screen  (hold \(config.hotkey.displayName) + T)",
+                                 action: #selector(captureScreenText), keyEquivalent: "")
         ocrItem.target = self
         menu.addItem(ocrItem)
 

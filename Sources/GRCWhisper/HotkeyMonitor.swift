@@ -137,15 +137,6 @@ final class HotkeyMonitor {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
-        // OCR capture chord: Cmd+Opt+T (when not mid-dictation). Suppress so the
-        // 'T' isn't typed, and the app's menu key-equivalent doesn't double-fire.
-        if !held, type == .keyDown, keyCode == Self.kVK_ANSI_T,
-           flags.contains(.maskCommand), flags.contains(.maskAlternate),
-           !flags.contains(.maskControl) {
-            dispatch(.ocr)
-            return nil
-        }
-
         switch hotkey {
         case .fn:
             if type == .flagsChanged && keyCode == Self.kVK_Function {

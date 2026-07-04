@@ -141,8 +141,10 @@ final class OverlayPanel {
         hideTimer?.invalidate()
         waveform.idle()
         waveform.barColor = NSColor(srgbRed: 0.36, green: 0.42, blue: 0.92, alpha: 1)
-        label.textColor = NSColor(white: 0.55, alpha: 1)
-        label.stringValue = "Listening…"
+        label.textColor = NSColor(white: 0.5, alpha: 1)
+        // The "menu": what you can do while holding the hotkey. Replaced by the
+        // live transcript as soon as you start speaking.
+        label.stringValue = "Speak to dictate   ·   T screenshot   ·   A ask AI"
         position()
         panel.orderFrontRegardless()
         panel.invalidateShadow()
