@@ -271,7 +271,6 @@ final class AppController {
         }
         state = .processing
         onStateChange?(.processing)
-        let cfg = config
         Task {
             let text = await ScreenTextCapture.capture()
             await MainActor.run {
@@ -282,14 +281,12 @@ final class AppController {
                     self.overlay.showError("No text found in the selection")
                     return
                 }
-                do {
-                    try Inserter.insert(trimmed, restoreDelayMs: cfg.clipboardRestoreDelayMs)
-                    self.overlay.showResult(trimmed.count > 80 ? String(trimmed.prefix(77)) + "…" : trimmed)
-                } catch {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(trimmed, forType: .string)
-                    self.overlay.showError("Copied \(trimmed.count) characters to clipboard")
-                }
+                // OCR text goes to the clipboard — you're usually not in a text
+                // field when grabbing text off the screen. Paste it with ⌘V.
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(trimmed, forType: .string)
+                let preview = trimmed.count > 60 ? String(trimmed.prefix(57)) + "…" : trimmed
+                self.overlay.showResult("Copied to clipboard · \(preview)")
                 self.store.addHistory(app: "screen-ocr", raw: trimmed, polished: trimmed, durationMs: 0)
             }
         }
