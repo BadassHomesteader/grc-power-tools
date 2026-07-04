@@ -4,16 +4,21 @@ import ServiceManagement
 /// The app's real window: permission status, dictation options, personal
 /// dictionary, and general settings. Built programmatically (no xib).
 @MainActor
-final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
+final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSComboBoxDelegate {
     private let store: Store
     private let onConfigChange: (Config) -> Void
     private var config: Config
 
+    private static let claudeModels = ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8", "claude-fable-5"]
+    private static let openaiModels = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"]
+
     private let statusStack = NSStackView()
     private let hotkeyPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let cleanupPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let positionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchLoginCheck = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let hotkeyNote = NSTextField(labelWithString: "")
+    private let helpLabel = NSTextField(wrappingLabelWithString: "")
 
     private let dictTable = NSTableView()
     private var dictEntries: [DictEntry] = []
@@ -22,8 +27,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     private let claudeKeyField = NSSecureTextField()
     private let openaiKeyField = NSSecureTextField()
-    private let claudeModelField = NSTextField()
-    private let openaiModelField = NSTextField()
+    private let claudeModelField = NSComboBox()
+    private let openaiModelField = NSComboBox()
 
     init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void) {
         self.store = store
@@ -94,6 +99,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         openAX.bezelStyle = .rounded
         let statusButtons = NSStackView(views: [recheck, openAX])
         statusButtons.spacing = 8
+
+        // How-to section (top of the left column for discoverability).
+        helpLabel.font = .systemFont(ofSize: 12)
+        helpLabel.textColor = .labelColor
+        helpLabel.preferredMaxLayoutWidth = 400
+        leftCol.addArrangedSubview(section("How to use it", [helpLabel]))
+
         leftCol.addArrangedSubview(section("Permissions", [statusStack, statusButtons]))
 
         // Dictation section
@@ -103,6 +115,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         for hk in Config.Hotkey.allCases { hotkeyPopup.addItem(withTitle: hk.displayName) }
         hotkeyPopup.target = self
         hotkeyPopup.action = #selector(hotkeyChanged)
+        for p in Config.OverlayPosition.allCases { positionPopup.addItem(withTitle: p.displayName) }
+        positionPopup.target = self
+        positionPopup.action = #selector(positionChanged)
         hotkeyNote.font = .systemFont(ofSize: 11)
         hotkeyNote.textColor = .secondaryLabelColor
         hotkeyNote.stringValue = " "
@@ -111,6 +126,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             formRow("Hotkey", hotkeyPopup),
             hotkeyNote,
             formRow("Cleanup", cleanupPopup),
+            formRow("Bar position", positionPopup),
         ]))
 
         // Cloud cleanup section (optional — used only when Cleanup is Claude/OpenAI)
@@ -123,6 +139,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             f.widthAnchor.constraint(equalToConstant: 200).isActive = true
             f.target = self
         }
+        claudeModelField.addItems(withObjectValues: Self.claudeModels)
+        openaiModelField.addItems(withObjectValues: Self.openaiModels)
+        claudeModelField.completes = true
+        openaiModelField.completes = true
+        claudeModelField.delegate = self
+        openaiModelField.delegate = self
         claudeModelField.action = #selector(modelsChanged)
         openaiModelField.action = #selector(modelsChanged)
         claudeKeyField.action = #selector(saveClaudeKey)
@@ -248,7 +270,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     private func formRow(_ label: String, _ control: NSView) -> NSView {
         let l = NSTextField(labelWithString: label)
-        l.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        l.widthAnchor.constraint(equalToConstant: 92).isActive = true
         let row = NSStackView(views: [l, control])
         row.spacing = 10
         row.alignment = .centerY
@@ -261,11 +283,30 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         config = Config.load()
         hotkeyPopup.selectItem(withTitle: config.hotkey.displayName)
         cleanupPopup.selectItem(withTitle: config.polish.displayName)
+        positionPopup.selectItem(withTitle: config.overlayPosition.displayName)
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
         openaiModelField.stringValue = config.openaiModel
         claudeKeyField.placeholderString = Keychain.has("claude") ? "•••••• saved — paste to replace" : "sk-ant-…"
         openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
+        helpLabel.stringValue = helpText(for: config.hotkey)
+    }
+
+    /// Plain-language cheat sheet, kept in sync with the current hotkey choice.
+    private func helpText(for hotkey: Config.Hotkey) -> String {
+        let key = hotkey.displayName
+        return """
+        Hold \(key) and speak, then release — your words are cleaned up and typed in wherever your cursor is.
+
+        While still holding \(key), tap a letter before you release:
+
+        •  T   copy text off the screen (OCR) — drag a box, the text lands on your clipboard
+        •  S   copy a screenshot to the clipboard — drag a box to grab it
+        •  G   screenshot, then open Google Lens so you can search the image
+        •  A   send to AI — rewrites highlighted text, or gives a smarter cleanup
+
+        Just release without a letter to dictate normally.
+        """
     }
 
     @objc private func saveClaudeKey() {
@@ -306,7 +347,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         config.hotkey = hk
         config.save()
         onConfigChange(config)
+        helpLabel.stringValue = helpText(for: hk)
         hotkeyNote.stringValue = changed ? "Quit and reopen GRC Whisper to apply the new hotkey." : " "
+    }
+
+    @objc private func positionChanged() {
+        guard let p = Config.OverlayPosition.allCases.first(where: { $0.displayName == positionPopup.titleOfSelectedItem }) else { return }
+        config.overlayPosition = p
+        config.save()
+        onConfigChange(config)
+    }
+
+    /// NSComboBox fires its action on Return/end-editing; also catch list picks.
+    func comboBoxSelectionDidChange(_ notification: Notification) {
+        guard let box = notification.object as? NSComboBox else { return }
+        DispatchQueue.main.async {
+            if let value = box.objectValueOfSelectedItem as? String { box.stringValue = value }
+            self.modelsChanged()
+        }
     }
 
     @objc private func toggleLaunchLogin() {

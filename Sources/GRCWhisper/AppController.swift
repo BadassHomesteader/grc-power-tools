@@ -14,7 +14,7 @@ final class AppController {
     var onStateChange: ((State) -> Void)?
     var lastTranscript: String = ""
     /// Live-mutable: the menu updates polish mode without a relaunch.
-    var config: Config
+    var config: Config { didSet { overlay.anchor = config.overlayPosition } }
 
     let store: Store
     private let audio: AudioCapture
@@ -37,6 +37,7 @@ final class AppController {
     }
 
     func start() async throws {
+        overlay.anchor = config.overlayPosition
         guard await AudioCapture.requestMicPermission() else {
             throw NSError(domain: "GRCWhisper", code: 10,
                           userInfo: [NSLocalizedDescriptionKey: "Microphone permission denied"])

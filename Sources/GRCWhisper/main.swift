@@ -125,14 +125,7 @@ case "render-overlay":
     // Offscreen preview of the dictation pill for design checks.
     let out = args.count >= 2 ? args[1] : "overlay-preview.png"
     MainActor.assumeIsolated {
-        let (content, wave, text) = OverlayPanel.buildContent()
-        let fake: [CGFloat] = (0..<64).map { i in
-            let t = Double(i)
-            let env = 0.5 + 0.45 * sin(t / 7) * cos(t / 3)
-            return CGFloat(min(max(0.08, abs(env)), 1))
-        }
-        wave.setSamples(fake)
-        text.stringValue = "meeting on Wednesday at 3 p.m."
+        let content = OverlayPanel.buildContent()
         guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { exit(1) }
         content.cacheDisplay(in: content.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {

@@ -20,6 +20,24 @@ struct Config: Codable {
         }
     }
 
+    enum OverlayPosition: String, Codable, CaseIterable {
+        case bottomCenter, bottomLeft, bottomRight
+        case center
+        case topCenter, topLeft, topRight
+
+        var displayName: String {
+            switch self {
+            case .bottomCenter: return "Bottom center"
+            case .bottomLeft: return "Bottom left"
+            case .bottomRight: return "Bottom right"
+            case .center: return "Center"
+            case .topCenter: return "Top center"
+            case .topLeft: return "Top left"
+            case .topRight: return "Top right"
+            }
+        }
+    }
+
     enum PolishMode: String, Codable, CaseIterable {
         case apple    // Apple FoundationModels (on-device)
         case claude   // Claude API (cloud, opt-in)
@@ -74,12 +92,14 @@ struct Config: Codable {
     /// Cloud cleanup model IDs (used only when polish is .claude / .openai).
     var claudeModel: String = "claude-haiku-4-5"
     var openaiModel: String = "gpt-4o-mini"
+    /// Where the dictation bar appears.
+    var overlayPosition: OverlayPosition = .bottomCenter
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
-        case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
+        case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel, overlayPosition
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -96,6 +116,7 @@ struct Config: Codable {
         preRollSeconds = try c.decodeIfPresent(Double.self, forKey: .preRollSeconds) ?? 1.0
         claudeModel = try c.decodeIfPresent(String.self, forKey: .claudeModel) ?? "claude-haiku-4-5"
         openaiModel = try c.decodeIfPresent(String.self, forKey: .openaiModel) ?? "gpt-4o-mini"
+        overlayPosition = try c.decodeIfPresent(OverlayPosition.self, forKey: .overlayPosition) ?? .bottomCenter
     }
 
     static var appSupportDir: URL {

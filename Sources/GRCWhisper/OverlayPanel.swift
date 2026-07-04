@@ -3,7 +3,7 @@ import AppKit
 /// A live audio waveform: scrolling rounded bars driven by mic level samples.
 final class WaveformView: NSView {
     private var samples: [CGFloat]
-    var barColor: NSColor = NSColor(srgbRed: 0.36, green: 0.42, blue: 0.92, alpha: 1)
+    var barColor: NSColor = NSColor(srgbRed: 0.55, green: 0.6, blue: 1, alpha: 1)
 
     init(bars: Int = 64) {
         samples = Array(repeating: 0.06, count: bars)
@@ -16,16 +16,8 @@ final class WaveformView: NSView {
         samples.append(min(max(level, 0.06), 1))
         needsDisplay = true
     }
-
-    func setSamples(_ values: [CGFloat]) {
-        samples = values
-        needsDisplay = true
-    }
-
-    func idle() {
-        samples = Array(repeating: 0.06, count: samples.count)
-        needsDisplay = true
-    }
+    func setSamples(_ values: [CGFloat]) { samples = values; needsDisplay = true }
+    func idle() { samples = Array(repeating: 0.06, count: samples.count); needsDisplay = true }
 
     override func draw(_ dirtyRect: NSRect) {
         let n = samples.count
@@ -43,44 +35,79 @@ final class WaveformView: NSView {
     }
 }
 
-/// The white rounded-rect pill background, drawn (not layer-only) so it also
-/// renders into an offscreen bitmap for previews.
-final class PillView: NSView {
-    var cornerRadius: CGFloat = 22
+/// Draws the "menu" of actions with the leader keys as keycap chips.
+final class KeycapHintView: NSView {
+    var segments: [(key: String?, label: String)] = []
+    var labelColor = NSColor.white.withAlphaComponent(0.6)
+
     override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
-                                xRadius: cornerRadius, yRadius: cornerRadius)
-        NSColor(srgbRed: 0.98, green: 0.98, blue: 0.99, alpha: 1).setFill()
-        path.fill()
-        NSColor(white: 0, alpha: 0.08).setStroke()
-        path.lineWidth = 1
-        path.stroke()
+        let labelFont = NSFont.systemFont(ofSize: 12.5, weight: .medium)
+        let keyFont = NSFont.systemFont(ofSize: 10.5, weight: .bold)
+        let sep = NSColor.white.withAlphaComponent(0.28)
+        var x: CGFloat = 0
+        let midY = bounds.midY
+        func text(_ s: String, _ f: NSFont, _ c: NSColor) {
+            let a = NSAttributedString(string: s, attributes: [.font: f, .foregroundColor: c])
+            a.draw(at: NSPoint(x: x, y: midY - a.size().height / 2))
+            x += a.size().width
+        }
+        for (i, seg) in segments.enumerated() {
+            if i > 0 { x += 6; text("·", labelFont, sep); x += 6 }
+            if let key = seg.key {
+                let a = NSAttributedString(string: key, attributes: [.font: keyFont, .foregroundColor: NSColor.black])
+                let kw = a.size().width, chipW = kw + 11, chipH: CGFloat = 17
+                let chip = NSRect(x: x, y: midY - chipH / 2, width: chipW, height: chipH)
+                NSColor.white.withAlphaComponent(0.9).setFill()
+                NSBezierPath(roundedRect: chip, xRadius: 4.5, yRadius: 4.5).fill()
+                a.draw(at: NSPoint(x: x + (chipW - kw) / 2, y: midY - a.size().height / 2))
+                x += chipW + 5
+            }
+            text(seg.label, labelFont, labelColor)
+        }
     }
 }
 
-/// Bottom-center recording card, Wispr-style: light rounded box with the text on
-/// top and a full-width live waveform along the bottom. Non-activating so it
-/// never takes focus from the app you're dictating into.
+/// Solid dark rounded pill — used only for the offscreen `render-overlay` preview
+/// (the live panel uses a real frosted NSVisualEffectView which can't render offscreen).
+final class PillView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
+                                xRadius: 20, yRadius: 20)
+        NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1).setFill()
+        path.fill()
+    }
+}
+
+/// Bottom-center (or wherever you place it) recording HUD: frosted dark pill with
+/// a mic icon, a keycap "menu" while you hold, then live waveform + text.
 final class OverlayPanel {
-    static let width: CGFloat = 460
-    static let height: CGFloat = 90
+    static let width: CGFloat = 520
+    static let height: CGFloat = 86
+    private static let iconSize: CGFloat = 38
+    private static var contentX: CGFloat { 18 + iconSize + 14 }
+    private static var contentW: CGFloat { width - contentX - 20 }
+    private static var iconFrame: NSRect { NSRect(x: 18, y: (height - iconSize) / 2, width: iconSize, height: iconSize) }
+    private static var topFrame: NSRect { NSRect(x: contentX, y: 45, width: contentW, height: 24) }
+    private static var waveFrame: NSRect { NSRect(x: contentX, y: 14, width: contentW, height: 26) }
+
+    /// Where the pill appears on screen.
+    var anchor: Config.OverlayPosition = .bottomCenter
 
     private let panel: NSPanel
+    private let iconView = NSImageView()
     private let waveform = WaveformView(bars: 64)
     private let label = NSTextField(labelWithString: "")
+    private let hint = KeycapHintView()
     private var hideTimer: Timer?
 
-    private static let padX: CGFloat = 20
-    private static let bottomMargin: CGFloat = 16
-    private static let waveH: CGFloat = 30
-    private static let gap: CGFloat = 12
-    private static let textH: CGFloat = 22
+    private static let menuSegments: [(key: String?, label: String)] = [
+        (nil, "Speak"), ("T", "text"), ("S", "screenshot"), ("G", "search"), ("A", "AI"),
+    ]
 
     init() {
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.height),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: true
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true
         )
         panel.level = .statusBar
         panel.isOpaque = false
@@ -89,44 +116,63 @@ final class OverlayPanel {
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
-        panel.appearance = NSAppearance(named: .aqua) // keep it light even in dark mode
 
-        let content = PillView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.height))
+        let vibrant = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.height))
+        vibrant.material = .hudWindow
+        vibrant.blendingMode = .behindWindow
+        vibrant.state = .active
+        vibrant.appearance = NSAppearance(named: .darkAqua)
+        vibrant.wantsLayer = true
+        vibrant.layer?.cornerRadius = 20
+        vibrant.layer?.masksToBounds = true
+
+        iconView.frame = Self.iconFrame
+        iconView.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "GRC Whisper")
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
+        iconView.contentTintColor = NSColor(srgbRed: 0.62, green: 0.66, blue: 1, alpha: 1)
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        vibrant.addSubview(iconView)
+
         waveform.frame = Self.waveFrame
-        content.addSubview(waveform)
-        label.frame = Self.textFrame
-        Self.styleLabel(label)
-        content.addSubview(label)
-        panel.contentView = content
-    }
+        vibrant.addSubview(waveform)
 
-    private static var waveFrame: NSRect {
-        NSRect(x: padX, y: bottomMargin, width: width - 2 * padX, height: waveH)
-    }
-    private static var textFrame: NSRect {
-        NSRect(x: padX, y: bottomMargin + waveH + gap, width: width - 2 * padX, height: textH)
-    }
-    private static func styleLabel(_ label: NSTextField) {
+        label.frame = Self.topFrame
         label.font = .systemFont(ofSize: 14, weight: .medium)
-        label.textColor = NSColor(white: 0.1, alpha: 1)
-        label.alignment = .center
+        label.textColor = NSColor.white.withAlphaComponent(0.95)
         label.lineBreakMode = .byTruncatingHead
         label.maximumNumberOfLines = 1
         label.cell?.usesSingleLineMode = true
+        label.isHidden = true
+        vibrant.addSubview(label)
+
+        hint.frame = Self.topFrame
+        hint.segments = Self.menuSegments
+        vibrant.addSubview(hint)
+
+        panel.contentView = vibrant
     }
 
-    /// Builds the card + waveform + label at the fixed size. Used by the live
-    /// panel and by the `render-overlay` preview command.
-    static func buildContent() -> (PillView, WaveformView, NSTextField) {
-        let content = PillView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+    /// Builds a solid-pill preview (recording/menu state) for `render-overlay`.
+    static func buildContent() -> NSView {
+        let pill = PillView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        let icon = NSImageView(frame: iconFrame)
+        icon.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: nil)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
+        icon.contentTintColor = NSColor(srgbRed: 0.62, green: 0.66, blue: 1, alpha: 1)
+        pill.addSubview(icon)
         let wave = WaveformView(bars: 64)
         wave.frame = waveFrame
-        content.addSubview(wave)
-        let text = NSTextField(labelWithString: "")
-        text.frame = textFrame
-        styleLabel(text)
-        content.addSubview(text)
-        return (content, wave, text)
+        let samples: [CGFloat] = (0..<64).map { i in
+            let env: Double = 0.5 + 0.45 * sin(Double(i) / 7) * cos(Double(i) / 3)
+            let clamped = min(max(0.08, abs(env)), 1)
+            return CGFloat(clamped)
+        }
+        wave.setSamples(samples)
+        pill.addSubview(wave)
+        let hint = KeycapHintView(frame: topFrame)
+        hint.segments = menuSegments
+        pill.addSubview(hint)
+        return pill
     }
 
     private func position() {
@@ -134,17 +180,26 @@ final class OverlayPanel {
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
         let f = screen.visibleFrame
-        panel.setFrameOrigin(NSPoint(x: f.midX - Self.width / 2, y: f.minY + 28))
+        let w = Self.width, h = Self.height, m: CGFloat = 28
+        let x: CGFloat, y: CGFloat
+        switch anchor {
+        case .bottomCenter: x = f.midX - w / 2; y = f.minY + m
+        case .bottomLeft:   x = f.minX + m;      y = f.minY + m
+        case .bottomRight:  x = f.maxX - w - m;  y = f.minY + m
+        case .center:       x = f.midX - w / 2;  y = f.midY - h / 2
+        case .topCenter:    x = f.midX - w / 2;  y = f.maxY - h - m
+        case .topLeft:      x = f.minX + m;      y = f.maxY - h - m
+        case .topRight:     x = f.maxX - w - m;  y = f.maxY - h - m
+        }
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     func showRecording() {
         hideTimer?.invalidate()
         waveform.idle()
-        waveform.barColor = NSColor(srgbRed: 0.36, green: 0.42, blue: 0.92, alpha: 1)
-        label.textColor = NSColor(white: 0.5, alpha: 1)
-        // The "menu": what you can do while holding the hotkey. Replaced by the
-        // live transcript as soon as you start speaking.
-        label.stringValue = "Speak · T text · S screenshot · G search · A ask AI"
+        waveform.barColor = NSColor(srgbRed: 0.55, green: 0.6, blue: 1, alpha: 1)
+        hint.isHidden = false
+        label.isHidden = true
         position()
         panel.orderFrontRegardless()
         panel.invalidateShadow()
@@ -152,7 +207,9 @@ final class OverlayPanel {
 
     func showPartial(_ text: String) {
         guard !text.isEmpty else { return }
-        label.textColor = NSColor(white: 0.1, alpha: 1)
+        hint.isHidden = true
+        label.isHidden = false
+        label.textColor = NSColor.white.withAlphaComponent(0.95)
         label.stringValue = text
     }
 
@@ -162,29 +219,35 @@ final class OverlayPanel {
 
     func showProcessing() {
         waveform.idle()
-        waveform.barColor = NSColor(white: 0.7, alpha: 1)
-        if label.stringValue.isEmpty || label.stringValue == "Listening…" {
-            label.textColor = NSColor(white: 0.55, alpha: 1)
-            label.stringValue = "Transcribing…"
+        waveform.barColor = NSColor.white.withAlphaComponent(0.5)
+        if label.isHidden {
+            hint.isHidden = true
+            label.isHidden = false
+            label.textColor = NSColor.white.withAlphaComponent(0.6)
+            label.stringValue = "…"
         }
     }
 
     func showResult(_ text: String) {
-        waveform.barColor = NSColor(srgbRed: 0.2, green: 0.72, blue: 0.4, alpha: 1)
-        label.textColor = NSColor(white: 0.1, alpha: 1)
+        hint.isHidden = true
+        label.isHidden = false
+        waveform.barColor = NSColor(srgbRed: 0.3, green: 0.85, blue: 0.5, alpha: 1)
+        label.textColor = NSColor.white.withAlphaComponent(0.95)
         label.stringValue = text
-        hideAfter(1.2)
+        hideAfter(1.4)
     }
 
     func showError(_ message: String) {
+        hint.isHidden = true
+        label.isHidden = false
         waveform.idle()
-        waveform.barColor = NSColor(srgbRed: 0.9, green: 0.5, blue: 0.1, alpha: 1)
-        label.textColor = NSColor(srgbRed: 0.75, green: 0.35, blue: 0.05, alpha: 1)
+        waveform.barColor = NSColor(srgbRed: 0.95, green: 0.6, blue: 0.2, alpha: 1)
+        label.textColor = NSColor(srgbRed: 1, green: 0.75, blue: 0.4, alpha: 1)
         label.stringValue = message
         position()
         panel.orderFrontRegardless()
         panel.invalidateShadow()
-        hideAfter(2.5)
+        hideAfter(2.6)
     }
 
     func hide() {
