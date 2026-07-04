@@ -1,26 +1,81 @@
 import AppKit
 
-/// Bottom-center recording lozenge (the "Flow Bar" equivalent).
-///
-/// A non-activating borderless NSPanel: it must NEVER take key/main status or the
-/// focused text field — the paste target — loses focus and the dictation is lost.
+/// A live audio waveform: scrolling rounded bars driven by mic level samples.
+final class WaveformView: NSView {
+    private var samples: [CGFloat]
+    var barColor: NSColor = NSColor(srgbRed: 0.36, green: 0.42, blue: 0.92, alpha: 1)
+
+    init(bars: Int = 42) {
+        samples = Array(repeating: 0.06, count: bars)
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func push(_ level: CGFloat) {
+        samples.removeFirst()
+        samples.append(min(max(level, 0.06), 1))
+        needsDisplay = true
+    }
+
+    func setSamples(_ values: [CGFloat]) {
+        samples = values
+        needsDisplay = true
+    }
+
+    func idle() {
+        samples = Array(repeating: 0.06, count: samples.count)
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let n = samples.count
+        guard n > 0, bounds.width > 0 else { return }
+        let slot = bounds.width / CGFloat(n)
+        let barW = max(2, slot * 0.55)
+        barColor.setFill()
+        for (i, s) in samples.enumerated() {
+            let h = max(barW, s * bounds.height)
+            let x = CGFloat(i) * slot + (slot - barW) / 2
+            let y = (bounds.height - h) / 2
+            NSBezierPath(roundedRect: NSRect(x: x, y: y, width: barW, height: h),
+                         xRadius: barW / 2, yRadius: barW / 2).fill()
+        }
+    }
+}
+
+/// The white rounded pill background, drawn (not layer-only) so it also renders
+/// into an offscreen bitmap for previews.
+final class PillView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
+                                xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+        NSColor(srgbRed: 0.98, green: 0.98, blue: 0.99, alpha: 1).setFill()
+        path.fill()
+        NSColor(white: 0, alpha: 0.08).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+}
+
+/// Bottom-center recording lozenge, Wispr-style: light pill + live waveform +
+/// text. Non-activating so it never takes focus from the app you're dictating into.
 final class OverlayPanel {
+    static let width: CGFloat = 480
+    static let height: CGFloat = 46
+
     private let panel: NSPanel
+    private let waveform = WaveformView()
     private let label = NSTextField(labelWithString: "")
-    private let dot = NSView()
-    private let levelBar = NSView()
-    private let levelTrack = NSView()
     private var hideTimer: Timer?
 
-    private static let width: CGFloat = 420
-    private static let height: CGFloat = 44
+    private static let padding: CGFloat = 18
+    private static let waveWidth: CGFloat = 96
 
     init() {
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.height),
             styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: true
+            backing: .buffered, defer: true
         )
         panel.level = .statusBar
         panel.isOpaque = false
@@ -29,86 +84,93 @@ final class OverlayPanel {
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
+        panel.appearance = NSAppearance(named: .aqua) // keep it light even in dark mode
 
-        let content = NSView(frame: panel.contentRect(forFrameRect: panel.frame))
-        content.wantsLayer = true
-        content.layer?.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 0.92).cgColor
-        content.layer?.cornerRadius = Self.height / 2
-
-        dot.wantsLayer = true
-        dot.layer?.backgroundColor = NSColor.systemRed.cgColor
-        dot.layer?.cornerRadius = 6
-        dot.frame = NSRect(x: 18, y: (Self.height - 12) / 2, width: 12, height: 12)
-        content.addSubview(dot)
-
-        label.frame = NSRect(x: 42, y: (Self.height - 20) / 2, width: Self.width - 60, height: 20)
-        label.textColor = .white
-        label.font = .systemFont(ofSize: 13, weight: .medium)
+        let content = PillView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.height))
+        waveform.frame = NSRect(x: Self.padding, y: (Self.height - 22) / 2, width: Self.waveWidth, height: 22)
+        content.addSubview(waveform)
+        label.frame = NSRect(x: Self.padding + Self.waveWidth + 12, y: (Self.height - 20) / 2,
+                             width: Self.width - (Self.padding * 2) - Self.waveWidth - 12, height: 20)
+        label.font = .systemFont(ofSize: 14, weight: .medium)
+        label.textColor = NSColor(white: 0.1, alpha: 1)
         label.lineBreakMode = .byTruncatingHead
         label.maximumNumberOfLines = 1
+        label.cell?.usesSingleLineMode = true
         content.addSubview(label)
-
-        levelTrack.wantsLayer = true
-        levelTrack.layer?.backgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.15).cgColor
-        levelTrack.layer?.cornerRadius = 1.5
-        levelTrack.frame = NSRect(x: 42, y: 7, width: Self.width - 60, height: 3)
-        content.addSubview(levelTrack)
-
-        levelBar.wantsLayer = true
-        levelBar.layer?.backgroundColor = NSColor.systemGreen.cgColor
-        levelBar.layer?.cornerRadius = 1.5
-        levelBar.frame = NSRect(x: 0, y: 0, width: 0, height: 3)
-        levelTrack.addSubview(levelBar)
-
         panel.contentView = content
     }
 
+    /// Builds the pill + waveform + label at the fixed size. Used by the live
+    /// panel and by the `render-overlay` preview command.
+    static func buildContent() -> (PillView, WaveformView, NSTextField) {
+        let content = PillView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        let wave = WaveformView()
+        wave.frame = NSRect(x: padding, y: (height - 22) / 2, width: waveWidth, height: 22)
+        content.addSubview(wave)
+        let text = NSTextField(labelWithString: "")
+        text.frame = NSRect(x: padding + waveWidth + 12, y: (height - 20) / 2,
+                            width: width - (padding * 2) - waveWidth - 12, height: 20)
+        text.font = .systemFont(ofSize: 14, weight: .medium)
+        text.textColor = NSColor(white: 0.1, alpha: 1)
+        text.lineBreakMode = .byTruncatingHead
+        text.maximumNumberOfLines = 1
+        content.addSubview(text)
+        return (content, wave, text)
+    }
+
     private func position() {
-        // NSScreen.main is the primary display for an accessory app with no key
-        // window — use the screen the cursor is on, where the user is working.
         let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
-            ?? NSScreen.main
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
         let f = screen.visibleFrame
-        panel.setFrameOrigin(NSPoint(x: f.midX - Self.width / 2, y: f.minY + 24))
+        panel.setFrameOrigin(NSPoint(x: f.midX - Self.width / 2, y: f.minY + 28))
     }
 
     func showRecording() {
         hideTimer?.invalidate()
+        waveform.idle()
+        waveform.barColor = NSColor(srgbRed: 0.36, green: 0.42, blue: 0.92, alpha: 1)
+        label.textColor = NSColor(white: 0.55, alpha: 1)
         label.stringValue = "Listening…"
-        dot.layer?.backgroundColor = NSColor.systemRed.cgColor
-        setLevel(0)
         position()
         panel.orderFrontRegardless()
+        panel.invalidateShadow()
     }
 
     func showPartial(_ text: String) {
+        guard !text.isEmpty else { return }
+        label.textColor = NSColor(white: 0.1, alpha: 1)
         label.stringValue = text
     }
 
     func setLevel(_ level: Float) {
-        let w = CGFloat(min(max(level, 0), 1)) * levelTrack.frame.width
-        levelBar.frame.size.width = w
+        waveform.push(CGFloat(level))
     }
 
     func showProcessing() {
-        dot.layer?.backgroundColor = NSColor.systemOrange.cgColor
-        if label.stringValue.isEmpty { label.stringValue = "Transcribing…" }
-        setLevel(0)
+        waveform.idle()
+        waveform.barColor = NSColor(white: 0.7, alpha: 1)
+        if label.stringValue.isEmpty || label.stringValue == "Listening…" {
+            label.textColor = NSColor(white: 0.55, alpha: 1)
+            label.stringValue = "Transcribing…"
+        }
     }
 
     func showResult(_ text: String) {
-        dot.layer?.backgroundColor = NSColor.systemGreen.cgColor
+        waveform.barColor = NSColor(srgbRed: 0.2, green: 0.72, blue: 0.4, alpha: 1)
+        label.textColor = NSColor(white: 0.1, alpha: 1)
         label.stringValue = text
         hideAfter(1.2)
     }
 
     func showError(_ message: String) {
-        dot.layer?.backgroundColor = NSColor.systemYellow.cgColor
+        waveform.idle()
+        waveform.barColor = NSColor(srgbRed: 0.9, green: 0.5, blue: 0.1, alpha: 1)
+        label.textColor = NSColor(srgbRed: 0.75, green: 0.35, blue: 0.05, alpha: 1)
         label.stringValue = message
         position()
         panel.orderFrontRegardless()
+        panel.invalidateShadow()
         hideAfter(2.5)
     }
 

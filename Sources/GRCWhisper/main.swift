@@ -83,6 +83,21 @@ case "doctor":
     let report = try! runBlocking { await Doctor.report() }
     print(report)
 
+case "render-overlay":
+    // Offscreen preview of the dictation pill for design checks.
+    let out = args.count >= 2 ? args[1] : "overlay-preview.png"
+    MainActor.assumeIsolated {
+        let (content, wave, text) = OverlayPanel.buildContent()
+        wave.setSamples([0.1,0.2,0.15,0.35,0.6,0.45,0.8,0.55,0.3,0.5,0.7,0.9,0.6,0.4,0.55,0.75,0.5,0.3,0.2,0.4,0.65,0.85,0.6,0.35,0.25,0.45,0.7,0.5,0.3,0.5,0.6,0.4,0.25,0.35,0.55,0.7,0.45,0.3,0.2,0.15,0.1,0.08])
+        text.stringValue = "meeting on Wednesday at 3 p.m."
+        guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { exit(1) }
+        content.cacheDisplay(in: content.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out)")
+        }
+    }
+
 case "dict":
     let store = Store()
     switch args.count > 1 ? args[1] : "" {
