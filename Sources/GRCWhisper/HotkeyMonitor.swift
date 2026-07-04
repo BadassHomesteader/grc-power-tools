@@ -15,7 +15,7 @@ let kSyntheticEventMagic: Int64 = 0x4752_4357 // 'GRCW'
 /// - a non-hotkey keypress during a hold cancels dictation (user was doing Fn+arrow)
 final class HotkeyMonitor {
     enum Callback {
-        case down, up, cancel
+        case down, up, cancel, ocr
     }
 
     var handler: ((Callback) -> Void)?
@@ -39,6 +39,7 @@ final class HotkeyMonitor {
     private static let kVK_RightOption: Int64 = 61
     private static let kVK_RightCommand: Int64 = 54
     private static let kVK_Escape: Int64 = 53
+    private static let kVK_ANSI_T: Int64 = 17
 
     init(hotkey: Config.Hotkey) {
         self.hotkey = hotkey
@@ -127,6 +128,15 @@ final class HotkeyMonitor {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+
+        // OCR capture chord: Cmd+Opt+T (when not mid-dictation). Suppress so the
+        // 'T' isn't typed, and the app's menu key-equivalent doesn't double-fire.
+        if !held, type == .keyDown, keyCode == Self.kVK_ANSI_T,
+           flags.contains(.maskCommand), flags.contains(.maskAlternate),
+           !flags.contains(.maskControl) {
+            dispatch(.ocr)
+            return nil
+        }
 
         switch hotkey {
         case .fn:

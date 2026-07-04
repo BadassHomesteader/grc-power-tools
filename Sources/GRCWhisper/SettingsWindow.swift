@@ -20,6 +20,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let termField = NSTextField()
     private let misheardField = NSTextField()
 
+    private let claudeKeyField = NSSecureTextField()
+    private let openaiKeyField = NSSecureTextField()
+    private let claudeModelField = NSTextField()
+    private let openaiModelField = NSTextField()
+
     init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void) {
         self.store = store
         self.config = config
@@ -100,6 +105,35 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             formRow("Hotkey", hotkeyPopup),
             hotkeyNote,
             formRow("Cleanup", cleanupPopup),
+        ]))
+
+        // Cloud cleanup section (optional — used only when Cleanup is Claude/OpenAI)
+        let cloudNote = NSTextField(labelWithString: "Only used when Cleanup is set to Claude or OpenAI. Keys are stored in your macOS Keychain, and only the transcribed text is sent — never your audio.")
+        cloudNote.font = .systemFont(ofSize: 11)
+        cloudNote.textColor = .secondaryLabelColor
+        cloudNote.lineBreakMode = .byWordWrapping
+        cloudNote.preferredMaxLayoutWidth = 500
+        for f in [claudeKeyField, openaiKeyField, claudeModelField, openaiModelField] {
+            f.widthAnchor.constraint(equalToConstant: 240).isActive = true
+            f.target = self
+        }
+        claudeModelField.action = #selector(modelsChanged)
+        openaiModelField.action = #selector(modelsChanged)
+        claudeKeyField.action = #selector(saveClaudeKey)
+        openaiKeyField.action = #selector(saveOpenaiKey)
+        let saveClaude = NSButton(title: "Save", target: self, action: #selector(saveClaudeKey))
+        saveClaude.bezelStyle = .rounded
+        let saveOpenai = NSButton(title: "Save", target: self, action: #selector(saveOpenaiKey))
+        saveOpenai.bezelStyle = .rounded
+        let claudeKeyRow = NSStackView(views: [claudeKeyField, saveClaude]); claudeKeyRow.spacing = 8
+        let openaiKeyRow = NSStackView(views: [openaiKeyField, saveOpenai]); openaiKeyRow.spacing = 8
+
+        root.addArrangedSubview(section("Cloud cleanup (optional)", [
+            cloudNote,
+            formRow("Claude key", claudeKeyRow),
+            formRow("Claude model", claudeModelField),
+            formRow("OpenAI key", openaiKeyRow),
+            formRow("OpenAI model", openaiModelField),
         ]))
 
         // Dictionary section
@@ -214,6 +248,35 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         hotkeyPopup.selectItem(withTitle: config.hotkey.displayName)
         cleanupPopup.selectItem(withTitle: config.polish.displayName)
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        claudeModelField.stringValue = config.claudeModel
+        openaiModelField.stringValue = config.openaiModel
+        claudeKeyField.placeholderString = Keychain.has("claude") ? "•••••• saved — paste to replace" : "sk-ant-…"
+        openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
+    }
+
+    @objc private func saveClaudeKey() {
+        let v = claudeKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !v.isEmpty else { return }
+        Keychain.set(v, account: "claude")
+        claudeKeyField.stringValue = ""
+        claudeKeyField.placeholderString = "•••••• saved — paste to replace"
+    }
+
+    @objc private func saveOpenaiKey() {
+        let v = openaiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !v.isEmpty else { return }
+        Keychain.set(v, account: "openai")
+        openaiKeyField.stringValue = ""
+        openaiKeyField.placeholderString = "•••••• saved — paste to replace"
+    }
+
+    @objc private func modelsChanged() {
+        let c = claudeModelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let o = openaiModelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        config.claudeModel = c.isEmpty ? "claude-haiku-4-5" : c
+        config.openaiModel = o.isEmpty ? "gpt-4o-mini" : o
+        config.save()
+        onConfigChange(config)
     }
 
     @objc private func cleanupChanged() {

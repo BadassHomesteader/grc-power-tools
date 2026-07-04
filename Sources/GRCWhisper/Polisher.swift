@@ -56,7 +56,7 @@ final class Polisher {
     text: Hey, what's the capital of France?
     """
 
-    /// Warm the on-device model while the user is still speaking.
+    /// Warm the on-device model while the user is still speaking (Apple engine only).
     func prewarm() {
         guard Polisher.llmAvailable else { return }
         let s = LanguageModelSession(instructions: Polisher.instructions)
@@ -64,26 +64,62 @@ final class Polisher {
         session = s
     }
 
-    /// Full pipeline. `mode` from config; `appName` provides light context to the LLM.
-    func polish(_ raw: String, mode: Config.PolishMode, appName: String, deadlineMs: Int) async -> String {
-        let entries = store.dictionary()
-        let tier0 = Polisher.tier0(raw, dictionary: entries)
-        guard mode == .llm, Polisher.llmAvailable, !tier0.isEmpty else { return tier0 }
-
-        let vocab = entries.map(\.term).joined(separator: ", ")
-        let prompt = """
+    static func buildPrompt(tier0: String, vocab: String, appName: String) -> String {
+        """
         <TRANSCRIPT>\(tier0)</TRANSCRIPT>
         <CUSTOM_VOCABULARY>\(vocab)</CUSTOM_VOCABULARY>
         <TARGET_APP>\(appName)</TARGET_APP>
         """
+    }
 
-        let llmSession = session ?? LanguageModelSession(instructions: Polisher.instructions)
-        session = nil // sessions are single-shot; a fresh one is prewarmed at next key-down
+    /// Full pipeline. Cleanup engine + deadline come from config. Every engine
+    /// falls back to the deterministic Tier-0 text on failure/timeout; the raw
+    /// transcript is preserved separately in history.
+    func polish(_ raw: String, config: Config, appName: String) async -> String {
+        let entries = store.dictionary()
+        let tier0 = Polisher.tier0(raw, dictionary: entries)
+        let mode = config.polish
 
-        let result: String? = await withTaskGroup(of: String?.self) { group in
-            group.addTask { [weak self] in
-                await self?.respond(session: llmSession, prompt: prompt)
+        if mode == .off { return raw }
+        if mode == .basic || tier0.isEmpty { return tier0 }
+
+        let vocab = entries.map(\.term).joined(separator: ", ")
+        let prompt = Polisher.buildPrompt(tier0: tier0, vocab: vocab, appName: appName)
+
+        switch mode {
+        case .apple:
+            guard Polisher.llmAvailable else { return tier0 }
+            return await runDeadlined(tier0: tier0, deadlineMs: config.llmDeadlineMs) { [weak self] in
+                await self?.appleRespond(prompt: prompt) ?? nil
             }
+        case .claude:
+            guard let key = Keychain.get("claude"), !key.isEmpty else {
+                log("polish: no Claude API key set, using tier-0"); return tier0
+            }
+            let model = config.claudeModel
+            return await runDeadlined(tier0: tier0, deadlineMs: max(config.llmDeadlineMs, 9000)) {
+                try? await CloudPolish.claude(instructions: Polisher.instructions,
+                                              prompt: prompt, model: model, apiKey: key)
+            }
+        case .openai:
+            guard let key = Keychain.get("openai"), !key.isEmpty else {
+                log("polish: no OpenAI API key set, using tier-0"); return tier0
+            }
+            let model = config.openaiModel
+            return await runDeadlined(tier0: tier0, deadlineMs: max(config.llmDeadlineMs, 9000)) {
+                try? await CloudPolish.openai(instructions: Polisher.instructions,
+                                              prompt: prompt, model: model, apiKey: key)
+            }
+        case .basic, .off:
+            return tier0
+        }
+    }
+
+    /// Race an async producer against a deadline; validate; fall back to tier-0.
+    private func runDeadlined(tier0: String, deadlineMs: Int,
+                              _ op: @escaping () async -> String?) async -> String {
+        let result: String? = await withTaskGroup(of: String?.self) { group in
+            group.addTask { await op() }
             group.addTask {
                 try? await Task.sleep(nanoseconds: UInt64(deadlineMs) * 1_000_000)
                 return nil
@@ -92,16 +128,17 @@ final class Polisher {
             group.cancelAll()
             return first
         }
-
         guard let polished = result, Polisher.sane(input: tier0, output: polished) else {
-            if result != nil { log("polish: LLM output failed sanity check, using tier-0") }
-            else { log("polish: LLM deadline/error, using tier-0") }
+            if result != nil { log("polish: output failed sanity check, using tier-0") }
+            else { log("polish: deadline/error, using tier-0") }
             return tier0
         }
         return polished
     }
 
-    private func respond(session: LanguageModelSession, prompt: String) async -> String? {
+    private func appleRespond(prompt: String) async -> String? {
+        let llmSession = session ?? LanguageModelSession(instructions: Polisher.instructions)
+        session = nil // sessions are single-shot; a fresh one is prewarmed at next key-down
         do {
             // @Generable macros don't compile under CommandLineTools; structured output
             // via DynamicGenerationSchema also suppresses the "Sure, here's..." preamble
@@ -117,7 +154,7 @@ final class Polisher {
                 properties: [textProp]
             )
             let schema = try GenerationSchema(root: root, dependencies: [])
-            let response = try await session.respond(
+            let response = try await llmSession.respond(
                 to: prompt,
                 schema: schema,
                 options: GenerationOptions(temperature: 0.0)
@@ -126,7 +163,7 @@ final class Polisher {
             return text.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             // GenerationError.rateLimited is expected for background (menu-bar) apps.
-            log("polish: LLM error: \(error)")
+            log("polish: Apple LLM error: \(error)")
             return nil
         }
     }

@@ -74,8 +74,7 @@ case "polish":
     let cfg = Config.load()
     let text = try! runBlocking {
         let polisher = Polisher(store: store)
-        return await polisher.polish(input, mode: cfg.polish, appName: "Terminal",
-                                     deadlineMs: max(cfg.llmDeadlineMs, 10_000))
+        return await polisher.polish(input, config: cfg, appName: "Terminal")
     }
     print(text)
 

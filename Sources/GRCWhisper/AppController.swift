@@ -53,6 +53,7 @@ final class AppController {
             case .down: self.keyDown()
             case .up: self.keyUp()
             case .cancel: self.cancel()
+            case .ocr: self.captureScreenText()
             }
         }
         guard monitor.start() else {
@@ -83,7 +84,7 @@ final class AppController {
         onStateChange?(.recording)
         recordingStarted = Date()
         overlay.showRecording()
-        if config.polish == .llm { polisher.prewarm() }
+        if config.polish == .apple { polisher.prewarm() }
 
         guard let format = audio.currentFormat, format.sampleRate > 0 else {
             fail("No audio input device")
@@ -186,9 +187,7 @@ final class AppController {
                     return
                 }
                 let polished = await self.polisher.polish(
-                    raw, mode: cfg.polish,
-                    appName: ctx?.appName ?? "unknown",
-                    deadlineMs: cfg.llmDeadlineMs
+                    raw, config: cfg, appName: ctx?.appName ?? "unknown"
                 )
                 guard self.cycle == gen else { return }
                 self.deliver(raw: raw, polished: polished, durationMs: heldMs, ctx: ctx)
@@ -238,6 +237,36 @@ final class AppController {
         utterance = nil
         overlay.showError(message)
         finishCycle()
+    }
+
+    /// OCR flow: let the user select a screen region, recognize text on-device,
+    /// and paste it at the cursor (reuses the dictation paste + overlay).
+    func captureScreenText() {
+        guard state == .idle else { return }
+        state = .processing
+        onStateChange?(.processing)
+        let cfg = config
+        Task {
+            let text = await ScreenTextCapture.capture()
+            await MainActor.run {
+                defer { self.finishCycle() }
+                guard let text else { return } // user cancelled the selection
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    self.overlay.showError("No text found in the selection")
+                    return
+                }
+                do {
+                    try Inserter.insert(trimmed, restoreDelayMs: cfg.clipboardRestoreDelayMs)
+                    self.overlay.showResult(trimmed.count > 80 ? String(trimmed.prefix(77)) + "…" : trimmed)
+                } catch {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(trimmed, forType: .string)
+                    self.overlay.showError("Copied \(trimmed.count) characters to clipboard")
+                }
+                self.store.addHistory(app: "screen-ocr", raw: trimmed, polished: trimmed, durationMs: 0)
+            }
+        }
     }
 
     private func finishCycle() {

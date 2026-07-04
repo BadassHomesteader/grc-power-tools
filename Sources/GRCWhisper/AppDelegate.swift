@@ -79,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
         settingsItem.target = self
         appMenu.addItem(settingsItem)
+        let ocrMenuItem = NSMenuItem(title: "Capture Text from Screen", action: #selector(captureScreenText), keyEquivalent: "")
+        ocrMenuItem.target = self
+        appMenu.addItem(ocrMenuItem)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide GRC Whisper", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(withTitle: "Quit GRC Whisper", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -135,6 +138,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(.separator())
         }
 
+        let ocrItem = NSMenuItem(title: "Capture Text from Screen", action: #selector(captureScreenText), keyEquivalent: "t")
+        ocrItem.keyEquivalentModifierMask = [.command, .option]
+        ocrItem.target = self
+        menu.addItem(ocrItem)
+
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -142,6 +150,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit GRC Whisper", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         return menu
+    }
+
+    @objc private func captureScreenText() {
+        controller?.captureScreenText()
     }
 
     @objc private func copyHistoryItem(_ sender: NSMenuItem) {
