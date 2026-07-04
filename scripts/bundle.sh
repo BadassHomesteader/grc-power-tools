@@ -53,18 +53,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signature with a fixed identifier. NOTE: ad-hoc signatures pin the
-# per-build code hash, so rebuilding invalidates the Accessibility grant even
-# though System Settings still shows it enabled — toggle it off/on after each
-# rebuild. (A real signing identity would fix this; not worth it for local use.)
-# No hardened runtime — it would require audio-input entitlements and buys
-# nothing for a local ad-hoc build.
-echo "==> codesign (ad-hoc, identifier $BUNDLE_ID)"
-codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
+# Prefer a stable self-signed identity (tools/make_signing_cert.sh) so TCC grants
+# survive rebuilds; fall back to ad-hoc. No hardened runtime — it would require
+# audio-input entitlements and buys nothing for a local build.
+SIGN_ID="GRC Whisper Local Signing"
+if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
+    echo "==> codesign (stable identity: $SIGN_ID)"
+    codesign --force --sign "$SIGN_ID" --identifier "$BUNDLE_ID" "$APP"
+    GRANT_NOTE="stable-signed: your Accessibility grant carries across reinstalls."
+else
+    echo "==> codesign (ad-hoc — run tools/make_signing_cert.sh to stop grant resets)"
+    codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
+    GRANT_NOTE="ad-hoc: rebuilds reset the Accessibility grant. Re-add the app in
+      System Settings > Privacy & Security > Accessibility, or run
+      tools/make_signing_cert.sh once to make grants stick."
+fi
 
 echo "==> built $APP"
-echo "NOTE: if this replaced a previously-granted build, toggle GRC Whisper"
-echo "      OFF and ON in System Settings > Privacy & Security > Accessibility."
+echo "NOTE: $GRANT_NOTE"
 
 if [[ "${1:-}" == "--install" ]]; then
     echo "==> installing to /Applications"

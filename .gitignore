@@ -3,3 +3,8 @@ dist/
 .DS_Store
 *.wav
 *.aiff
+# never commit signing key material
+*.p12
+*.key
+*.crt
+cs.cnf

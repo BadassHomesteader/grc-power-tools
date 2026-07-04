@@ -14,19 +14,20 @@ struct ContextSnapshot {
         let appName = front?.localizedName ?? "unknown"
         let bundleID = front?.bundleIdentifier ?? ""
 
-        var secure = IsSecureEventInputEnabled()
-        if !secure {
-            // Also check the focused AX element for a secure text field.
-            let systemWide = AXUIElementCreateSystemWide()
-            var focused: CFTypeRef?
-            if AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-               let element = focused, CFGetTypeID(element) == AXUIElementGetTypeID() {
-                let axElement = unsafeDowncast(element, to: AXUIElement.self)
-                var subrole: CFTypeRef?
-                if AXUIElementCopyAttributeValue(axElement, kAXSubroleAttribute as CFString, &subrole) == .success,
-                   let s = subrole as? String, s == kAXSecureTextFieldSubrole as String {
-                    secure = true
-                }
+        // Only refuse when the FOCUSED field is itself a secure text field.
+        // The system-wide IsSecureEventInputEnabled() is NOT a reliable blocker:
+        // loginwindow and other background processes hold that flag for the whole
+        // login session, which would (and did) block all dictation everywhere.
+        var secure = false
+        let systemWide = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        if AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+           let element = focused, CFGetTypeID(element) == AXUIElementGetTypeID() {
+            let axElement = unsafeDowncast(element, to: AXUIElement.self)
+            var subrole: CFTypeRef?
+            if AXUIElementCopyAttributeValue(axElement, kAXSubroleAttribute as CFString, &subrole) == .success,
+               let s = subrole as? String, s == kAXSecureTextFieldSubrole as String {
+                secure = true
             }
         }
         return ContextSnapshot(appName: appName, bundleID: bundleID, isSecureField: secure)

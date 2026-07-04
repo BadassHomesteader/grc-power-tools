@@ -29,8 +29,9 @@ enum Inserter {
     }
 
     static func insert(_ text: String, restoreDelayMs: Int) throws {
-        guard !IsSecureEventInputEnabled() else { throw InsertError.secureInput }
-
+        // Secure-field refusal happens up front at key-down (ContextSnapshot); we
+        // don't re-check the global secure-input flag here — it's held session-wide
+        // by loginwindow and would wrongly block every paste.
         let pb = NSPasteboard.general
 
         // 1. Full-fidelity snapshot. Order matters: item.types is richest-first and

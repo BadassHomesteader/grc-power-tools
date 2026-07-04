@@ -68,10 +68,10 @@ enum Doctor {
         let secure = IsSecureEventInputEnabled()
         checks.append(Check(
             name: "Secure input",
-            ok: !secure,
+            ok: true, // informational: this flag no longer blocks dictation
             detail: secure
-                ? "another app holds secure keyboard input (password field / Terminal secure entry) — dictation is blocked while it does"
-                : "inactive"
+                ? "system secure-input flag is set (usually held by loginwindow) — harmless; dictation only pauses when you focus an actual password field"
+                : "clear"
         ))
 
         let locale = Locale(identifier: Config.load().localeIdentifier)
