@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CoreGraphics
 
 /// Glue for the dictation state machine: idle -> recording -> processing -> idle.
 ///
@@ -257,6 +258,13 @@ final class AppController {
     /// and paste it at the cursor (reuses the dictation paste + overlay).
     func captureScreenText() {
         guard state == .idle else { return }
+        // OCR needs THIS app to hold Screen Recording (even though the system
+        // screencapture tool does the grab). Nudge the grant on first use.
+        if !CGPreflightScreenCaptureAccess() {
+            _ = CGRequestScreenCaptureAccess()
+            overlay.showError("Enable Screen Recording for GRC Whisper in System Settings, then try again")
+            return
+        }
         state = .processing
         onStateChange?(.processing)
         let cfg = config

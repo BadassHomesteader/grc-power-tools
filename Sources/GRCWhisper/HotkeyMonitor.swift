@@ -180,9 +180,11 @@ final class HotkeyMonitor {
                 dispatch(.cancel)
                 return nil // swallow so it doesn't close the user's dialogs
             case Self.kVK_ANSI_T:
+                log("hotkey: +T leader armed (OCR)")
                 pending = .ocr; swallowedKeyUp = keyCode
                 return nil // OCR fires on release; recording continues harmlessly until then
             case Self.kVK_ANSI_A:
+                log("hotkey: +A leader armed (AI)")
                 pending = .ai; swallowedKeyUp = keyCode
                 return nil // keep recording — the user is about to speak the instruction
             default:

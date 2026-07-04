@@ -5,6 +5,7 @@ import ApplicationServices
 import Speech
 import FoundationModels
 import Carbon.HIToolbox
+import CoreGraphics
 
 /// Permission / environment diagnostics. Used by the `doctor` CLI subcommand
 /// and the menu-bar "Permission Doctor" item.
@@ -63,6 +64,13 @@ enum Doctor {
             detail: globe == 0
                 ? "'Press 🌐 key' is set to Do Nothing"
                 : "System Settings ▸ Keyboard ▸ 'Press 🌐 key' should be 'Do Nothing' or macOS will fight the Fn hotkey (current mode: \(globe))"
+        ))
+
+        let screen = CGPreflightScreenCaptureAccess()
+        checks.append(Check(
+            name: "Screen Recording (OCR)",
+            ok: screen,
+            detail: screen ? "granted" : "needed for screenshot→text (⌥⌘T) — System Settings ▸ Privacy & Security ▸ Screen Recording"
         ))
 
         let secure = IsSecureEventInputEnabled()
