@@ -89,6 +89,17 @@ case "rewrite":
     }
     print(out)
 
+case "ocr":
+    // grc-whisper ocr <image>  — OCR an image file (tests table reconstruction)
+    guard args.count >= 2, let png = try? Data(contentsOf: URL(fileURLWithPath: args[1])) else { usage() }
+    print(ScreenCapture.ocr(png))
+
+case "lens":
+    // grc-whisper lens <image>  — print the Google Lens results URL (test)
+    guard args.count >= 2, let png = try? Data(contentsOf: URL(fileURLWithPath: args[1])) else { usage() }
+    let url = try! runBlocking { await ScreenCapture.googleLensURL(png) }
+    print(url?.absoluteString ?? "(lens upload failed)")
+
 case "doctor":
     let report = try! runBlocking { await Doctor.report() }
     print(report)

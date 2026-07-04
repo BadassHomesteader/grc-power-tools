@@ -20,6 +20,8 @@ final class HotkeyMonitor {
         case up(Command)
         case cancel
         case ocr
+        case screenshot
+        case search
     }
 
     var handler: ((Callback) -> Void)?
@@ -39,7 +41,7 @@ final class HotkeyMonitor {
     /// mid-hold), so apps don't see an orphan keyUp.
     private var swallowedKeyUp: Int64?
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, ai }
+    private enum Pending { case none, ocr, ai, screenshot, search }
     private var pending: Pending = .none
 
     private static let kVK_Function: Int64 = 63
@@ -48,6 +50,8 @@ final class HotkeyMonitor {
     private static let kVK_Escape: Int64 = 53
     private static let kVK_ANSI_T: Int64 = 17
     private static let kVK_ANSI_A: Int64 = 0
+    private static let kVK_ANSI_S: Int64 = 1
+    private static let kVK_ANSI_G: Int64 = 5
 
     init(hotkey: Config.Hotkey) {
         self.hotkey = hotkey
@@ -178,6 +182,14 @@ final class HotkeyMonitor {
                 log("hotkey: +A leader armed (AI)")
                 pending = .ai; swallowedKeyUp = keyCode
                 return nil // keep recording — the user is about to speak the instruction
+            case Self.kVK_ANSI_S:
+                log("hotkey: +S leader armed (screenshot)")
+                pending = .screenshot; swallowedKeyUp = keyCode
+                return nil
+            case Self.kVK_ANSI_G:
+                log("hotkey: +G leader armed (Google search)")
+                pending = .search; swallowedKeyUp = keyCode
+                return nil
             default:
                 interrupted = true
                 dispatch(.cancel)
@@ -211,6 +223,8 @@ final class HotkeyMonitor {
                 case .none: dispatch(.up(.dictate))
                 case .ai: dispatch(.up(.ai))
                 case .ocr: dispatch(.ocr)
+                case .screenshot: dispatch(.screenshot)
+                case .search: dispatch(.search)
                 }
             }
             interrupted = false

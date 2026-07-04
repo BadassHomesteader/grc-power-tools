@@ -57,6 +57,12 @@ final class AppController {
             case .ocr:
                 if self.state == .recording { self.cancel() }
                 self.captureScreenText()
+            case .screenshot:
+                if self.state == .recording { self.cancel() }
+                self.captureScreenshot(search: false)
+            case .search:
+                if self.state == .recording { self.cancel() }
+                self.captureScreenshot(search: true)
             }
         }
         guard monitor.start() else {
@@ -256,38 +262,78 @@ final class AppController {
 
     /// OCR flow: let the user select a screen region, recognize text on-device,
     /// and paste it at the cursor (reuses the dictation paste + overlay).
-    func captureScreenText() {
-        guard state == .idle else { return }
-        // OCR needs THIS app to hold Screen Recording (even though the system
-        // screencapture tool does the grab). If it's missing, prompt + open the
-        // exact settings pane; the grant needs a quit & reopen to take effect.
-        if !CGPreflightScreenCaptureAccess() {
-            _ = CGRequestScreenCaptureAccess()
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                NSWorkspace.shared.open(url)
-            }
-            overlay.showError("Turn on Screen Recording for GRC Whisper, then quit & reopen the app")
-            return
+    /// Screen recording is required for all screen grabs (the app is the
+    /// responsible process even though the system tool captures). Prompt + open
+    /// the pane if missing; the grant needs a quit & reopen to take effect.
+    private func ensureScreenRecording() -> Bool {
+        if CGPreflightScreenCaptureAccess() { return true }
+        _ = CGRequestScreenCaptureAccess()
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
         }
+        overlay.showError("Turn on Screen Recording for GRC Whisper, then quit & reopen the app")
+        return false
+    }
+
+    private static func putImageOnClipboard(_ png: Data) {
+        let pb = NSPasteboard.general
+        let item = NSPasteboardItem()
+        item.setData(png, forType: .png)
+        if let tiff = NSImage(data: png)?.tiffRepresentation { item.setData(tiff, forType: .tiff) }
+        pb.clearContents()
+        pb.writeObjects([item])
+    }
+
+    /// hold + T: OCR a screen region to the clipboard (tab-separated if it's a table).
+    func captureScreenText() {
+        guard state == .idle, ensureScreenRecording() else { return }
         state = .processing
         onStateChange?(.processing)
         Task {
-            let text = await ScreenTextCapture.capture()
+            let png = await ScreenCapture.grabRegionPNG()
             await MainActor.run {
                 defer { self.finishCycle() }
-                guard let text else { return } // user cancelled the selection
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else {
-                    self.overlay.showError("No text found in the selection")
-                    return
-                }
-                // OCR text goes to the clipboard — you're usually not in a text
-                // field when grabbing text off the screen. Paste it with ⌘V.
+                guard let png else { return } // cancelled
+                let text = ScreenCapture.ocr(png).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { self.overlay.showError("No text found in the selection"); return }
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(trimmed, forType: .string)
-                let preview = trimmed.count > 60 ? String(trimmed.prefix(57)) + "…" : trimmed
-                self.overlay.showResult("Copied to clipboard · \(preview)")
-                self.store.addHistory(app: "screen-ocr", raw: trimmed, polished: trimmed, durationMs: 0)
+                NSPasteboard.general.setString(text, forType: .string)
+                let preview = text.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\t", with: " ")
+                let short = preview.count > 60 ? String(preview.prefix(57)) + "…" : preview
+                self.overlay.showResult("Copied to clipboard · \(short)")
+                self.store.addHistory(app: "screen-ocr", raw: text, polished: text, durationMs: 0)
+            }
+        }
+    }
+
+    /// hold + S: copy a screen region as an image. hold + G: same, then open Google Lens.
+    func captureScreenshot(search: Bool) {
+        guard state == .idle, ensureScreenRecording() else { return }
+        state = .processing
+        onStateChange?(.processing)
+        overlay.showProcessing()
+        Task {
+            guard let png = await ScreenCapture.grabRegionPNG() else {
+                await MainActor.run { self.finishCycle() }
+                return
+            }
+            await MainActor.run {
+                AppController.putImageOnClipboard(png)
+                self.overlay.showResult(search ? "Searching Google Lens…" : "Screenshot copied to clipboard")
+            }
+            guard search else {
+                await MainActor.run { self.finishCycle() }
+                return
+            }
+            let url = await ScreenCapture.googleLensURL(png)
+            await MainActor.run {
+                defer { self.finishCycle() }
+                if let url {
+                    NSWorkspace.shared.open(url)
+                    self.overlay.showResult("Opened Google Lens · image on clipboard")
+                } else {
+                    self.overlay.showError("Couldn't reach Google Lens — image is on your clipboard")
+                }
             }
         }
     }
