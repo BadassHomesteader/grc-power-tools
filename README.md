@@ -92,13 +92,17 @@ History, dictionary, and logs live in the same folder. Delete the folder to rese
 
 ## Leader chords (hold your hotkey, tap a letter)
 
-Your dictation hotkey doubles as a leader — hold it and tap a letter instead of speaking:
+Your dictation hotkey doubles as a leader — hold it and the bar shows the menu (`Speak · T text · S screenshot · G search · A ask AI`). Tap a letter or just speak:
 
 - **hold + speak + release** → dictation (as normal).
-- **hold + T** → **OCR**: drag a screen region, its text is pasted at your cursor (fully local via Apple Vision). Needs Screen Recording permission the first time. Also available from the menu-bar mic ▸ Capture Text from Screen.
+- **hold + T** → **text (OCR)**: drag a screen region, the recognized text is copied to your clipboard (paste with ⌘V). Tables come back **tab-separated** so they paste into Excel/Sheets/Numbers as a grid. Fully local via Apple Vision.
+- **hold + S** → **screenshot**: drag a region, the image is copied to your clipboard.
+- **hold + G** → **Google Lens**: drag a region → image to clipboard + Google Lens results open in your browser (Circle-to-Search style).
 - **hold + A** → **AI** (routes to Claude, falling back to OpenAI, then on-device):
   - *nothing selected* → this dictation is cleaned by the cloud AI instead of the on-device model ("smart cleanup").
   - *text selected* → **command mode**: keep holding, speak an instruction ("make this formal", "translate to Spanish"), release → the AI rewrites your selection in place.
+
+T / S / G need Screen Recording permission the first time (System Settings ▸ Privacy & Security ▸ Screen Recording, then quit & reopen). OCR is also on the menu-bar mic ▸ Capture Text from Screen.
 
 
 ## Cloud cleanup (optional, opt-in)
