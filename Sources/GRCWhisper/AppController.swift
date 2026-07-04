@@ -72,6 +72,10 @@ final class AppController {
             overlay.showError("Secure input field — can't dictate here")
             return
         }
+        if ctx.bundleID == "com.grc.whisper" {
+            overlay.showError("Click into another app first, then hold to dictate")
+            return
+        }
         cycle += 1
         let gen = cycle
         context = ctx

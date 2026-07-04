@@ -46,7 +46,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>26.0</string>
-    <key>LSUIElement</key><true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>GRC Whisper records while you hold the dictation hotkey and transcribes entirely on this Mac.</string>
     <key>NSHumanReadableCopyright</key><string>Local-only dictation. No network. No cloud.</string>

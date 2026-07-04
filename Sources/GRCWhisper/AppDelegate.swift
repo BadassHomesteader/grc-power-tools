@@ -7,37 +7,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: AppController!
     private var config = Config.load()
     private let store = Store()
+    private var settings: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        // Regular app: Dock icon + standard menus, so it's findable and quittable
+        // like any app. The menu-bar status item stays for at-a-glance state.
+        NSApp.setActivationPolicy(.regular)
+        NSApp.mainMenu = buildMainMenu()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         setIcon(recording: false)
-        statusItem.menu = buildMenu()
+        statusItem.menu = buildStatusMenu()
 
         // Nudge the Accessibility prompt early — the hotkey tap needs it.
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
 
         controller = AppController(config: config, store: store)
         controller.onStateChange = { [weak self] state in
             self?.setIcon(recording: state == .recording)
-            self?.statusItem.menu = self?.buildMenu()
+            self?.statusItem.menu = self?.buildStatusMenu()
         }
+
+        showSettings(nil) // open the window on launch so the app is visible
 
         Task {
             do {
                 try await controller.start()
-                statusItem.menu = buildMenu()
+                statusItem.menu = buildStatusMenu()
             } catch {
                 log("startup error: \(error.localizedDescription)")
                 let alert = NSAlert()
                 alert.messageText = "GRC Whisper couldn't start"
                 alert.informativeText = error.localizedDescription
-                    + "\n\nGrant the permission in System Settings ▸ Privacy & Security, then relaunch."
+                    + "\n\nGrant the permission in the Settings window (Permissions section), then reopen the app."
                 alert.runModal()
+                showSettings(nil)
             }
         }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showSettings(nil)
+        return true
+    }
+
+    // MARK: Settings window
+
+    @objc func showSettings(_ sender: Any?) {
+        if settings == nil {
+            settings = SettingsWindowController(store: store, config: config) { [weak self] newConfig in
+                self?.config = newConfig
+                self?.controller?.config = newConfig  // cleanup mode applies live
+                self?.statusItem.menu = self?.buildStatusMenu()
+            }
+        }
+        settings?.show()
+    }
+
+    // MARK: Menus
+
+    private func buildMainMenu() -> NSMenu {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appItem.submenu = appMenu
+        appMenu.addItem(withTitle: "About GRC Whisper",
+                        action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide GRC Whisper", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Quit GRC Whisper", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+
+        return main
     }
 
     private func setIcon(recording: Bool) {
@@ -48,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.contentTintColor = recording ? .systemRed : nil
     }
 
-    private func buildMenu() -> NSMenu {
+    private func buildStatusMenu() -> NSMenu {
         let menu = NSMenu()
 
         let stateLabel: String
@@ -68,9 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             header.isEnabled = false
             menu.addItem(header)
             for entry in history {
-                let title = entry.polished.count > 60
-                    ? String(entry.polished.prefix(57)) + "…"
-                    : entry.polished
+                let title = entry.polished.count > 60 ? String(entry.polished.prefix(57)) + "…" : entry.polished
                 let item = NSMenuItem(title: title, action: #selector(copyHistoryItem(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = entry.polished
@@ -79,49 +135,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(.separator())
         }
 
-        let polishMenu = NSMenu()
-        for mode in Config.PolishMode.allCases {
-            let item = NSMenuItem(title: mode.displayName, action: #selector(setPolishMode(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = mode.rawValue
-            item.state = config.polish == mode ? .on : .off
-            polishMenu.addItem(item)
-        }
-        let polishItem = NSMenuItem(title: "Cleanup", action: nil, keyEquivalent: "")
-        menu.addItem(polishItem)
-        menu.setSubmenu(polishMenu, for: polishItem)
-
-        let hotkeyMenu = NSMenu()
-        for hk in Config.Hotkey.allCases {
-            let item = NSMenuItem(title: hk.displayName, action: #selector(setHotkey(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = hk.rawValue
-            item.state = config.hotkey == hk ? .on : .off
-            hotkeyMenu.addItem(item)
-        }
-        let hotkeyItem = NSMenuItem(title: "Hotkey", action: nil, keyEquivalent: "")
-        menu.addItem(hotkeyItem)
-        menu.setSubmenu(hotkeyMenu, for: hotkeyItem)
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
         menu.addItem(.separator())
-
-        let doctorItem = NSMenuItem(title: "Permission Doctor…", action: #selector(runDoctor), keyEquivalent: "")
-        doctorItem.target = self
-        menu.addItem(doctorItem)
-
-        let dataItem = NSMenuItem(title: "Open Data Folder", action: #selector(openDataFolder), keyEquivalent: "")
-        dataItem.target = self
-        menu.addItem(dataItem)
-
-        let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        loginItem.target = self
-        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(loginItem)
-
-        menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "Quit GRC Whisper", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quitItem)
-
+        menu.addItem(NSMenuItem(title: "Quit GRC Whisper", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         return menu
     }
 
@@ -129,57 +148,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let text = sender.representedObject as? String else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    @objc private func setPolishMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let mode = Config.PolishMode(rawValue: raw) else { return }
-        config.polish = mode
-        config.save()
-        controller?.config.polish = mode // applies live; read per-utterance
-        statusItem.menu = buildMenu()
-    }
-
-    @objc private func setHotkey(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let hk = Config.Hotkey(rawValue: raw) else { return }
-        let changed = config.hotkey != hk
-        config.hotkey = hk
-        config.save()
-        statusItem.menu = buildMenu()
-        if changed {
-            // The event tap is created once at startup; swapping it live is phase 2.
-            let alert = NSAlert()
-            alert.messageText = "Hotkey saved"
-            alert.informativeText = "Quit and reopen GRC Whisper to apply the new hotkey."
-            alert.runModal()
-        }
-    }
-
-    @objc private func runDoctor() {
-        Task {
-            let report = await Doctor.report()
-            let alert = NSAlert()
-            alert.messageText = "Permission Doctor"
-            alert.informativeText = report
-            alert.runModal()
-        }
-    }
-
-    @objc private func openDataFolder() {
-        NSWorkspace.shared.open(Config.appSupportDir)
-    }
-
-    @objc private func toggleLaunchAtLogin() {
-        do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            } else {
-                try SMAppService.mainApp.register()
-            }
-        } catch {
-            log("launch-at-login toggle failed: \(error)")
-        }
-        statusItem.menu = buildMenu()
     }
 }
