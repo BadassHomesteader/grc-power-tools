@@ -31,7 +31,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         self.onConfigChange = onConfigChange
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: 940, height: 660),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
@@ -78,6 +78,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         header.spacing = 2
         root.addArrangedSubview(header)
 
+        // Two columns so everything fits on screen without scrolling.
+        let leftCol = NSStackView()
+        leftCol.orientation = .vertical; leftCol.alignment = .leading; leftCol.spacing = 16
+        let rightCol = NSStackView()
+        rightCol.orientation = .vertical; rightCol.alignment = .leading; rightCol.spacing = 16
+
         // Status section
         statusStack.orientation = .vertical
         statusStack.alignment = .leading
@@ -88,7 +94,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         openAX.bezelStyle = .rounded
         let statusButtons = NSStackView(views: [recheck, openAX])
         statusButtons.spacing = 8
-        root.addArrangedSubview(section("Permissions", [statusStack, statusButtons]))
+        leftCol.addArrangedSubview(section("Permissions", [statusStack, statusButtons]))
 
         // Dictation section
         for mode in Config.PolishMode.allCases { cleanupPopup.addItem(withTitle: mode.displayName) }
@@ -101,20 +107,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         hotkeyNote.textColor = .secondaryLabelColor
         hotkeyNote.stringValue = " "
 
-        root.addArrangedSubview(section("Dictation", [
+        rightCol.addArrangedSubview(section("Dictation", [
             formRow("Hotkey", hotkeyPopup),
             hotkeyNote,
             formRow("Cleanup", cleanupPopup),
         ]))
 
         // Cloud cleanup section (optional — used only when Cleanup is Claude/OpenAI)
-        let cloudNote = NSTextField(labelWithString: "Only used when Cleanup is set to Claude or OpenAI. Keys are stored in your macOS Keychain, and only the transcribed text is sent — never your audio.")
+        let cloudNote = NSTextField(labelWithString: "Only used when Cleanup is set to Claude or OpenAI. Keys are saved in a private, owner-only file in the app's data folder, and only the transcribed text is sent — never your audio.")
         cloudNote.font = .systemFont(ofSize: 11)
         cloudNote.textColor = .secondaryLabelColor
         cloudNote.lineBreakMode = .byWordWrapping
-        cloudNote.preferredMaxLayoutWidth = 500
+        cloudNote.preferredMaxLayoutWidth = 400
         for f in [claudeKeyField, openaiKeyField, claudeModelField, openaiModelField] {
-            f.widthAnchor.constraint(equalToConstant: 240).isActive = true
+            f.widthAnchor.constraint(equalToConstant: 200).isActive = true
             f.target = self
         }
         claudeModelField.action = #selector(modelsChanged)
@@ -128,7 +134,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let claudeKeyRow = NSStackView(views: [claudeKeyField, saveClaude]); claudeKeyRow.spacing = 8
         let openaiKeyRow = NSStackView(views: [openaiKeyField, saveOpenai]); openaiKeyRow.spacing = 8
 
-        root.addArrangedSubview(section("Cloud cleanup (optional)", [
+        rightCol.addArrangedSubview(section("Cloud cleanup (optional)", [
             cloudNote,
             formRow("Claude key", claudeKeyRow),
             formRow("Claude model", claudeModelField),
@@ -155,19 +161,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         scroll.borderType = .bezelBorder
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.heightAnchor.constraint(equalToConstant: 130).isActive = true
-        scroll.widthAnchor.constraint(equalToConstant: 520).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 400).isActive = true
 
         termField.placeholderString = "KYAW"
-        termField.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        termField.widthAnchor.constraint(equalToConstant: 120).isActive = true
         misheardField.placeholderString = "K Y A W, kayak"
-        misheardField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        misheardField.widthAnchor.constraint(equalToConstant: 160).isActive = true
         let addBtn = NSButton(title: "Add", target: self, action: #selector(addDictEntry))
         addBtn.bezelStyle = .rounded
-        let removeBtn = NSButton(title: "Remove Selected", target: self, action: #selector(removeDictEntry))
+        let removeBtn = NSButton(title: "Remove", target: self, action: #selector(removeDictEntry))
         removeBtn.bezelStyle = .rounded
-        let dictControls = NSStackView(views: [termField, misheardField, addBtn, removeBtn])
-        dictControls.spacing = 8
-        root.addArrangedSubview(section("Personal dictionary", [scroll, dictControls]))
+        let dictFields = NSStackView(views: [termField, misheardField]); dictFields.spacing = 8
+        let dictButtons = NSStackView(views: [addBtn, removeBtn]); dictButtons.spacing = 8
+        let dictControls = NSStackView(views: [dictFields, dictButtons])
+        dictControls.orientation = .vertical; dictControls.alignment = .leading; dictControls.spacing = 8
+        leftCol.addArrangedSubview(section("Personal dictionary", [scroll, dictControls]))
 
         // General section
         launchLoginCheck.target = self
@@ -181,7 +189,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         version.textColor = .tertiaryLabelColor
         let generalButtons = NSStackView(views: [dataBtn, quitBtn])
         generalButtons.spacing = 8
-        root.addArrangedSubview(section("General", [launchLoginCheck, generalButtons, version]))
+        rightCol.addArrangedSubview(section("General", [launchLoginCheck, generalButtons, version]))
+
+        let columns = NSStackView(views: [leftCol, rightCol])
+        columns.orientation = .horizontal
+        columns.alignment = .top
+        columns.spacing = 18
+        root.addArrangedSubview(columns)
 
         // Scroll container
         let outerScroll = NSScrollView()
@@ -227,7 +241,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             content.bottomAnchor.constraint(equalTo: box.bottomAnchor),
             content.leadingAnchor.constraint(equalTo: box.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-            box.widthAnchor.constraint(equalToConstant: 540),
+            box.widthAnchor.constraint(equalToConstant: 440),
         ])
         return box
     }

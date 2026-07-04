@@ -1,42 +1,39 @@
 import Foundation
-import Security
 
-/// Minimal Keychain wrapper for cloud API keys. Keys are stored as generic
-/// passwords under this app's service, never in the plaintext config.json.
+/// API-key store. Backed by an owner-only (0600) file in the app's data folder
+/// rather than the macOS Keychain — the Keychain re-prompts for the login
+/// password on every reinstall (its per-app ACL doesn't follow a rebuilt binary),
+/// which is far more annoying than valuable for a local personal app. The file
+/// is readable only by your account.
 enum Keychain {
-    private static let service = "com.grc.whisper"
+    private static var file: URL {
+        Config.appSupportDir.appendingPathComponent("keys.json")
+    }
+
+    private static func load() -> [String: String] {
+        guard let data = try? Data(contentsOf: file),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return [:]
+        }
+        return dict
+    }
+
+    private static func store(_ dict: [String: String]) {
+        guard let data = try? JSONEncoder().encode(dict) else { return }
+        // Create with owner-only perms, then write.
+        FileManager.default.createFile(atPath: file.path, contents: nil,
+                                       attributes: [.posixPermissions: 0o600])
+        try? data.write(to: file)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
 
     static func set(_ value: String, account: String) {
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(base as CFDictionary)
-        guard !value.isEmpty, let data = value.data(using: .utf8) else { return }
-        var add = base
-        add[kSecValueData as String] = data
-        SecItemAdd(add as CFDictionary, nil)
+        var dict = load()
+        if value.isEmpty { dict[account] = nil } else { dict[account] = value }
+        store(dict)
     }
 
-    static func get(_ account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let str = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return str
-    }
+    static func get(_ account: String) -> String? { load()[account] }
 
-    static func has(_ account: String) -> Bool {
-        (get(account)?.isEmpty == false)
-    }
+    static func has(_ account: String) -> Bool { (get(account)?.isEmpty == false) }
 }

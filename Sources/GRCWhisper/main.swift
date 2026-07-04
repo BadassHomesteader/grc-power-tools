@@ -100,6 +100,23 @@ case "lens":
     let url = try! runBlocking { await ScreenCapture.googleLensURL(png) }
     print(url?.absoluteString ?? "(lens upload failed)")
 
+case "settings-preview":
+    MainActor.assumeIsolated {
+        let sc = SettingsWindowController(store: Store(), config: Config.load()) { _ in }
+        guard let window = sc.window else { exit(1) }
+        window.setContentSize(NSSize(width: 940, height: 660))
+        window.layoutIfNeeded()
+        guard let content = window.contentView else { exit(1) }
+        content.layoutSubtreeIfNeeded()
+        if let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+            content.cacheDisplay(in: content.bounds, to: rep)
+            if let data = rep.representation(using: .png, properties: [:]) {
+                try? data.write(to: URL(fileURLWithPath: args.count >= 2 ? args[1] : "settings.png"))
+                print("wrote")
+            }
+        }
+    }
+
 case "doctor":
     let report = try! runBlocking { await Doctor.report() }
     print(report)
