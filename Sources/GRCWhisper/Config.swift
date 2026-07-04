@@ -7,6 +7,7 @@ struct Config: Codable {
         case rightOption
         case rightCommand
         case ctrlOption    // hold Control+Option together (external keyboards)
+        case shiftCommand  // hold Shift+Command together
 
         var displayName: String {
             switch self {
@@ -14,6 +15,7 @@ struct Config: Codable {
             case .rightOption: return "Right Option"
             case .rightCommand: return "Right Command"
             case .ctrlOption: return "Control + Option"
+            case .shiftCommand: return "Shift + Command"
             }
         }
     }
