@@ -114,7 +114,13 @@ final class OverlayPanel {
     private let textLabel = NSTextField(labelWithString: "")
     private let windowDiagram = WindowDiagramView()
     private let windowLabel = NSTextField(labelWithString: "")
+    private let hintStrip = NSTextField(wrappingLabelWithString: "")
     private var hideTimer: Timer?
+    /// While recording, we show the leader-key hints until the user actually speaks,
+    /// then swap in the waveform.
+    private var awaitingSpeech = false
+    private static let speechThreshold: Float = 0.22
+    private static let hintsText = "A ai · T text · S shot · G lens\nC X V files · ← → ↑ ↓ windows"
 
     private enum Mode { case waveform, text, window }
 
@@ -146,6 +152,16 @@ final class OverlayPanel {
 
         waveform.frame = Self.waveFrame
         pill.addSubview(waveform)
+
+        // Sits where the waveform is; shown while holding, before you speak.
+        hintStrip.frame = NSRect(x: Self.waveFrame.minX, y: (Self.height - 34) / 2, width: Self.waveFrame.width, height: 34)
+        hintStrip.font = .systemFont(ofSize: 11.5, weight: .medium)
+        hintStrip.alignment = .left
+        hintStrip.maximumNumberOfLines = 2
+        hintStrip.lineBreakMode = .byWordWrapping
+        hintStrip.stringValue = Self.hintsText
+        hintStrip.isHidden = true
+        pill.addSubview(hintStrip)
 
         hintLabel.frame = Self.hintFrame
         hintLabel.font = .systemFont(ofSize: 13, weight: .medium)
@@ -180,14 +196,16 @@ final class OverlayPanel {
         iconView.contentTintColor = fg
         waveform.barColor = waveColor
         hintLabel.textColor = hintColor
+        hintStrip.textColor = hintColor
         windowDiagram.stroke = fg
         windowDiagram.needsDisplay = true
         if !textLabel.isHidden { textLabel.textColor = fg }
         if !windowLabel.isHidden { windowLabel.textColor = fg }
     }
 
-    /// Builds a static preview pill (recording state) for `render-overlay`.
-    static func buildContent(dark: Bool = false) -> NSView {
+    /// Builds a static preview pill for `render-overlay`. `speaking:false` shows the
+    /// armed hint state; `speaking:true` shows the live waveform.
+    static func buildContent(dark: Bool = false, speaking: Bool = false) -> NSView {
         let panel = OverlayPanel()
         panel.scheme = dark ? .dark : .light
         panel.waveform.setSamples((0..<90).map { i in
@@ -196,6 +214,10 @@ final class OverlayPanel {
         })
         panel.setMode(.waveform)
         panel.hintLabel.stringValue = "release to stop"
+        if !speaking {
+            panel.waveform.isHidden = true
+            panel.hintStrip.isHidden = false
+        }
         return panel.pill
     }
 
@@ -217,6 +239,8 @@ final class OverlayPanel {
         textLabel.isHidden = (mode != .text)
         windowDiagram.isHidden = (mode != .window)
         windowLabel.isHidden = (mode != .window)
+        hintStrip.isHidden = true          // shown explicitly by showRecording()
+        awaitingSpeech = false
     }
 
     private func position() {
@@ -244,6 +268,10 @@ final class OverlayPanel {
         waveform.idle()
         hintLabel.stringValue = "release to stop"
         setMode(.waveform)
+        // Start with the hints; the first real speech swaps in the waveform.
+        waveform.isHidden = true
+        hintStrip.isHidden = false
+        awaitingSpeech = true
         present()
     }
 
@@ -252,6 +280,11 @@ final class OverlayPanel {
 
     func setLevels(_ levels: [Float]) {
         for l in levels { waveform.push(CGFloat(l)) }
+        if awaitingSpeech && levels.contains(where: { $0 > Self.speechThreshold }) {
+            awaitingSpeech = false
+            hintStrip.isHidden = true
+            waveform.isHidden = false
+        }
     }
 
     func showProcessing() {

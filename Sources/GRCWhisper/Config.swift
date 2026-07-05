@@ -47,29 +47,42 @@ struct Config: Codable {
     /// The set of sizes a window snap cycles through on repeated arrow taps.
     /// Bigger monitors benefit from smaller fractions (¼, ⅕).
     enum SnapSizes: String, Codable, CaseIterable {
-        case halvesThirds     // ½ ⅓ ⅔
-        case halvesQuarters   // ½ ⅓ ¼
-        case bigMonitor       // ½ ⅓ ¼ ⅕
-        case compact          // ⅓ ¼ ⅕
+        case thirds          // ½ ⅓ ⅔
+        case quarters        // ½ ¼ ¾
+        case thirdsQuarters  // ½ ⅓ ⅔ ¼ ¾
+        case fifths          // ½ ⅕ ⅘
 
         var displayName: String {
             switch self {
-            case .halvesThirds:   return "½ · ⅓ · ⅔"
-            case .halvesQuarters: return "½ · ⅓ · ¼"
-            case .bigMonitor:     return "½ · ⅓ · ¼ · ⅕  (big screens)"
-            case .compact:        return "⅓ · ¼ · ⅕"
+            case .thirds:         return "½ · ⅓ · ⅔"
+            case .quarters:       return "½ · ¼ · ¾"
+            case .thirdsQuarters: return "½ · ⅓ · ⅔ · ¼ · ¾"
+            case .fifths:         return "½ · ⅕ · ⅘  (big screens)"
             }
         }
 
+        // Each preset pairs a small fraction with its large complement, so a repeat
+        // tap can also make the window the BIG side of the split (⅓↔⅔, ¼↔¾, ⅕↔⅘).
         var steps: [(fraction: CGFloat, label: String)] {
             let third: CGFloat = 1.0 / 3.0
             let twoThird: CGFloat = 2.0 / 3.0
             switch self {
-            case .halvesThirds:   return [(0.5, "½"), (third, "⅓"), (twoThird, "⅔")]
-            case .halvesQuarters: return [(0.5, "½"), (third, "⅓"), (0.25, "¼")]
-            case .bigMonitor:     return [(0.5, "½"), (third, "⅓"), (0.25, "¼"), (0.2, "⅕")]
-            case .compact:        return [(third, "⅓"), (0.25, "¼"), (0.2, "⅕")]
+            case .thirds:         return [(0.5, "½"), (third, "⅓"), (twoThird, "⅔")]
+            case .quarters:       return [(0.5, "½"), (0.25, "¼"), (0.75, "¾")]
+            case .thirdsQuarters: return [(0.5, "½"), (third, "⅓"), (twoThird, "⅔"), (0.25, "¼"), (0.75, "¾")]
+            case .fifths:         return [(0.5, "½"), (0.2, "⅕"), (0.8, "⅘")]
             }
+        }
+
+        // Legacy raw values (halvesThirds…) or anything unknown fall back to .thirds
+        // instead of throwing (which would wipe the whole config on load).
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = SnapSizes(rawValue: raw) ?? .thirds
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
         }
     }
 
@@ -149,7 +162,7 @@ struct Config: Codable {
     /// What hold + A does: in-app chat, browser, or both.
     var aiChatMode: AIChatMode = .both
     /// Sizes window snaps cycle through on repeated arrow taps.
-    var snapSizes: SnapSizes = .halvesThirds
+    var snapSizes: SnapSizes = .thirds
 
     init() {}
 
@@ -176,7 +189,7 @@ struct Config: Codable {
         overlayPosition = try c.decodeIfPresent(OverlayPosition.self, forKey: .overlayPosition) ?? .bottomCenter
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? .dark
         aiChatMode = try c.decodeIfPresent(AIChatMode.self, forKey: .aiChatMode) ?? .both
-        snapSizes = try c.decodeIfPresent(SnapSizes.self, forKey: .snapSizes) ?? .halvesThirds
+        snapSizes = try c.decodeIfPresent(SnapSizes.self, forKey: .snapSizes) ?? .thirds
     }
 
     static var appSupportDir: URL {
