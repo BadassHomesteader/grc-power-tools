@@ -154,6 +154,17 @@ case "render-window":
         }
     }
 
+case "advpaste-preview":
+    let out = args.count >= 2 ? args[1] : "advpaste-preview.png"
+    let dark = !(args.count >= 3 && args[2] == "light")
+    MainActor.assumeIsolated {
+        let v = AdvancedPasteView(clipboard: "The quarterly report shows revenue up 12% with strong enterprise growth and a healthy pipeline for Q3.", dark: dark)
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) { try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)") }
+    }
+
 case "snapassist-preview":
     let out = args.count >= 2 ? args[1] : "snapassist-preview.png"
     let dark = args.count >= 3 && args[2] == "dark"

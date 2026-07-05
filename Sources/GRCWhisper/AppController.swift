@@ -28,6 +28,7 @@ final class AppController {
     private let overlay = OverlayPanel()
     private let gridOverlay = GridOverlay()
     private let snapAssist = SnapAssist()
+    private let advancedPaste = AdvancedPaste()
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
 
@@ -99,6 +100,8 @@ final class AppController {
                 self.maybeSnapAssist()
             case .grid:
                 self.openGrid()
+            case .advancedPaste:
+                self.openAdvancedPaste()
             }
         }
         guard monitor.start() else {
@@ -376,6 +379,50 @@ final class AppController {
                 } else {
                     self.overlay.showResult("Screenshot copied to clipboard")
                 }
+            }
+        }
+    }
+
+    /// hold + P: transform the clipboard text before pasting. Capture the clipboard
+    /// + target app NOW (before the palette steals focus), then paste into the app.
+    private func openAdvancedPaste() {
+        interruptDictation()
+        overlay.hide()
+        let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !clip.isEmpty else { overlay.showError("Copy some text first, then hold + P"); return }
+        guard let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != "com.grc.whisper" else {
+            overlay.showError("Click into a text field first, then hold + P"); return
+        }
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        advancedPaste.present(
+            clipboard: clip, dark: config.appearance.isDark, screen: screen,
+            onPick: { t in self.applyAdvancedPaste(t, clip: clip, app: app) },
+            onCancel: { app.activate() }
+        )
+    }
+
+    private func applyAdvancedPaste(_ t: AdvancedPaste.Transform, clip: String, app: NSRunningApplication) {
+        func paste(_ text: String) {
+            app.activate()
+            // let focus land in the target field before the synthetic ⌘V
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(220)) {
+                try? Inserter.insert(text, restoreDelayMs: self.config.clipboardRestoreDelayMs)
+            }
+        }
+        guard t.ai, let instruction = t.instruction else { paste(clip); return }  // plain text
+        guard let key = Keychain.get("claude"), !key.isEmpty else {
+            overlay.showError("Add a Claude key in Settings ▸ AI to use AI paste"); app.activate(); return
+        }
+        overlay.showProcessing()
+        let model = config.claudeModel
+        Task {
+            do {
+                let out = try await CloudPolish.claude(instructions: instruction, prompt: clip, model: model, apiKey: key)
+                await MainActor.run { self.overlay.hide(); paste(out) }
+            } catch {
+                await MainActor.run { self.overlay.showError("Paste transform failed"); app.activate() }
             }
         }
     }

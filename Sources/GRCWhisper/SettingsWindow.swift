@@ -341,6 +341,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  S   copy a screenshot
         •  G   screenshot → Google Lens
         •  C / X / V   copy · cut · paste files (Finder)
+        •  P   Advanced Paste — plain, or AI: summarize / rewrite / translate
         •  ← → ↑ ↓   snap window (tap again = resize)
         •  ⏎   maximize   ·   3   draw-a-grid placement
 

@@ -28,6 +28,7 @@ final class HotkeyMonitor {
         case window(WindowManager.Move)  // fires immediately, repeatable while held
         case windowEnd                    // hotkey released after window moves
         case grid                         // draw-a-grid window placement
+        case advancedPaste                // paste-as palette
     }
 
     var handler: ((Callback) -> Void)?
@@ -48,7 +49,7 @@ final class HotkeyMonitor {
     /// keys (e.g. two arrows) are each tracked, not just the last one.
     private var swallowedKeyUps: Set<Int64> = []
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste }
+    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste }
     private var pending: Pending = .none
     /// Set once an arrow/Return moves a window this hold, so release ends the
     /// window session instead of dispatching a dictation.
@@ -65,6 +66,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_C: Int64 = 8
     private static let kVK_ANSI_X: Int64 = 7
     private static let kVK_ANSI_V: Int64 = 9
+    private static let kVK_ANSI_P: Int64 = 35
     private static let kVK_ANSI_3: Int64 = 20
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
@@ -238,6 +240,10 @@ final class HotkeyMonitor {
                 log("hotkey: +V leader armed (file paste)")
                 pending = .filePaste; swallowedKeyUps.insert(keyCode)
                 return nil
+            case Self.kVK_ANSI_P:
+                log("hotkey: +P leader armed (advanced paste)")
+                pending = .advancedPaste; swallowedKeyUps.insert(keyCode)
+                return nil
             case Self.kVK_ANSI_3:
                 // Grid draw mode. Enter windowMode so release ends the session (no
                 // dictation); the grid overlay itself takes over via the mouse.
@@ -305,6 +311,7 @@ final class HotkeyMonitor {
                 case .fileCopy: dispatch(.fileCopy)
                 case .fileCut: dispatch(.fileCut)
                 case .filePaste: dispatch(.filePaste)
+                case .advancedPaste: dispatch(.advancedPaste)
                 }
             }
             interrupted = false
