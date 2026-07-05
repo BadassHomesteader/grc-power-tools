@@ -85,6 +85,7 @@ enum CloudPolish {
         }
 
         var acc = ""
+        var completed = false   // saw a terminal event, so `acc` is the whole reply
         for try await line in bytes.lines {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
@@ -98,19 +99,23 @@ enum CloudPolish {
                     onUpdate(acc)
                 }
             case "message_delta":
-                if let delta = obj["delta"] as? [String: Any],
-                   (delta["stop_reason"] as? String) == "refusal" { throw CloudError.refused }
+                if let delta = obj["delta"] as? [String: Any], let stop = delta["stop_reason"] as? String {
+                    if stop == "refusal" { throw CloudError.refused }
+                    completed = true   // end_turn / max_tokens / stop_sequence
+                }
             case "error":
                 let msg = (obj["error"] as? [String: Any])?["message"] as? String ?? "stream error"
                 throw CloudError.http(0, msg)
             case "message_stop":
-                let trimmed = acc.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { throw CloudError.badResponse }
-                return trimmed
+                completed = true
             default:
                 continue
             }
+            if type == "message_stop" { break }
         }
+        // If the stream ended without a terminal event, the body was cut off
+        // (proxy idle-timeout, truncation) — don't pass a partial answer off as final.
+        guard completed else { throw CloudError.http(0, "stream ended before completion") }
         let trimmed = acc.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw CloudError.badResponse }
         return trimmed

@@ -127,7 +127,7 @@ case "settings-preview":
         if args.count >= 3, args[2] == "dark" { cfg.appearance = .dark }
         let sc = SettingsWindowController(store: Store(), config: cfg, onConfigChange: { _ in })
         guard let window = sc.window else { exit(1) }
-        window.setContentSize(NSSize(width: 1120, height: 680))
+        window.setContentSize(NSSize(width: 1200, height: 740))
         window.layoutIfNeeded()
         guard let content = window.contentView else { exit(1) }
         content.layoutSubtreeIfNeeded()

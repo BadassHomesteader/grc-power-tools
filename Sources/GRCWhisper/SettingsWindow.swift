@@ -39,7 +39,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         self.onOpenChat = onOpenChat
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1120, height: 680),
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 740),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
@@ -418,33 +418,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let checks = await Doctor.run()
         statusStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for c in checks {
-            let dot = NSView()
-            dot.wantsLayer = true
-            dot.layer?.cornerRadius = 5
-            dot.layer?.backgroundColor = (c.ok ? NSColor.systemGreen : NSColor.systemOrange).cgColor
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.widthAnchor.constraint(equalToConstant: 10).isActive = true
-            dot.heightAnchor.constraint(equalToConstant: 10).isActive = true
-
-            let name = NSTextField(labelWithString: c.name)
-            name.font = .systemFont(ofSize: 12, weight: .semibold)
-
-            let head = NSStackView(views: [dot, name])
-            head.spacing = 8
-            head.alignment = .centerY
-
-            let detail = NSTextField(labelWithString: c.detail)
-            detail.font = .systemFont(ofSize: 11)
-            detail.textColor = .secondaryLabelColor
-            detail.lineBreakMode = .byWordWrapping
-            detail.preferredMaxLayoutWidth = 320
-            detail.cell?.wraps = true
-
-            let item = NSStackView(views: [head, detail])
-            item.orientation = .vertical
-            item.alignment = .leading
-            item.spacing = 3
-            statusStack.addArrangedSubview(item)
+            // Compact: colored bullet + bold name + detail all flow in one wrapping
+            // line, so the whole list stays short enough to avoid a scrollbar.
+            let s = NSMutableAttributedString()
+            s.append(NSAttributedString(string: "●  ", attributes: [
+                .foregroundColor: c.ok ? NSColor.systemGreen : NSColor.systemOrange,
+                .font: NSFont.systemFont(ofSize: 12),
+            ]))
+            s.append(NSAttributedString(string: c.name, attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+            ]))
+            s.append(NSAttributedString(string: "  \(c.detail)", attributes: [
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .font: NSFont.systemFont(ofSize: 11),
+            ]))
+            let label = NSTextField(labelWithAttributedString: s)
+            label.lineBreakMode = .byWordWrapping
+            label.maximumNumberOfLines = 2
+            label.preferredMaxLayoutWidth = 320
+            label.cell?.wraps = true
+            statusStack.addArrangedSubview(label)
         }
     }
 

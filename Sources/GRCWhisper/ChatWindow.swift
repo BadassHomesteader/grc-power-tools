@@ -9,6 +9,7 @@ final class ChatWindowController: NSWindowController {
     private var config: Config
     private var messages: [[String: String]] = []
     private var busy = false
+    private var queue: [String] = []
 
     private let transcriptStack = NSStackView()
     private let scroll = NSScrollView()
@@ -62,17 +63,31 @@ final class ChatWindowController: NSWindowController {
         addBubble(role: "assistant", text: "Wispr Flow = cloud transcription; GRC Whisper = fully on-device, cloud only for opt-in AI.")
     }
 
-    /// Send text (from voice or typed) and stream the reply. Coalesces if busy.
+    /// Send text (from voice or typed). If a reply is already streaming, the new
+    /// message is QUEUED (not dropped) and sent when the current turn finishes.
     func send(_ text: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, !busy else { return }
-        addBubble(role: "user", text: t)
-        messages.append(["role": "user", "content": t])
+        guard !t.isEmpty else { return }
+        if busy { queue.append(t); return }
+        process(t)
+    }
+
+    private func drainQueue() {
+        guard !busy, !queue.isEmpty else { return }
+        process(queue.removeFirst())
+    }
+
+    private func process(_ t: String) {
+        let userBubble = addBubble(role: "user", text: t)
 
         guard let key = Keychain.get("claude"), !key.isEmpty else {
-            _ = addBubble(role: "assistant", text: "Add a Claude API key in Settings ▸ Cloud cleanup to start chatting.")
+            // Show the message but DON'T add it to history — nothing was sent, so
+            // committing it would leave two consecutive user turns (API rejects that).
+            _ = addBubble(role: "assistant", text: "Add a Claude API key in Settings ▸ AI to start chatting.")
+            drainQueue()
             return
         }
+        messages.append(["role": "user", "content": t])
 
         busy = true
         sendButton.isEnabled = false
@@ -86,20 +101,24 @@ final class ChatWindowController: NSWindowController {
                     messages: convo, system: Self.systemPrompt, model: model, apiKey: key,
                     onUpdate: { partial in
                         Task { @MainActor in
-                            bubble.setText(partial)
+                            bubble.setStreaming(partial)   // ignored once finalized
                             self.scrollToBottom()
                         }
                     })
                 await MainActor.run {
-                    bubble.setText(final)
+                    bubble.setFinal(final)                 // authoritative; blocks late partials
                     self.messages.append(["role": "assistant", "content": final])
                     self.finishTurn()
                 }
             } catch {
                 await MainActor.run {
-                    bubble.setError("⚠️ \(error.localizedDescription)")
-                    // Drop the failed user turn so a retry doesn't double it up.
+                    // Roll the failed turn back so the visible transcript matches the
+                    // history we send to the API (both drop it); put the text back so
+                    // it isn't lost.
                     if self.messages.last?["role"] == "user" { self.messages.removeLast() }
+                    userBubble.superview?.removeFromSuperview()
+                    bubble.setError("⚠️ \(error.localizedDescription) — your message is back in the box.")
+                    if self.inputField.stringValue.isEmpty { self.inputField.stringValue = t }
                     self.finishTurn()
                 }
             }
@@ -197,6 +216,7 @@ final class ChatWindowController: NSWindowController {
     private func finishTurn() {
         busy = false
         sendButton.isEnabled = true
+        drainQueue()
     }
 
     private func scrollToBottom() {
@@ -221,6 +241,7 @@ final class BubbleView: NSView {
     private let label = NSTextField(wrappingLabelWithString: "")
     private let isUser: Bool
     private var isError = false
+    private var finalized = false
 
     init(role: String) {
         isUser = role == "user"
@@ -243,7 +264,31 @@ final class BubbleView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func setText(_ s: String) { isError = false; label.stringValue = s; applyColors() }
-    func setError(_ s: String) { isError = true; label.stringValue = s; applyColors() }
+
+    /// Live streaming update — ignored once finalized, and only grows (so an
+    /// out-of-order partial can't make the text jump backwards).
+    func setStreaming(_ s: String) {
+        guard !finalized else { return }
+        guard s.count >= label.stringValue.count || label.stringValue == "…" else { return }
+        isError = false
+        label.stringValue = s
+        applyColors()
+    }
+
+    /// Authoritative final text — locks the bubble so a late partial can't clobber it.
+    func setFinal(_ s: String) {
+        finalized = true
+        isError = false
+        label.stringValue = s
+        applyColors()
+    }
+
+    func setError(_ s: String) {
+        finalized = true
+        isError = true
+        label.stringValue = s
+        applyColors()
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
