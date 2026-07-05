@@ -19,6 +19,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let positionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let aiModePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let snapSizesPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchLoginCheck = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
@@ -132,6 +133,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         for m in Config.AIChatMode.allCases { aiModePopup.addItem(withTitle: m.displayName) }
         aiModePopup.target = self
         aiModePopup.action = #selector(aiModeChanged)
+        for s in Config.SnapSizes.allCases { snapSizesPopup.addItem(withTitle: s.displayName) }
+        snapSizesPopup.target = self
+        snapSizesPopup.action = #selector(snapSizesChanged)
         hotkeyNote.font = .systemFont(ofSize: 11)
         hotkeyNote.textColor = .secondaryLabelColor
         hotkeyNote.stringValue = " "
@@ -143,6 +147,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             formRow("Bar position", positionPopup),
             formRow("Theme", appearancePopup),
             formRow("AI (+A)", aiModePopup),
+            formRow("Snap sizes", snapSizesPopup),
         ], width: 340))
 
         // Cloud cleanup section (optional — used only when Cleanup is Claude/OpenAI)
@@ -302,6 +307,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         positionPopup.selectItem(withTitle: config.overlayPosition.displayName)
         appearancePopup.selectItem(withTitle: config.appearance.displayName)
         aiModePopup.selectItem(withTitle: config.aiChatMode.displayName)
+        snapSizesPopup.selectItem(withTitle: config.snapSizes.displayName)
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
@@ -326,7 +332,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  C   copy the selected file(s) in Finder
         •  X   cut file(s) — then V moves them
         •  V   paste — moves cut files, or pastes copied ones
-        •  ← → ↑ ↓   snap the window to that side — tap again to shrink (½ → ⅓ → ⅔)
+        •  ← → ↑ ↓   snap the window to that side — tap again to cycle sizes (set below)
         •  ⏎   maximize the window   (keep holding, keep arrowing)
 
         Just release without a letter to dictate normally.
@@ -393,6 +399,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     @objc private func aiModeChanged() {
         guard let m = Config.AIChatMode.allCases.first(where: { $0.displayName == aiModePopup.titleOfSelectedItem }) else { return }
         config.aiChatMode = m
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func snapSizesChanged() {
+        guard let s = Config.SnapSizes.allCases.first(where: { $0.displayName == snapSizesPopup.titleOfSelectedItem }) else { return }
+        config.snapSizes = s
         config.save()
         onConfigChange(config)
     }

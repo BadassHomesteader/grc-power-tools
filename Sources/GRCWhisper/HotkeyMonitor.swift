@@ -42,9 +42,10 @@ final class HotkeyMonitor {
     private var heldSince: Date?
     /// Set when a foreign key interrupts the hold; ignore events until hotkey release.
     private var interrupted = false
-    /// keyCode whose paired keyUp should also be swallowed (a key we consumed
-    /// mid-hold), so apps don't see an orphan keyUp.
-    private var swallowedKeyUp: Int64?
+    /// keyCodes whose paired keyUp must also be swallowed (keys we consumed
+    /// mid-hold), so apps never see an orphan keyUp — a set so simultaneously-held
+    /// keys (e.g. two arrows) are each tracked, not just the last one.
+    private var swallowedKeyUps: Set<Int64> = []
     /// Leader action armed by tapping a letter while the hotkey is held.
     private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste }
     private var pending: Pending = .none
@@ -124,6 +125,9 @@ final class HotkeyMonitor {
                 self.held = false
                 self.heldSince = nil
                 self.interrupted = false
+                self.windowMode = false
+                self.pending = .none
+                self.swallowedKeyUps.removeAll()
                 self.dispatch(.cancel)
             }
         }
@@ -194,36 +198,36 @@ final class HotkeyMonitor {
         if held && type == .keyDown {
             switch keyCode {
             case Self.kVK_Escape:
-                interrupted = true; swallowedKeyUp = keyCode
+                interrupted = true; swallowedKeyUps.insert(keyCode)
                 dispatch(.cancel)
                 return nil // swallow so it doesn't close the user's dialogs
             case Self.kVK_ANSI_T:
                 log("hotkey: +T leader armed (OCR)")
-                pending = .ocr; swallowedKeyUp = keyCode
+                pending = .ocr; swallowedKeyUps.insert(keyCode)
                 return nil // OCR fires on release; recording continues harmlessly until then
             case Self.kVK_ANSI_A:
                 log("hotkey: +A leader armed (AI)")
-                pending = .ai; swallowedKeyUp = keyCode
+                pending = .ai; swallowedKeyUps.insert(keyCode)
                 return nil // keep recording — the user is about to speak the instruction
             case Self.kVK_ANSI_S:
                 log("hotkey: +S leader armed (screenshot)")
-                pending = .screenshot; swallowedKeyUp = keyCode
+                pending = .screenshot; swallowedKeyUps.insert(keyCode)
                 return nil
             case Self.kVK_ANSI_G:
                 log("hotkey: +G leader armed (Google search)")
-                pending = .search; swallowedKeyUp = keyCode
+                pending = .search; swallowedKeyUps.insert(keyCode)
                 return nil
             case Self.kVK_ANSI_C:
                 log("hotkey: +C leader armed (file copy)")
-                pending = .fileCopy; swallowedKeyUp = keyCode
+                pending = .fileCopy; swallowedKeyUps.insert(keyCode)
                 return nil
             case Self.kVK_ANSI_X:
                 log("hotkey: +X leader armed (file cut)")
-                pending = .fileCut; swallowedKeyUp = keyCode
+                pending = .fileCut; swallowedKeyUps.insert(keyCode)
                 return nil
             case Self.kVK_ANSI_V:
                 log("hotkey: +V leader armed (file paste)")
-                pending = .filePaste; swallowedKeyUp = keyCode
+                pending = .filePaste; swallowedKeyUps.insert(keyCode)
                 return nil
             case Self.kVK_LeftArrow, Self.kVK_RightArrow, Self.kVK_UpArrow, Self.kVK_DownArrow, Self.kVK_Return:
                 // Window moves fire immediately and can repeat while held (tap ←←
@@ -237,7 +241,7 @@ final class HotkeyMonitor {
                 default: move = .maximize
                 }
                 windowMode = true
-                swallowedKeyUp = keyCode
+                swallowedKeyUps.insert(keyCode)
                 dispatch(.window(move))
                 return nil
             default:
@@ -247,19 +251,11 @@ final class HotkeyMonitor {
             }
         }
 
-        // In window mode, swallow every arrow/Return keyUp (they repeat, so the
-        // single swallowedKeyUp slot isn't enough to cover fast alternating taps).
-        if held && windowMode && type == .keyUp {
-            switch keyCode {
-            case Self.kVK_LeftArrow, Self.kVK_RightArrow, Self.kVK_UpArrow, Self.kVK_DownArrow, Self.kVK_Return:
-                return nil
-            default: break
-            }
-        }
-
-        // Swallow the paired keyUp of a key we consumed mid-hold.
-        if type == .keyUp, let sk = swallowedKeyUp, keyCode == sk {
-            swallowedKeyUp = nil
+        // Swallow the paired keyUp of any key we consumed mid-hold — tracked in a
+        // set, and not gated on `held`, so a key still down when the hotkey is
+        // released still has its keyUp swallowed (no orphan reaches the app).
+        if type == .keyUp && swallowedKeyUps.contains(keyCode) {
+            swallowedKeyUps.remove(keyCode)
             return nil
         }
 

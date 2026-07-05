@@ -44,6 +44,35 @@ struct Config: Codable {
         var isDark: Bool { self == .dark }
     }
 
+    /// The set of sizes a window snap cycles through on repeated arrow taps.
+    /// Bigger monitors benefit from smaller fractions (¼, ⅕).
+    enum SnapSizes: String, Codable, CaseIterable {
+        case halvesThirds     // ½ ⅓ ⅔
+        case halvesQuarters   // ½ ⅓ ¼
+        case bigMonitor       // ½ ⅓ ¼ ⅕
+        case compact          // ⅓ ¼ ⅕
+
+        var displayName: String {
+            switch self {
+            case .halvesThirds:   return "½ · ⅓ · ⅔"
+            case .halvesQuarters: return "½ · ⅓ · ¼"
+            case .bigMonitor:     return "½ · ⅓ · ¼ · ⅕  (big screens)"
+            case .compact:        return "⅓ · ¼ · ⅕"
+            }
+        }
+
+        var steps: [(fraction: CGFloat, label: String)] {
+            let third: CGFloat = 1.0 / 3.0
+            let twoThird: CGFloat = 2.0 / 3.0
+            switch self {
+            case .halvesThirds:   return [(0.5, "½"), (third, "⅓"), (twoThird, "⅔")]
+            case .halvesQuarters: return [(0.5, "½"), (third, "⅓"), (0.25, "¼")]
+            case .bigMonitor:     return [(0.5, "½"), (third, "⅓"), (0.25, "¼"), (0.2, "⅕")]
+            case .compact:        return [(third, "⅓"), (0.25, "¼"), (0.2, "⅕")]
+            }
+        }
+    }
+
     /// What the AI leader (hold + A) does with your dictated words.
     enum AIChatMode: String, Codable, CaseIterable {
         case both     // in-app chat, with an "Open in claude.ai" button
@@ -119,13 +148,15 @@ struct Config: Codable {
     var appearance: Appearance = .dark
     /// What hold + A does: in-app chat, browser, or both.
     var aiChatMode: AIChatMode = .both
+    /// Sizes window snaps cycle through on repeated arrow taps.
+    var snapSizes: SnapSizes = .halvesThirds
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
-        case overlayPosition, appearance, aiChatMode
+        case overlayPosition, appearance, aiChatMode, snapSizes
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -145,6 +176,7 @@ struct Config: Codable {
         overlayPosition = try c.decodeIfPresent(OverlayPosition.self, forKey: .overlayPosition) ?? .bottomCenter
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? .dark
         aiChatMode = try c.decodeIfPresent(AIChatMode.self, forKey: .aiChatMode) ?? .both
+        snapSizes = try c.decodeIfPresent(SnapSizes.self, forKey: .snapSizes) ?? .halvesThirds
     }
 
     static var appSupportDir: URL {

@@ -1,8 +1,10 @@
-# GRC Whisper
+# Power Tools  (formerly GRC Whisper)
 
-Fully-local voice dictation for macOS — a private [Wispr Flow](https://wisprflow.ai) replacement. Hold a key, speak, release: polished text appears in whatever app has focus.
+A fully-local macOS power-user toolkit built around one hotkey — a private [Wispr Flow](https://wisprflow.ai) replacement and more. Hold a key, speak, release: polished text appears in whatever app has focus. Or tap a letter/arrow while holding for AI chat, OCR, screenshots, file cut/paste, and window snapping.
 
-**Everything runs on this Mac.** Wispr Flow sends every word you speak (plus surrounding screen context) to its cloud. GRC Whisper makes zero network calls: speech recognition is Apple's on-device `SpeechAnalyzer` (macOS 26), text cleanup is Apple's on-device Foundation Model, history lives in a local SQLite file. Little-Snitch-clean by design.
+**The app bundle and data folder are still named `GRC Whisper` / bundle ID `com.grc.whisper`** so macOS permissions and saved keys survive the rename.
+
+**Everything runs on this Mac.** Wispr Flow sends every word you speak (plus surrounding screen context) to its cloud. Power Tools makes zero network calls for dictation: speech recognition is Apple's on-device `SpeechAnalyzer` (macOS 26), text cleanup is Apple's on-device Foundation Model, history lives in a local SQLite file. Little-Snitch-clean by design.
 
 ## How it works
 
@@ -24,7 +26,7 @@ Requires macOS 26+ (Apple Silicon) and Command Line Tools. No Xcode, no dependen
 
 ```bash
 scripts/bundle.sh --install    # builds, signs, copies to /Applications
-open "/Applications/GRC Whisper.app"
+open "/Applications/Power Tools.app"
 ```
 
 > `Package.swift` exists for SwiftPM-capable toolchains, but `scripts/bundle.sh`
@@ -43,7 +45,7 @@ TCC permissions attach to the app bundle's ID + signature, which `scripts/bundle
 Then verify with the menu bar ▸ **Permission Doctor…**, or:
 
 ```bash
-"/Applications/GRC Whisper.app/Contents/MacOS/GRC Whisper" doctor
+"/Applications/Power Tools.app/Contents/MacOS/Power Tools" doctor
 ```
 
 After a macOS update or if the hotkey dies, re-run the doctor — event taps occasionally need Accessibility re-granted.

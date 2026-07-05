@@ -70,22 +70,22 @@ final class AppController {
             case .up(let cmd): self.keyUp(ai: cmd == .ai)
             case .cancel: self.cancel()
             case .ocr:
-                if self.state == .recording { self.cancel() }
+                self.interruptDictation()
                 self.captureScreenText()
             case .screenshot:
-                if self.state == .recording { self.cancel() }
+                self.interruptDictation()
                 self.captureScreenshot(search: false)
             case .search:
-                if self.state == .recording { self.cancel() }
+                self.interruptDictation()
                 self.captureScreenshot(search: true)
             case .fileCopy:
-                if self.state == .recording { self.cancel() }
+                self.interruptDictation()
                 self.fileClipboard(.copy)
             case .fileCut:
-                if self.state == .recording { self.cancel() }
+                self.interruptDictation()
                 self.fileClipboard(.cut)
             case .filePaste:
-                if self.state == .recording { self.cancel() }
+                self.interruptDictation()
                 self.fileClipboard(.paste)
             case .window(let move):
                 self.handleWindow(move)
@@ -263,6 +263,15 @@ final class AppController {
         finishCycle()
     }
 
+    /// Drop any in-flight dictation before a non-dictation leader action, so its
+    /// transcript never lands: cancel a live recording, OR invalidate a cycle that's
+    /// already .processing (finishCycle bumps `cycle`, so the pending deliver's
+    /// `guard cycle == gen` fails and nothing is pasted).
+    private func interruptDictation() {
+        if state == .recording { cancel() }
+        else if state == .processing { finishCycle() }
+    }
+
     /// Cancel only interrupts an active recording (Esc / foreign keypress / stale
     /// hold). A cycle already in .processing is protected by the finish watchdog.
     private func cancel() {
@@ -370,7 +379,7 @@ final class AppController {
     /// Arrow/Return in window mode. Fires on each keydown; repeating the same
     /// direction cycles the size (½ → ⅓ → ⅔) so "tap ← ←" shrinks the left snap.
     private func handleWindow(_ move: WindowManager.Move) {
-        if state == .recording { cancel() }
+        interruptDictation()
         if move == .maximize {
             winLastMove = nil; winStep = 0
             if WindowManager.maximize() {
@@ -378,9 +387,10 @@ final class AppController {
             } else { overlay.showError("No window to move") }
             return
         }
-        if move == winLastMove { winStep = (winStep + 1) % Self.winFractions.count }
+        let steps = config.snapSizes.steps
+        if move == winLastMove { winStep = (winStep + 1) % steps.count }
         else { winStep = 0; winLastMove = move }
-        let f = Self.winFractions[winStep]
+        let (f, fracLabel) = steps[winStep]
         let edge: WindowManager.Edge
         let region: CGRect
         let name: String
@@ -394,8 +404,7 @@ final class AppController {
         guard WindowManager.snap(edge: edge, fraction: f) else {
             overlay.showError("No window to move"); return
         }
-        let frac = ["½", "⅓", "⅔"][winStep]
-        overlay.showWindow(region: region, label: "\(name) \(frac)")
+        overlay.showWindow(region: region, label: "\(name) \(fracLabel)")
     }
 
     private func fileClipboard(_ op: FileOp) {
