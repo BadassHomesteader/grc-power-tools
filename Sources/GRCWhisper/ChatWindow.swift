@@ -11,7 +11,7 @@ final class ChatWindowPanel: NSWindow {
 }
 
 @MainActor
-final class ChatWindowController: NSWindowController, NSTextFieldDelegate {
+final class ChatWindowController: NSWindowController, NSTextFieldDelegate, NSWindowDelegate {
     private var config: Config
     private var messages: [[String: String]] = []
     private var busy = false
@@ -44,6 +44,7 @@ final class ChatWindowController: NSWindowController, NSTextFieldDelegate {
         window.minSize = NSSize(width: 380, height: 360)
         window.isReleasedWhenClosed = false  // closing hides it; the chat persists
         super.init(window: window)
+        window.delegate = self
         buildUI()
         applyAppearance()
     }
@@ -261,6 +262,12 @@ final class ChatWindowController: NSWindowController, NSTextFieldDelegate {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         inputField.stringValue = ""
         send(text)
+    }
+
+    /// When the chat closes, return to whatever app you were using instead of
+    /// surfacing the Settings window that sits behind it.
+    func windowWillClose(_ notification: Notification) {
+        DispatchQueue.main.async { NSApp.hide(nil) }
     }
 
     /// Esc while typing closes the chat (the field editor swallows the key otherwise).
