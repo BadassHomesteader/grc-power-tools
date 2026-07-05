@@ -8,6 +8,7 @@ struct Config: Codable {
         case rightCommand
         case ctrlOption    // hold Control+Option together (external keyboards)
         case shiftCommand  // hold Shift+Command together
+        case optionShift   // hold Option+Shift together — ambidextrous, low-collision
 
         var displayName: String {
             switch self {
@@ -16,7 +17,18 @@ struct Config: Codable {
             case .rightCommand: return "Right Command"
             case .ctrlOption: return "Control + Option"
             case .shiftCommand: return "Shift + Command"
+            case .optionShift: return "Option + Shift"
             }
+        }
+
+        // Lenient decode so an unknown/legacy value can never throw (which would
+        // wipe the whole config on load).
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Hotkey(rawValue: raw) ?? .fn
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer(); try c.encode(rawValue)
         }
     }
 

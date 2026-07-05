@@ -191,6 +191,13 @@ final class HotkeyMonitor {
                     return handleHotkeyFlag(isDown: both, event: event, suppress: false)
                 }
             }
+        case .optionShift:
+            if type == .flagsChanged {
+                let both = flags.contains(.maskShift) && flags.contains(.maskAlternate)
+                if both != held {
+                    return handleHotkeyFlag(isDown: both, event: event, suppress: false)
+                }
+            }
         }
 
         // Leader chords: while the hotkey is held, a tapped letter selects a mode
