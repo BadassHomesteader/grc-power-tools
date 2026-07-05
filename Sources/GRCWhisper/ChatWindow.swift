@@ -15,6 +15,8 @@ final class ChatWindowController: NSWindowController {
     private let scroll = NSScrollView()
     private let inputField = NSTextField()
     private let sendButton = NSButton()
+    private let browserButton = NSButton()
+    private var lastUserText = ""
 
     private static let systemPrompt = """
     You are a helpful, friendly assistant living in a macOS dictation app. The \
@@ -53,6 +55,11 @@ final class ChatWindowController: NSWindowController {
     func updateConfig(_ c: Config) {
         config = c
         applyAppearance()
+        browserButton.isHidden = config.aiChatMode != .both
+    }
+
+    @objc private func openInBrowser() {
+        ClaudeWeb.open(lastUserText)
     }
 
     /// Static sample transcript for the offscreen `chat-preview` design check.
@@ -78,6 +85,7 @@ final class ChatWindowController: NSWindowController {
     }
 
     private func process(_ t: String) {
+        lastUserText = t
         let userBubble = addBubble(role: "user", text: t)
 
         guard let key = Keychain.get("claude"), !key.isEmpty else {
@@ -161,7 +169,14 @@ final class ChatWindowController: NSWindowController {
         sendButton.target = self
         sendButton.action = #selector(sendFromField)
 
-        let inputRow = NSStackView(views: [inputField, sendButton])
+        browserButton.title = "claude.ai ↗"
+        browserButton.bezelStyle = .rounded
+        browserButton.target = self
+        browserButton.action = #selector(openInBrowser)
+        browserButton.toolTip = "Continue this in claude.ai"
+        browserButton.isHidden = config.aiChatMode != .both
+
+        let inputRow = NSStackView(views: [inputField, browserButton, sendButton])
         inputRow.orientation = .horizontal
         inputRow.spacing = 8
         inputRow.alignment = .centerY
@@ -315,4 +330,14 @@ final class BubbleView: NSView {
 /// Top-anchored document view so the transcript grows downward and scrolls to the newest line.
 final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// Opens claude.ai in the default browser, pre-filling the message when possible.
+enum ClaudeWeb {
+    static func open(_ text: String) {
+        var comps = URLComponents(string: "https://claude.ai/new")!
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !t.isEmpty { comps.queryItems = [URLQueryItem(name: "q", value: t)] }
+        if let url = comps.url { NSWorkspace.shared.open(url) }
+    }
 }

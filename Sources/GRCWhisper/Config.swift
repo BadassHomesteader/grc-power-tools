@@ -44,6 +44,21 @@ struct Config: Codable {
         var isDark: Bool { self == .dark }
     }
 
+    /// What the AI leader (hold + A) does with your dictated words.
+    enum AIChatMode: String, Codable, CaseIterable {
+        case both     // in-app chat, with an "Open in claude.ai" button
+        case native   // in-app chat only
+        case browser  // open claude.ai in the browser instead
+
+        var displayName: String {
+            switch self {
+            case .both: return "In-app + browser"
+            case .native: return "In-app chat only"
+            case .browser: return "Browser (claude.ai)"
+            }
+        }
+    }
+
     enum PolishMode: String, Codable, CaseIterable {
         case apple    // Apple FoundationModels (on-device)
         case claude   // Claude API (cloud, opt-in)
@@ -102,13 +117,15 @@ struct Config: Codable {
     var overlayPosition: OverlayPosition = .bottomCenter
     /// Light or dark theme for the overlay, settings, and chat windows.
     var appearance: Appearance = .dark
+    /// What hold + A does: in-app chat, browser, or both.
+    var aiChatMode: AIChatMode = .both
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
-        case overlayPosition, appearance
+        case overlayPosition, appearance, aiChatMode
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -127,6 +144,7 @@ struct Config: Codable {
         openaiModel = try c.decodeIfPresent(String.self, forKey: .openaiModel) ?? "gpt-4o-mini"
         overlayPosition = try c.decodeIfPresent(OverlayPosition.self, forKey: .overlayPosition) ?? .bottomCenter
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? .dark
+        aiChatMode = try c.decodeIfPresent(AIChatMode.self, forKey: .aiChatMode) ?? .both
     }
 
     static var appSupportDir: URL {

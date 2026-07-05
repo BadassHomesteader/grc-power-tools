@@ -185,9 +185,7 @@ final class OverlayPanel {
         waveform.idle()
         hintLabel.stringValue = "release to stop"
         setMode(waveform: true)
-        position()
-        panel.orderFrontRegardless()
-        panel.invalidateShadow()
+        present()
     }
 
     /// The clean HUD shows only the waveform while you speak (no inline transcript).
@@ -200,22 +198,31 @@ final class OverlayPanel {
     func showProcessing() {
         hintLabel.stringValue = "…"
         setMode(waveform: true)
+        present()
     }
 
     func showResult(_ text: String) {
+        hideTimer?.invalidate()
         setMode(waveform: false)
         textLabel.textColor = fg
         textLabel.stringValue = text
+        present()
         hideAfter(1.4)
+    }
+
+    /// Place and order the panel front (result/processing can be shown without a
+    /// preceding showRecording(), e.g. file-op and OCR toasts).
+    private func present() {
+        position()
+        panel.orderFrontRegardless()
+        panel.invalidateShadow()
     }
 
     func showError(_ message: String) {
         setMode(waveform: false)
         textLabel.textColor = NSColor(srgbRed: 0.85, green: 0.35, blue: 0.15, alpha: 1)
         textLabel.stringValue = message
-        position()
-        panel.orderFrontRegardless()
-        panel.invalidateShadow()
+        present()
         hideAfter(2.6)
     }
 

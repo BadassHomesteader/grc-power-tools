@@ -18,6 +18,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let cleanupPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let positionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let aiModePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchLoginCheck = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
@@ -128,6 +129,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         for a in Config.Appearance.allCases { appearancePopup.addItem(withTitle: a.displayName) }
         appearancePopup.target = self
         appearancePopup.action = #selector(appearanceChanged)
+        for m in Config.AIChatMode.allCases { aiModePopup.addItem(withTitle: m.displayName) }
+        aiModePopup.target = self
+        aiModePopup.action = #selector(aiModeChanged)
         hotkeyNote.font = .systemFont(ofSize: 11)
         hotkeyNote.textColor = .secondaryLabelColor
         hotkeyNote.stringValue = " "
@@ -138,6 +142,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             formRow("Cleanup", cleanupPopup),
             formRow("Bar position", positionPopup),
             formRow("Theme", appearancePopup),
+            formRow("AI (+A)", aiModePopup),
         ], width: 340))
 
         // Cloud cleanup section (optional — used only when Cleanup is Claude/OpenAI)
@@ -296,6 +301,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         cleanupPopup.selectItem(withTitle: config.polish.displayName)
         positionPopup.selectItem(withTitle: config.overlayPosition.displayName)
         appearancePopup.selectItem(withTitle: config.appearance.displayName)
+        aiModePopup.selectItem(withTitle: config.aiChatMode.displayName)
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
@@ -379,6 +385,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         config.appearance = a
         config.save()
         applyWindowAppearance()
+        onConfigChange(config)
+    }
+
+    @objc private func aiModeChanged() {
+        guard let m = Config.AIChatMode.allCases.first(where: { $0.displayName == aiModePopup.titleOfSelectedItem }) else { return }
+        config.aiChatMode = m
+        config.save()
         onConfigChange(config)
     }
 

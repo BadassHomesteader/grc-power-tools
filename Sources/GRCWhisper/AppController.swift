@@ -217,11 +217,14 @@ final class AppController {
                 }
                 let appName = ctx?.appName ?? "unknown"
                 if ai {
-                    // AI leader always opens the Claude chat with what you said
-                    // (Claude-Desktop style) — it does not paste a cleanup into the app.
+                    // AI leader opens Claude with what you said (never pastes a cleanup).
                     guard self.cycle == gen else { return }
                     self.overlay.hide()
-                    self.openChat(with: raw)
+                    if self.config.aiChatMode == .browser {
+                        ClaudeWeb.open(raw)
+                    } else {
+                        self.openChat(with: raw)
+                    }
                     self.finishCycle()
                     return
                 }
@@ -356,24 +359,41 @@ final class AppController {
     /// Finder "Move Item Here" (⌥⌘V) if the last action was a cut, else a plain ⌘V.
     /// A short delay lets the physical hotkey modifiers lift before we synthesize.
     private func fileClipboard(_ op: FileOp) {
-        guard state == .idle else { return }
-        let (delayMs, label): (Int, String)
-        switch op {
-        case .copy:
-            fileCutPending = false; delayMs = 90; label = "Copied"
-        case .cut:
-            fileCutPending = true; delayMs = 90; label = "Cut — hold + V to move it"
-        case .paste:
-            delayMs = 90; label = fileCutPending ? "Moved" : "Pasted"
-        }
+        // File ops don't touch the dictation state machine; the caller already
+        // cancels an active recording, so don't drop the op while .processing.
         let move = (op == .paste) && fileCutPending
+        let label: String
+        switch op {
+        case .copy:  fileCutPending = false; label = "Copied"
+        case .cut:   fileCutPending = true;  label = "Cut — hold + V to move it"
+        case .paste: fileCutPending = false; label = move ? "Moved" : "Pasted"
+        }
         overlay.showResult(label)
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) {
+        // Wait until the physical hotkey modifiers are released before synthesizing,
+        // or a still-held Shift/Ctrl leaks in (Shift+⌘C = Finder "Go to Computer", etc.).
+        afterModifiersClear {
             switch op {
             case .copy, .cut: Inserter.fileCopy()
-            case .paste: Inserter.filePaste(move: move); self.fileCutPending = false
+            case .paste: Inserter.filePaste(move: move)
             }
         }
+    }
+
+    /// Run `action` once no physical Shift/Command/Control/Option remains held (or
+    /// after a timeout), so a synthesized keystroke isn't polluted by the hotkey.
+    private func afterModifiersClear(timeout: TimeInterval = 0.8, _ action: @escaping () -> Void) {
+        let deadline = Date().addingTimeInterval(timeout)
+        func poll() {
+            let f = CGEventSource.flagsState(.combinedSessionState)
+            let held = f.contains(.maskShift) || f.contains(.maskCommand)
+                    || f.contains(.maskControl) || f.contains(.maskAlternate)
+            if !held || Date() >= deadline {
+                action()
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(25), execute: poll)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(20), execute: poll)
     }
 
     /// Open (or focus) the AI chat window. Optionally seed it with a message and send.
