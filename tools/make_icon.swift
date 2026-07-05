@@ -1,9 +1,10 @@
 import AppKit
 import CoreGraphics
+import CoreText
 
-// Renders the Power Tools app icon: a FLAT black-and-white mark — a white mic on
-// a solid black squircle (no gradient, shadow, or highlight). Vector-drawn, so it
-// stays crisp from 16px to 1024px. Writes an .iconset; iconutil packs the .icns.
+// Renders the Power Tools app icon: a FLAT black-and-white mark — a white command
+// (⌘) symbol on a solid black squircle (no gradient, shadow, or highlight).
+// Crisp from 16px to 1024px. Writes an .iconset; iconutil packs the .icns.
 
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "AppIcon.iconset"
 try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
@@ -32,41 +33,17 @@ func render(_ S: CGFloat) -> CGImage {
     ctx.setFillColor(color(18, 18, 20))
     ctx.fillPath()
 
-    // --- microphone (all white) ---
-    let cx = S * 0.5
-    let w = S * 0.215
-    let hCap = S * 0.30
-    let capRect = CGRect(x: cx - w/2, y: S * 0.445, width: w, height: hCap)  // device coords (y up)
-    let devCy = S * 0.595
-    let r = w/2 + S * 0.05
-    let cradleBottomY = devCy - r
-    let stemBottomY = cradleBottomY - S * 0.085
-    let baseHW = S * 0.105
-
-    // white cradle + stem + base (drawn first, capsule sits on top)
-    ctx.setStrokeColor(color(255, 255, 255))
-    ctx.setLineWidth(S * 0.040)
-    ctx.setLineCap(.round)
-    ctx.setLineJoin(.round)
-
-    let cradle = CGMutablePath()
-    cradle.addArc(center: CGPoint(x: cx, y: devCy), radius: r,
-                  startAngle: .pi * 200/180, endAngle: .pi * 340/180, clockwise: false)
-    ctx.addPath(cradle)
-    ctx.strokePath()
-
-    ctx.move(to: CGPoint(x: cx, y: cradleBottomY))
-    ctx.addLine(to: CGPoint(x: cx, y: stemBottomY))
-    ctx.strokePath()
-
-    ctx.move(to: CGPoint(x: cx - baseHW, y: stemBottomY))
-    ctx.addLine(to: CGPoint(x: cx + baseHW, y: stemBottomY))
-    ctx.strokePath()
-
-    // white capsule
-    ctx.addPath(CGPath(roundedRect: capRect, cornerWidth: w/2, cornerHeight: w/2, transform: nil))
+    // --- command symbol (⌘), centered on its glyph path bounds ---
+    let font = NSFont.systemFont(ofSize: S * 0.6, weight: .semibold)
+    let attrs: [NSAttributedString.Key: Any] = [
+        .font: font,
+        NSAttributedString.Key(rawValue: kCTForegroundColorFromContextAttributeName as String): true,
+    ]
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: "⌘", attributes: attrs))
+    let gb = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)  // tight glyph box
     ctx.setFillColor(color(255, 255, 255))
-    ctx.fillPath()
+    ctx.textPosition = CGPoint(x: S/2 - gb.midX, y: S/2 - gb.midY)
+    CTLineDraw(line, ctx)
 
     return ctx.makeImage()!
 }
