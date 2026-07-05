@@ -4,8 +4,14 @@ import AppKit
 /// dictated words become the first message; Claude's reply streams in, and you
 /// can keep the conversation going by typing or dictating again. Text-only, uses
 /// your own Claude API key — nothing here runs unless you opt into the AI action.
+/// Esc closes the chat window (instead of ringing the bell / doing nothing).
+/// Closing just hides it — Power Tools keeps running; reopening restores the chat.
+final class ChatWindowPanel: NSWindow {
+    override func cancelOperation(_ sender: Any?) { performClose(nil) }
+}
+
 @MainActor
-final class ChatWindowController: NSWindowController {
+final class ChatWindowController: NSWindowController, NSTextFieldDelegate {
     private var config: Config
     private var messages: [[String: String]] = []
     private var busy = false
@@ -27,7 +33,7 @@ final class ChatWindowController: NSWindowController {
 
     init(config: Config) {
         self.config = config
-        let window = NSWindow(
+        let window = ChatWindowPanel(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
@@ -36,6 +42,7 @@ final class ChatWindowController: NSWindowController {
         window.center()
         window.setFrameAutosaveName("GRCWhisperChat")
         window.minSize = NSSize(width: 380, height: 360)
+        window.isReleasedWhenClosed = false  // closing hides it; the chat persists
         super.init(window: window)
         buildUI()
         applyAppearance()
@@ -161,6 +168,7 @@ final class ChatWindowController: NSWindowController {
         inputField.font = .systemFont(ofSize: 13)
         inputField.target = self
         inputField.action = #selector(sendFromField)
+        inputField.delegate = self
         inputField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         sendButton.title = "Send"
@@ -253,6 +261,15 @@ final class ChatWindowController: NSWindowController {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         inputField.stringValue = ""
         send(text)
+    }
+
+    /// Esc while typing closes the chat (the field editor swallows the key otherwise).
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            window?.performClose(nil)
+            return true
+        }
+        return false
     }
 }
 

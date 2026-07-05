@@ -88,6 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         chatMenuItem.target = self
         appMenu.addItem(chatMenuItem)
         appMenu.addItem(.separator())
+        // Close just the focused window (chat/settings); target nil → key window.
+        // Distinct from Quit (⌘Q), which shuts down all of Power Tools.
+        appMenu.addItem(NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
         appMenu.addItem(withTitle: "Hide Power Tools", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(withTitle: "Quit Power Tools", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
