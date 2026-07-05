@@ -1,9 +1,9 @@
 import AppKit
 import CoreGraphics
 
-// Renders the GRC Whisper app icon (white mic + green cradle on an indigo
-// squircle) at every size macOS needs, writes an .iconset, and leaves iconutil
-// to pack the .icns. Vector-drawn, so it stays crisp from 16px to 1024px.
+// Renders the Power Tools app icon: a FLAT black-and-white mark — a white mic on
+// a solid black squircle (no gradient, shadow, or highlight). Vector-drawn, so it
+// stays crisp from 16px to 1024px. Writes an .iconset; iconutil packs the .icns.
 
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "AppIcon.iconset"
 try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
@@ -27,30 +27,12 @@ func render(_ S: CGFloat) -> CGImage {
     let rect = CGRect(x: margin, y: margin, width: side, height: side)
     let squircle = CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil)
 
-    ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -S * 0.012), blur: S * 0.03,
-                  color: color(0, 0, 0, 0.35))
+    // flat solid-black squircle (no shadow, gradient, or highlight)
     ctx.addPath(squircle)
-    ctx.setFillColor(color(46, 42, 107))
+    ctx.setFillColor(color(18, 18, 20))
     ctx.fillPath()
-    ctx.restoreGState()
 
-    // indigo gradient fill, clipped to the squircle
-    ctx.saveGState()
-    ctx.addPath(squircle)
-    ctx.clip()
-    let grad = CGGradient(colorsSpace: cs,
-                          colors: [color(97, 116, 240), color(52, 46, 122)] as CFArray,
-                          locations: [0, 1])!
-    ctx.drawLinearGradient(grad, start: CGPoint(x: 0, y: S), end: CGPoint(x: 0, y: 0), options: [])
-    // soft top highlight
-    let hi = CGGradient(colorsSpace: cs,
-                        colors: [color(255, 255, 255, 0.16), color(255, 255, 255, 0)] as CFArray,
-                        locations: [0, 1])!
-    ctx.drawLinearGradient(hi, start: CGPoint(x: 0, y: S), end: CGPoint(x: 0, y: S * 0.55), options: [])
-    ctx.restoreGState()
-
-    // --- microphone ---
+    // --- microphone (all white) ---
     let cx = S * 0.5
     let w = S * 0.215
     let hCap = S * 0.30
@@ -61,8 +43,8 @@ func render(_ S: CGFloat) -> CGImage {
     let stemBottomY = cradleBottomY - S * 0.085
     let baseHW = S * 0.105
 
-    // green cradle + stem + base (drawn first, capsule sits on top)
-    ctx.setStrokeColor(color(52, 199, 89))
+    // white cradle + stem + base (drawn first, capsule sits on top)
+    ctx.setStrokeColor(color(255, 255, 255))
     ctx.setLineWidth(S * 0.040)
     ctx.setLineCap(.round)
     ctx.setLineJoin(.round)
@@ -83,7 +65,7 @@ func render(_ S: CGFloat) -> CGImage {
 
     // white capsule
     ctx.addPath(CGPath(roundedRect: capRect, cornerWidth: w/2, cornerHeight: w/2, transform: nil))
-    ctx.setFillColor(color(255, 255, 255, 0.98))
+    ctx.setFillColor(color(255, 255, 255))
     ctx.fillPath()
 
     return ctx.makeImage()!
