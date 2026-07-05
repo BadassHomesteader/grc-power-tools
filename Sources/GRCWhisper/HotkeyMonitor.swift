@@ -29,6 +29,7 @@ final class HotkeyMonitor {
         case windowEnd                    // hotkey released after window moves
         case grid                         // draw-a-grid window placement
         case advancedPaste                // paste-as palette
+        case findMouse                    // spotlight the cursor
     }
 
     var handler: ((Callback) -> Void)?
@@ -49,7 +50,7 @@ final class HotkeyMonitor {
     /// keys (e.g. two arrows) are each tracked, not just the last one.
     private var swallowedKeyUps: Set<Int64> = []
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste }
+    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, findMouse }
     private var pending: Pending = .none
     /// Set once an arrow/Return moves a window this hold, so release ends the
     /// window session instead of dispatching a dictation.
@@ -67,6 +68,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_X: Int64 = 7
     private static let kVK_ANSI_V: Int64 = 9
     private static let kVK_ANSI_P: Int64 = 35
+    private static let kVK_ANSI_M: Int64 = 46
     private static let kVK_ANSI_3: Int64 = 20
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
@@ -244,6 +246,10 @@ final class HotkeyMonitor {
                 log("hotkey: +P leader armed (advanced paste)")
                 pending = .advancedPaste; swallowedKeyUps.insert(keyCode)
                 return nil
+            case Self.kVK_ANSI_M:
+                log("hotkey: +M leader armed (find mouse)")
+                pending = .findMouse; swallowedKeyUps.insert(keyCode)
+                return nil
             case Self.kVK_ANSI_3:
                 // Grid draw mode. Enter windowMode so release ends the session (no
                 // dictation); the grid overlay itself takes over via the mouse.
@@ -312,6 +318,7 @@ final class HotkeyMonitor {
                 case .fileCut: dispatch(.fileCut)
                 case .filePaste: dispatch(.filePaste)
                 case .advancedPaste: dispatch(.advancedPaste)
+                case .findMouse: dispatch(.findMouse)
                 }
             }
             interrupted = false

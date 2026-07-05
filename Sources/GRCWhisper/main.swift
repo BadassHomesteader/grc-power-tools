@@ -154,6 +154,24 @@ case "render-window":
         }
     }
 
+case "findmouse-preview":
+    let out = args.count >= 2 ? args[1] : "findmouse-preview.png"
+    MainActor.assumeIsolated {
+        let W: CGFloat = 1200, H: CGFloat = 760
+        let img = NSImage(size: NSSize(width: W, height: H))
+        img.lockFocus()
+        NSColor(white: 0.82, alpha: 1).setFill(); NSRect(x: 0, y: 0, width: W, height: H).fill()
+        NSColor.white.setFill(); NSRect(x: 120, y: 160, width: 420, height: 320).fill()
+        NSColor(white: 0.95, alpha: 1).setFill(); NSRect(x: 680, y: 260, width: 440, height: 360).fill()
+        let fm = FindMouseView(frame: NSRect(x: 0, y: 0, width: W, height: H))
+        fm.point = NSPoint(x: W * 0.62, y: H * 0.5); fm.alpha = 1; fm.converge = 0.45
+        fm.draw(fm.bounds)
+        img.unlockFocus()
+        let rep = NSBitmapImageRep(data: img.tiffRepresentation!)!
+        try? rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
+        print("wrote \(out)")
+    }
+
 case "advpaste-preview":
     let out = args.count >= 2 ? args[1] : "advpaste-preview.png"
     let dark = !(args.count >= 3 && args[2] == "light")

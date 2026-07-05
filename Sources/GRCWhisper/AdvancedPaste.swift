@@ -6,6 +6,7 @@ import Cocoa
 @MainActor
 final class AdvancedPaste {
     private var window: NSWindow?
+    private var keyMonitor: Any?
 
     struct Transform {
         let digit: Int
@@ -52,9 +53,18 @@ final class AdvancedPaste {
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         win.makeFirstResponder(view)
+
+        // Bulletproof key handling: a borderless window doesn't always hold key
+        // focus, so a local monitor catches Esc / digits / arrows regardless.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak view] event in
+            guard let self, self.window != nil, let view else { return event }
+            return view.handleKey(event) ? nil : event
+        }
     }
 
     func dismiss() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
         window?.orderOut(nil)
         window = nil
     }
@@ -145,16 +155,22 @@ final class AdvancedPasteView: NSView {
         if let i = rows.indices.first(where: { rowRect($0).contains(p) }), i != highlighted { highlighted = i; needsDisplay = true }
     }
 
-    override func keyDown(with event: NSEvent) {
+    override func keyDown(with event: NSEvent) { if !handleKey(event) { super.keyDown(with: event) } }
+
+    /// Returns true if the key was consumed. Called from keyDown AND the controller's
+    /// local event monitor (so Esc works even if this view isn't first responder).
+    @discardableResult
+    func handleKey(_ event: NSEvent) -> Bool {
         switch event.keyCode {
-        case 53: onCancel?()                                   // esc
-        case 36, 76: onPick?(rows[highlighted])                // return / enter
-        case 125: highlighted = min(highlighted + 1, rows.count - 1); needsDisplay = true  // down
-        case 126: highlighted = max(highlighted - 1, 0); needsDisplay = true               // up
+        case 53: onCancel?(); return true                                   // esc
+        case 36, 76: onPick?(rows[highlighted]); return true               // return / enter
+        case 125: highlighted = min(highlighted + 1, rows.count - 1); needsDisplay = true; return true  // down
+        case 126: highlighted = max(highlighted - 1, 0); needsDisplay = true; return true               // up
         default:
             if let ch = event.charactersIgnoringModifiers, let n = Int(ch), n >= 1, n <= rows.count {
-                onPick?(rows[n - 1])
+                onPick?(rows[n - 1]); return true
             }
+            return false
         }
     }
 

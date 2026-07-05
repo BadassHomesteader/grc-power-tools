@@ -29,6 +29,7 @@ final class AppController {
     private let gridOverlay = GridOverlay()
     private let snapAssist = SnapAssist()
     private let advancedPaste = AdvancedPaste()
+    private let findMouse = FindMouse()
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
 
@@ -102,6 +103,9 @@ final class AppController {
                 self.openGrid()
             case .advancedPaste:
                 self.openAdvancedPaste()
+            case .findMouse:
+                self.interruptDictation()
+                self.findMouse.flash()
             }
         }
         guard monitor.start() else {
