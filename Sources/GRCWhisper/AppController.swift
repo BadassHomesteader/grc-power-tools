@@ -26,6 +26,7 @@ final class AppController {
     private let audio: AudioCapture
     private let polisher: Polisher
     private let overlay = OverlayPanel()
+    private let gridOverlay = GridOverlay()
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
 
@@ -91,6 +92,8 @@ final class AppController {
                 self.handleWindow(move)
             case .windowEnd:
                 self.overlay.hide()
+            case .grid:
+                self.openGrid()
             }
         }
         guard monitor.start() else {
@@ -376,6 +379,27 @@ final class AppController {
     /// hold + C / X / V: copy, cut (copy + mark for move), or paste files. Paste is a
     /// Finder "Move Item Here" (⌥⌘V) if the last action was a cut, else a plain ⌘V.
     /// A short delay lets the physical hotkey modifiers lift before we synthesize.
+    /// hotkey + 3: capture the front window NOW (before the grid steals focus),
+    /// then show a full-screen grid to draw where it goes.
+    private func openGrid() {
+        interruptDictation()
+        overlay.hide()
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.bundleIdentifier != "com.grc.whisper",
+              let window = WindowManager.frontmostWindow() else {
+            overlay.showError("Click into a window first, then hold + 3")
+            return
+        }
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        gridOverlay.present(
+            screen: screen, dark: config.appearance.isDark,
+            snap: { rect in WindowManager.setWindow(window, cocoaFrame: rect) },
+            done: { app.activate() }
+        )
+    }
+
     /// Arrow/Return in window mode. Fires on each keydown; repeating the same
     /// direction cycles the size (½ → ⅓ → ⅔) so "tap ← ←" shrinks the left snap.
     private func handleWindow(_ move: WindowManager.Move) {

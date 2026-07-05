@@ -334,6 +334,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  V   paste — moves cut files, or pastes copied ones
         •  ← → ↑ ↓   snap the window to that side — tap again to cycle sizes (set below)
         •  ⏎   maximize the window   (keep holding, keep arrowing)
+        •  3   draw a grid to place the window — drag with the mouse, release to snap
 
         Just release without a letter to dictate normally.
         """

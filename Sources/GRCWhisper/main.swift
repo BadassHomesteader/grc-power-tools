@@ -154,6 +154,20 @@ case "render-window":
         }
     }
 
+case "grid-preview":
+    let out = args.count >= 2 ? args[1] : "grid-preview.png"
+    let dark = args.count >= 3 && args[2] == "dark"
+    MainActor.assumeIsolated {
+        let gv = GridView(cols: 12, rows: 8, dark: dark)
+        gv.frame = NSRect(x: 0, y: 0, width: 1200, height: 760)
+        gv.previewSelect((0, 2), (5, 7))  // sample selection
+        guard let rep = gv.bitmapImageRepForCachingDisplay(in: gv.bounds) else { exit(1) }
+        gv.cacheDisplay(in: gv.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
 case "chat-live-test":
     // Opens a real chat window and pumps the run loop so the deferred
     // scrollToBottom() actually executes — exercises the live crash path.

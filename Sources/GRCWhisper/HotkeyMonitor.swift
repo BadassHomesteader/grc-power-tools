@@ -27,6 +27,7 @@ final class HotkeyMonitor {
         case filePaste
         case window(WindowManager.Move)  // fires immediately, repeatable while held
         case windowEnd                    // hotkey released after window moves
+        case grid                         // draw-a-grid window placement
     }
 
     var handler: ((Callback) -> Void)?
@@ -64,6 +65,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_C: Int64 = 8
     private static let kVK_ANSI_X: Int64 = 7
     private static let kVK_ANSI_V: Int64 = 9
+    private static let kVK_ANSI_3: Int64 = 20
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
     private static let kVK_RightArrow: Int64 = 124
@@ -228,6 +230,13 @@ final class HotkeyMonitor {
             case Self.kVK_ANSI_V:
                 log("hotkey: +V leader armed (file paste)")
                 pending = .filePaste; swallowedKeyUps.insert(keyCode)
+                return nil
+            case Self.kVK_ANSI_3:
+                // Grid draw mode. Enter windowMode so release ends the session (no
+                // dictation); the grid overlay itself takes over via the mouse.
+                windowMode = true
+                swallowedKeyUps.insert(keyCode)
+                dispatch(.grid)
                 return nil
             case Self.kVK_LeftArrow, Self.kVK_RightArrow, Self.kVK_UpArrow, Self.kVK_DownArrow, Self.kVK_Return:
                 // Window moves fire immediately and can repeat while held (tap ←←

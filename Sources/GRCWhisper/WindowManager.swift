@@ -35,6 +35,13 @@ enum WindowManager {
         return true
     }
 
+    /// The focused window of the frontmost app — capture this BEFORE showing any UI
+    /// that steals focus (e.g. the grid overlay), then apply with `setWindow`.
+    static func frontmostWindow() -> AXUIElement? { focusedWindow() }
+
+    /// Move/resize a specific window to a global NSScreen (bottom-left) rect.
+    static func setWindow(_ window: AXUIElement, cocoaFrame: NSRect) { setFrame(window, cocoaFrame) }
+
     // MARK: AX plumbing
 
     private static func focusedWindow() -> AXUIElement? {
