@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build grc-whisper and assemble "GRC Whisper.app".
+# Build grc-whisper and assemble "Power Tools.app".
 #
 # TCC permissions (Microphone / Accessibility / Input Monitoring) are keyed to
 # bundle ID + code signature, so the app must ALWAYS be built as a bundle and
@@ -10,8 +10,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Display name is "Power Tools"; BUNDLE_ID + signing identity stay fixed so TCC
+# grants (Mic / Accessibility / Screen Recording) and saved keys survive the rename.
 BUNDLE_ID="com.grc.whisper"
-APP_NAME="GRC Whisper"
+APP_NAME="Power Tools"
+OLD_APP_NAME="GRC Whisper"
 VERSION="1.0.0"
 DIST="dist"
 APP="$DIST/$APP_NAME.app"
@@ -47,7 +50,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>GRC Whisper records while you hold the dictation hotkey and transcribes entirely on this Mac.</string>
+    <string>Power Tools records while you hold the dictation hotkey and transcribes entirely on this Mac.</string>
     <key>NSHumanReadableCopyright</key><string>Local-only dictation. No network. No cloud.</string>
 </dict>
 </plist>
@@ -75,6 +78,8 @@ echo "NOTE: $GRANT_NOTE"
 if [[ "${1:-}" == "--install" ]]; then
     echo "==> installing to /Applications"
     rm -rf "/Applications/$APP_NAME.app"
+    # Clean up the pre-rename app so there aren't two copies in /Applications.
+    rm -rf "/Applications/$OLD_APP_NAME.app"
     cp -R "$APP" "/Applications/$APP_NAME.app"
     echo "==> installed. Launch it: open '/Applications/$APP_NAME.app'"
 fi

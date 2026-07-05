@@ -32,6 +32,10 @@ final class AppController {
     private var cycle = 0
     /// File "cut" is Copy now + Move-on-next-paste (macOS has no real file cut).
     private var fileCutPending = false
+    /// Window-organizer cycle state: repeated same-direction taps shrink the window.
+    private var winLastMove: WindowManager.Move?
+    private var winStep = 0
+    private static let winFractions: [CGFloat] = [0.5, 1.0 / 3.0, 2.0 / 3.0]
     private var utterance: AppleSpeechUtterance?
     private var startTask: Task<Void, Error>?
     private var context: ContextSnapshot?
@@ -83,13 +87,10 @@ final class AppController {
             case .filePaste:
                 if self.state == .recording { self.cancel() }
                 self.fileClipboard(.paste)
-            case .window(let snap):
-                if self.state == .recording { self.cancel() }
-                if WindowManager.snap(snap) {
-                    self.overlay.showResult(snap.label)
-                } else {
-                    self.overlay.showError("No window to move")
-                }
+            case .window(let move):
+                self.handleWindow(move)
+            case .windowEnd:
+                self.overlay.hide()
             }
         }
         guard monitor.start() else {
@@ -104,6 +105,7 @@ final class AppController {
 
     private func keyDown() {
         guard state == .idle else { return }
+        winLastMove = nil; winStep = 0   // fresh window-cycle each hold
         let ctx = ContextSnapshot.capture()
         if ctx.isSecureField {
             overlay.showError("Secure input field — can't dictate here")
@@ -297,7 +299,7 @@ final class AppController {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
             NSWorkspace.shared.open(url)
         }
-        overlay.showError("Turn on Screen Recording for GRC Whisper, then quit & reopen the app")
+        overlay.showError("Turn on Screen Recording for Power Tools, then quit & reopen the app")
         return false
     }
 
@@ -365,6 +367,37 @@ final class AppController {
     /// hold + C / X / V: copy, cut (copy + mark for move), or paste files. Paste is a
     /// Finder "Move Item Here" (⌥⌘V) if the last action was a cut, else a plain ⌘V.
     /// A short delay lets the physical hotkey modifiers lift before we synthesize.
+    /// Arrow/Return in window mode. Fires on each keydown; repeating the same
+    /// direction cycles the size (½ → ⅓ → ⅔) so "tap ← ←" shrinks the left snap.
+    private func handleWindow(_ move: WindowManager.Move) {
+        if state == .recording { cancel() }
+        if move == .maximize {
+            winLastMove = nil; winStep = 0
+            if WindowManager.maximize() {
+                overlay.showWindow(region: CGRect(x: 0, y: 0, width: 1, height: 1), label: "Maximize")
+            } else { overlay.showError("No window to move") }
+            return
+        }
+        if move == winLastMove { winStep = (winStep + 1) % Self.winFractions.count }
+        else { winStep = 0; winLastMove = move }
+        let f = Self.winFractions[winStep]
+        let edge: WindowManager.Edge
+        let region: CGRect
+        let name: String
+        switch move {
+        case .left:  edge = .left;   region = CGRect(x: 0, y: 0, width: f, height: 1);     name = "Left"
+        case .right: edge = .right;  region = CGRect(x: 1 - f, y: 0, width: f, height: 1); name = "Right"
+        case .up:    edge = .top;    region = CGRect(x: 0, y: 0, width: 1, height: f);     name = "Top"
+        case .down:  edge = .bottom; region = CGRect(x: 0, y: 1 - f, width: 1, height: f); name = "Bottom"
+        case .maximize: return
+        }
+        guard WindowManager.snap(edge: edge, fraction: f) else {
+            overlay.showError("No window to move"); return
+        }
+        let frac = ["½", "⅓", "⅔"][winStep]
+        overlay.showWindow(region: region, label: "\(name) \(frac)")
+    }
+
     private func fileClipboard(_ op: FileOp) {
         // File ops don't touch the dictation state machine; the caller already
         // cancels an active recording, so don't drop the op while .processing.

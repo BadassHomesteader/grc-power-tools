@@ -44,7 +44,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
-        window.title = "GRC Whisper"
+        window.title = "Power Tools"
         window.center()
         window.setFrameAutosaveName("GRCWhisperSettings")
         super.init(window: window)
@@ -74,9 +74,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         root.translatesAutoresizingMaskIntoConstraints = false
 
         // Header
-        let title = NSTextField(labelWithString: "GRC Whisper")
+        let title = NSTextField(labelWithString: "Power Tools")
         title.font = .systemFont(ofSize: 20, weight: .bold)
-        let subtitle = NSTextField(labelWithString: "Hold your hotkey, speak, release — text lands where your cursor is. Everything runs on this Mac.")
+        let subtitle = NSTextField(labelWithString: "One hotkey — dictate, chat with AI, grab text & screenshots, move files, and snap windows. Everything runs on this Mac.")
         subtitle.font = .systemFont(ofSize: 12)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byWordWrapping
@@ -221,7 +221,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         launchLoginCheck.action = #selector(toggleLaunchLogin)
         let dataBtn = NSButton(title: "Open Data Folder", target: self, action: #selector(openDataFolder))
         dataBtn.bezelStyle = .rounded
-        let quitBtn = NSButton(title: "Quit GRC Whisper", target: NSApp, action: #selector(NSApplication.terminate(_:)))
+        let quitBtn = NSButton(title: "Quit Power Tools", target: NSApp, action: #selector(NSApplication.terminate(_:)))
         quitBtn.bezelStyle = .rounded
         let version = NSTextField(labelWithString: "Local-only · no network · v1.0.0")
         version.font = .systemFont(ofSize: 11)
@@ -326,8 +326,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  C   copy the selected file(s) in Finder
         •  X   cut file(s) — then V moves them
         •  V   paste — moves cut files, or pastes copied ones
-        •  ← → ↑ ↓   snap the window to a half of the screen
-        •  ⏎   maximize the window
+        •  ← → ↑ ↓   snap the window to that side — tap again to shrink (½ → ⅓ → ⅔)
+        •  ⏎   maximize the window   (keep holding, keep arrowing)
 
         Just release without a letter to dictate normally.
         """
@@ -372,7 +372,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         config.save()
         onConfigChange(config)
         helpLabel.stringValue = helpText(for: hk)
-        hotkeyNote.stringValue = changed ? "Quit and reopen GRC Whisper to apply the new hotkey." : " "
+        hotkeyNote.stringValue = changed ? "Quit and reopen Power Tools to apply the new hotkey." : " "
     }
 
     @objc private func positionChanged() {

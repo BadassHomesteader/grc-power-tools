@@ -24,8 +24,8 @@ enum Doctor {
             name: "App bundle",
             ok: bundled,
             detail: bundled
-                ? "running as GRC Whisper.app (TCC grants will stick)"
-                : "running as a bare binary — permissions attach to the parent app; build and use GRC Whisper.app for real use"
+                ? "running as Power Tools.app (TCC grants will stick)"
+                : "running as a bare binary — permissions attach to the parent app; build and use Power Tools.app for real use"
         ))
 
         let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
@@ -46,8 +46,8 @@ enum Doctor {
             detail: tapWorks
                 ? "granted (event tap verified)"
                 : (axTrusted
-                    ? "shows enabled but the event tap CANNOT be created — a rebuild invalidated the grant. In System Settings ▸ Privacy & Security ▸ Accessibility, select GRC Whisper, click −, then relaunch and re-enable it."
-                    : "not granted — add GRC Whisper in System Settings ▸ Privacy & Security ▸ Accessibility")
+                    ? "shows enabled but the event tap CANNOT be created — a rebuild invalidated the grant. In System Settings ▸ Privacy & Security ▸ Accessibility, select Power Tools, click −, then relaunch and re-enable it."
+                    : "not granted — add Power Tools in System Settings ▸ Privacy & Security ▸ Accessibility")
         ))
 
         let listen = CGPreflightListenEventAccess()
@@ -116,7 +116,7 @@ enum Doctor {
 
     static func report() async -> String {
         let checks = await run()
-        var lines = ["GRC Whisper doctor:"]
+        var lines = ["Power Tools doctor:"]
         for c in checks {
             lines.append("  [\(c.ok ? "OK" : "!!")] \(c.name): \(c.detail)")
         }

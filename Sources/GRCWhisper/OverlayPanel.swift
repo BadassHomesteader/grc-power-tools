@@ -55,9 +55,33 @@ final class FlatPill: NSView {
     }
 }
 
+/// A tiny screen with the snap target highlighted — shown while organizing windows.
+final class WindowDiagramView: NSView {
+    var region = CGRect(x: 0, y: 0, width: 0.5, height: 1)  // normalized, top-left origin
+    var stroke: NSColor = .black
+    var fill = NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1)
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let box = bounds.insetBy(dx: 2, dy: 2)
+        let outline = NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4)
+        stroke.withAlphaComponent(0.45).setStroke()
+        outline.lineWidth = 1.5
+        outline.stroke()
+        let r = NSRect(x: box.minX + region.minX * box.width,
+                       y: box.minY + region.minY * box.height,
+                       width: region.width * box.width,
+                       height: region.height * box.height).insetBy(dx: 1.5, dy: 1.5)
+        fill.setFill()
+        NSBezierPath(roundedRect: r, xRadius: 2, yRadius: 2).fill()
+    }
+}
+
 /// The dictation HUD: a flat white/black pill (Claude-Desktop style) with a mic on
 /// the left, a live waveform in the middle, and "release to stop" on the right.
-/// Result/error text replaces the waveform briefly, then it hides.
+/// Result/error text replaces the waveform briefly; window-organizer mode swaps in
+/// a mini screen diagram. Then it hides.
 final class OverlayPanel {
     static let width: CGFloat = 500
     static let height: CGFloat = 64
@@ -73,6 +97,11 @@ final class OverlayPanel {
         let x = 20 + iconSize + 14
         return NSRect(x: x, y: (height - 22) / 2, width: width - x - 18, height: 22)
     }
+    private static var diagramFrame: NSRect { NSRect(x: 18, y: (height - 30) / 2, width: 46, height: 30) }
+    private static var winLabelFrame: NSRect {
+        let x: CGFloat = 18 + 46 + 14
+        return NSRect(x: x, y: (height - 22) / 2, width: width - x - 18, height: 22)
+    }
 
     var anchor: Config.OverlayPosition = .bottomCenter
     var scheme: Config.Appearance = .light { didSet { applyScheme() } }
@@ -83,7 +112,11 @@ final class OverlayPanel {
     private let waveform = WaveformView(bars: 90)
     private let hintLabel = NSTextField(labelWithString: "release to stop")
     private let textLabel = NSTextField(labelWithString: "")
+    private let windowDiagram = WindowDiagramView()
+    private let windowLabel = NSTextField(labelWithString: "")
     private var hideTimer: Timer?
+
+    private enum Mode { case waveform, text, window }
 
     // Palette derived from the theme.
     private var fg: NSColor { scheme.isDark ? NSColor.white.withAlphaComponent(0.95) : NSColor.black.withAlphaComponent(0.9) }
@@ -106,7 +139,7 @@ final class OverlayPanel {
         panel.hidesOnDeactivate = false
 
         iconView.frame = Self.iconFrame
-        iconView.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "GRC Whisper")
+        iconView.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Power Tools")
         iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
         iconView.imageScaling = .scaleProportionallyUpOrDown
         pill.addSubview(iconView)
@@ -127,6 +160,15 @@ final class OverlayPanel {
         textLabel.isHidden = true
         pill.addSubview(textLabel)
 
+        windowDiagram.frame = Self.diagramFrame
+        windowDiagram.isHidden = true
+        pill.addSubview(windowDiagram)
+
+        windowLabel.frame = Self.winLabelFrame
+        windowLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        windowLabel.isHidden = true
+        pill.addSubview(windowLabel)
+
         panel.contentView = pill
         applyScheme()
     }
@@ -138,7 +180,10 @@ final class OverlayPanel {
         iconView.contentTintColor = fg
         waveform.barColor = waveColor
         hintLabel.textColor = hintColor
+        windowDiagram.stroke = fg
+        windowDiagram.needsDisplay = true
         if !textLabel.isHidden { textLabel.textColor = fg }
+        if !windowLabel.isHidden { windowLabel.textColor = fg }
     }
 
     /// Builds a static preview pill (recording state) for `render-overlay`.
@@ -149,15 +194,29 @@ final class OverlayPanel {
             let env: Double = 0.45 + 0.4 * sin(Double(i) / 6) * cos(Double(i) / 3.5)
             return CGFloat(min(max(0.12, abs(env)), 1))
         })
-        panel.setMode(waveform: true)
+        panel.setMode(.waveform)
         panel.hintLabel.stringValue = "release to stop"
         return panel.pill
     }
 
-    private func setMode(waveform showWave: Bool) {
-        waveform.isHidden = !showWave
-        hintLabel.isHidden = !showWave
-        textLabel.isHidden = showWave
+    /// Static preview of the window-organizer state for `render-window`.
+    static func buildWindowContent(dark: Bool, region: CGRect, label: String) -> NSView {
+        let panel = OverlayPanel()
+        panel.scheme = dark ? .dark : .light
+        panel.windowDiagram.region = region
+        panel.windowLabel.stringValue = label
+        panel.windowLabel.textColor = panel.fg
+        panel.setMode(.window)
+        return panel.pill
+    }
+
+    private func setMode(_ mode: Mode) {
+        iconView.isHidden = (mode == .window)
+        waveform.isHidden = (mode != .waveform)
+        hintLabel.isHidden = (mode != .waveform)
+        textLabel.isHidden = (mode != .text)
+        windowDiagram.isHidden = (mode != .window)
+        windowLabel.isHidden = (mode != .window)
     }
 
     private func position() {
@@ -184,7 +243,7 @@ final class OverlayPanel {
         applyScheme()
         waveform.idle()
         hintLabel.stringValue = "release to stop"
-        setMode(waveform: true)
+        setMode(.waveform)
         present()
     }
 
@@ -197,17 +256,30 @@ final class OverlayPanel {
 
     func showProcessing() {
         hintLabel.stringValue = "…"
-        setMode(waveform: true)
+        setMode(.waveform)
         present()
     }
 
     func showResult(_ text: String) {
         hideTimer?.invalidate()
-        setMode(waveform: false)
+        setMode(.text)
         textLabel.textColor = fg
         textLabel.stringValue = text
         present()
         hideAfter(1.4)
+    }
+
+    /// Window-organizer state: a mini screen diagram + label (e.g. "Left ⅓"). Stays
+    /// up while you hold (a long fallback hides it if the release event is missed).
+    func showWindow(region: CGRect, label: String) {
+        hideTimer?.invalidate()
+        windowDiagram.region = region
+        windowDiagram.needsDisplay = true
+        windowLabel.textColor = fg
+        windowLabel.stringValue = label
+        setMode(.window)
+        present()
+        hideAfter(2.5)
     }
 
     /// Place and order the panel front (result/processing can be shown without a
@@ -219,7 +291,7 @@ final class OverlayPanel {
     }
 
     func showError(_ message: String) {
-        setMode(waveform: false)
+        setMode(.text)
         textLabel.textColor = NSColor(srgbRed: 0.85, green: 0.35, blue: 0.15, alpha: 1)
         textLabel.stringValue = message
         present()

@@ -32,7 +32,7 @@ final class ChatWindowController: NSWindowController {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
-        window.title = "GRC Whisper — AI Chat"
+        window.title = "Power Tools — AI Chat"
         window.center()
         window.setFrameAutosaveName("GRCWhisperChat")
         window.minSize = NSSize(width: 380, height: 360)
@@ -65,9 +65,9 @@ final class ChatWindowController: NSWindowController {
     /// Static sample transcript for the offscreen `chat-preview` design check.
     func previewSeed() {
         addBubble(role: "user", text: "What does Wispr Flow use for its AI?")
-        addBubble(role: "assistant", text: "Wispr Flow does its transcription in the cloud — it streams your audio to their servers rather than running on-device. GRC Whisper is the opposite: everything here runs locally on your Mac, and only this AI chat reaches out (with your own key).")
+        addBubble(role: "assistant", text: "Wispr Flow does its transcription in the cloud — it streams your audio to their servers rather than running on-device. Power Tools is the opposite: everything here runs locally on your Mac, and only this AI chat reaches out (with your own key).")
         addBubble(role: "user", text: "Nice. Summarize that in one line.")
-        addBubble(role: "assistant", text: "Wispr Flow = cloud transcription; GRC Whisper = fully on-device, cloud only for opt-in AI.")
+        addBubble(role: "assistant", text: "Wispr Flow = cloud transcription; Power Tools = fully on-device, cloud only for opt-in AI.")
     }
 
     /// Send text (from voice or typed). If a reply is already streaming, the new

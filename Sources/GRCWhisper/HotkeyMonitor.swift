@@ -25,7 +25,8 @@ final class HotkeyMonitor {
         case fileCopy
         case fileCut
         case filePaste
-        case window(WindowManager.Snap)
+        case window(WindowManager.Move)  // fires immediately, repeatable while held
+        case windowEnd                    // hotkey released after window moves
     }
 
     var handler: ((Callback) -> Void)?
@@ -45,8 +46,11 @@ final class HotkeyMonitor {
     /// mid-hold), so apps don't see an orphan keyUp.
     private var swallowedKeyUp: Int64?
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, window(WindowManager.Snap) }
+    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste }
     private var pending: Pending = .none
+    /// Set once an arrow/Return moves a window this hold, so release ends the
+    /// window session instead of dispatching a dictation.
+    private var windowMode = false
 
     private static let kVK_Function: Int64 = 63
     private static let kVK_RightOption: Int64 = 61
@@ -221,20 +225,35 @@ final class HotkeyMonitor {
                 log("hotkey: +V leader armed (file paste)")
                 pending = .filePaste; swallowedKeyUp = keyCode
                 return nil
-            case Self.kVK_LeftArrow:
-                pending = .window(.leftHalf); swallowedKeyUp = keyCode; return nil
-            case Self.kVK_RightArrow:
-                pending = .window(.rightHalf); swallowedKeyUp = keyCode; return nil
-            case Self.kVK_UpArrow:
-                pending = .window(.topHalf); swallowedKeyUp = keyCode; return nil
-            case Self.kVK_DownArrow:
-                pending = .window(.bottomHalf); swallowedKeyUp = keyCode; return nil
-            case Self.kVK_Return:
-                pending = .window(.maximize); swallowedKeyUp = keyCode; return nil
+            case Self.kVK_LeftArrow, Self.kVK_RightArrow, Self.kVK_UpArrow, Self.kVK_DownArrow, Self.kVK_Return:
+                // Window moves fire immediately and can repeat while held (tap ←←
+                // to shrink). Release then just ends the session (no dictation).
+                let move: WindowManager.Move
+                switch keyCode {
+                case Self.kVK_LeftArrow: move = .left
+                case Self.kVK_RightArrow: move = .right
+                case Self.kVK_UpArrow: move = .up
+                case Self.kVK_DownArrow: move = .down
+                default: move = .maximize
+                }
+                windowMode = true
+                swallowedKeyUp = keyCode
+                dispatch(.window(move))
+                return nil
             default:
                 interrupted = true
                 dispatch(.cancel)
                 return Unmanaged.passUnretained(event)
+            }
+        }
+
+        // In window mode, swallow every arrow/Return keyUp (they repeat, so the
+        // single swallowedKeyUp slot isn't enough to cover fast alternating taps).
+        if held && windowMode && type == .keyUp {
+            switch keyCode {
+            case Self.kVK_LeftArrow, Self.kVK_RightArrow, Self.kVK_UpArrow, Self.kVK_DownArrow, Self.kVK_Return:
+                return nil
+            default: break
             }
         }
 
@@ -253,13 +272,18 @@ final class HotkeyMonitor {
             heldSince = Date()
             interrupted = false
             pending = .none
+            windowMode = false
             dispatch(.down)
         } else if !isDown && held {
             held = false
             heldSince = nil
             let p = pending
             pending = .none
-            if !interrupted {
+            let wasWindow = windowMode
+            windowMode = false
+            if wasWindow {
+                dispatch(.windowEnd)  // window moves already fired on keydown
+            } else if !interrupted {
                 switch p {
                 case .none: dispatch(.up(.dictate))
                 case .ai: dispatch(.up(.ai))
@@ -269,7 +293,6 @@ final class HotkeyMonitor {
                 case .fileCopy: dispatch(.fileCopy)
                 case .fileCut: dispatch(.fileCut)
                 case .filePaste: dispatch(.filePaste)
-                case .window(let snap): dispatch(.window(snap))
                 }
             }
             interrupted = false

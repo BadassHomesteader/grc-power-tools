@@ -37,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 log("startup error: \(error.localizedDescription)")
                 let alert = NSAlert()
-                alert.messageText = "GRC Whisper couldn't start"
+                alert.messageText = "Power Tools couldn't start"
                 alert.informativeText = error.localizedDescription
                     + "\n\nGrant the permission in the Settings window (Permissions section), then reopen the app."
                 alert.runModal()
@@ -75,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(appItem)
         let appMenu = NSMenu()
         appItem.submenu = appMenu
-        appMenu.addItem(withTitle: "About GRC Whisper",
+        appMenu.addItem(withTitle: "About Power Tools",
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
@@ -88,8 +88,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         chatMenuItem.target = self
         appMenu.addItem(chatMenuItem)
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide GRC Whisper", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "Quit GRC Whisper", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Hide Power Tools", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Quit Power Tools", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         let editItem = NSMenuItem()
         main.addItem(editItem)
@@ -108,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setIcon(recording: Bool) {
         let symbol = recording ? "mic.fill" : "mic"
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "GRC Whisper")
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Power Tools")
         image?.isTemplate = !recording
         statusItem.button?.image = image
         statusItem.button?.contentTintColor = recording ? .systemRed : nil
@@ -153,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(settingsItem)
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit GRC Whisper", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit Power Tools", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         return menu
     }
 

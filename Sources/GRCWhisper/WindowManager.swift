@@ -8,44 +8,31 @@ import ApplicationServices
 /// is BOTTOM-left. We compute targets in NSScreen (visibleFrame, so we never cover
 /// the menu bar or Dock) and flip to AX coords when setting.
 enum WindowManager {
-    enum Snap {
-        case leftHalf, rightHalf, topHalf, bottomHalf, maximize, center
+    /// A direction the user pressed (arrow) or a whole-screen action.
+    enum Move { case left, right, up, down, maximize }
+    enum Edge { case left, right, top, bottom }
 
-        var label: String {
-            switch self {
-            case .leftHalf: return "Left half"
-            case .rightHalf: return "Right half"
-            case .topHalf: return "Top half"
-            case .bottomHalf: return "Bottom half"
-            case .maximize: return "Maximized"
-            case .center: return "Centered"
-            }
-        }
-    }
-
-    /// Returns false if there was no window to move (e.g. Finder desktop focused).
+    /// Snap to `fraction` of the screen along `edge` (0.5 = half, 1/3, 2/3…).
     @discardableResult
-    static func snap(_ snap: Snap) -> Bool {
-        guard let window = focusedWindow() else { return false }
-        guard let screen = screen(for: window) ?? NSScreen.main else { return false }
+    static func snap(edge: Edge, fraction: CGFloat) -> Bool {
+        guard let window = focusedWindow(), let screen = targetScreen(window) else { return false }
         let vf = screen.visibleFrame
-        setFrame(window, targetRect(snap, in: vf))
+        let r: NSRect
+        switch edge {
+        case .left:   r = NSRect(x: vf.minX, y: vf.minY, width: vf.width * fraction, height: vf.height)
+        case .right:  r = NSRect(x: vf.maxX - vf.width * fraction, y: vf.minY, width: vf.width * fraction, height: vf.height)
+        case .top:    r = NSRect(x: vf.minX, y: vf.maxY - vf.height * fraction, width: vf.width, height: vf.height * fraction)
+        case .bottom: r = NSRect(x: vf.minX, y: vf.minY, width: vf.width, height: vf.height * fraction)
+        }
+        setFrame(window, r)
         return true
     }
 
-    // MARK: Target geometry (NSScreen bottom-left coords)
-
-    private static func targetRect(_ snap: Snap, in vf: NSRect) -> NSRect {
-        switch snap {
-        case .leftHalf:   return NSRect(x: vf.minX, y: vf.minY, width: vf.width / 2, height: vf.height)
-        case .rightHalf:  return NSRect(x: vf.midX, y: vf.minY, width: vf.width / 2, height: vf.height)
-        case .topHalf:    return NSRect(x: vf.minX, y: vf.midY, width: vf.width, height: vf.height / 2)
-        case .bottomHalf: return NSRect(x: vf.minX, y: vf.minY, width: vf.width, height: vf.height / 2)
-        case .maximize:   return vf
-        case .center:
-            let w = vf.width * 0.62, h = vf.height * 0.72
-            return NSRect(x: vf.midX - w / 2, y: vf.midY - h / 2, width: w, height: h)
-        }
+    @discardableResult
+    static func maximize() -> Bool {
+        guard let window = focusedWindow(), let screen = targetScreen(window) else { return false }
+        setFrame(window, screen.visibleFrame)
+        return true
     }
 
     // MARK: AX plumbing
@@ -57,6 +44,12 @@ enum WindowManager {
         guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focused) == .success,
               let win = focused else { return nil }
         return (win as! AXUIElement)
+    }
+
+    private static func targetScreen(_ window: AXUIElement) -> NSScreen? {
+        guard let f = currentFrame(window) else { return NSScreen.main }
+        let center = NSPoint(x: f.midX, y: f.midY)
+        return NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) } ?? NSScreen.main
     }
 
     /// Current window frame in NSScreen (bottom-left) coords, or nil.
@@ -73,18 +66,12 @@ enum WindowManager {
         return NSRect(x: pos.x, y: cocoaY, width: size.width, height: size.height)
     }
 
-    private static func screen(for window: AXUIElement) -> NSScreen? {
-        guard let f = currentFrame(window) else { return nil }
-        let center = NSPoint(x: f.midX, y: f.midY)
-        return NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }
-    }
-
     private static func setFrame(_ window: AXUIElement, _ cocoaRect: NSRect) {
         let axY = primaryHeight() - cocoaRect.origin.y - cocoaRect.height
         var pos = CGPoint(x: cocoaRect.origin.x, y: axY)
         var size = CGSize(width: cocoaRect.width, height: cocoaRect.height)
-        // Set size first, then position, then position again — a window with a min
-        // size can otherwise land shifted after the size clamps it.
+        // Set size, then position, then size again — a window with a min size can
+        // otherwise land shifted after the size clamps it.
         if let sizeVal = AXValueCreate(.cgSize, &size) {
             AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeVal)
         }

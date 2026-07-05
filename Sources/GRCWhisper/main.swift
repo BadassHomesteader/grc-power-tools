@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-// GRC Whisper — fully-local voice dictation for macOS 26+.
+// Power Tools — fully-local voice dictation for macOS 26+.
 // No arguments: run the menu-bar app. Subcommands below are for testing/administration.
 
 /// Run async work to completion from the synchronous CLI entry point.
@@ -137,6 +137,20 @@ case "settings-preview":
                 try? data.write(to: URL(fileURLWithPath: args.count >= 2 ? args[1] : "settings.png"))
                 print("wrote")
             }
+        }
+    }
+
+case "render-window":
+    // Offscreen preview of the window-organizer overlay state.
+    let out = args.count >= 2 ? args[1] : "window-preview.png"
+    let dark = args.count >= 3 && args[2] == "dark"
+    MainActor.assumeIsolated {
+        let content = OverlayPanel.buildWindowContent(
+            dark: dark, region: CGRect(x: 0, y: 0, width: 1.0 / 3.0, height: 1), label: "Left ⅓")
+        guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { exit(1) }
+        content.cacheDisplay(in: content.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
         }
     }
 
