@@ -194,13 +194,15 @@ struct Config: Codable {
     var snapSizes: SnapSizes = .thirds
     /// Columns × rows of the draw-a-grid overlay.
     var gridSize: GridSize = .c12x8
+    /// After snapping a window to a side, offer the other windows to fill the gap.
+    var snapAssist: Bool = true
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
-        case overlayPosition, appearance, aiChatMode, snapSizes, gridSize
+        case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -221,6 +223,7 @@ struct Config: Codable {
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? .dark
         aiChatMode = try c.decodeIfPresent(AIChatMode.self, forKey: .aiChatMode) ?? .both
         snapSizes = try c.decodeIfPresent(SnapSizes.self, forKey: .snapSizes) ?? .thirds
+        snapAssist = try c.decodeIfPresent(Bool.self, forKey: .snapAssist) ?? true
         gridSize = try c.decodeIfPresent(GridSize.self, forKey: .gridSize) ?? .c12x8
     }
 

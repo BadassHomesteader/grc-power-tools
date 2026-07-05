@@ -154,6 +154,26 @@ case "render-window":
         }
     }
 
+case "snapassist-preview":
+    let out = args.count >= 2 ? args[1] : "snapassist-preview.png"
+    let dark = args.count >= 3 && args[2] == "dark"
+    MainActor.assumeIsolated {
+        func fake(_ t: String, _ sym: String) -> SnapAssist.Candidate {
+            SnapAssist.Candidate(pid: 0, windowID: 0, title: t,
+                                 icon: NSImage(systemSymbolName: sym, accessibilityDescription: nil))
+        }
+        let cands = [fake("GitHub — Chrome", "globe"), fake("Notes", "note.text"),
+                     fake("Mail — Inbox (23)", "envelope.fill"), fake("Terminal — zsh", "terminal.fill"),
+                     fake("Slack — general", "message.fill")]
+        let view = SnapAssistView(candidates: cands, dark: dark)
+        view.frame = NSRect(x: 0, y: 0, width: 940, height: 760)
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
 case "grid-preview":
     let out = args.count >= 2 ? args[1] : "grid-preview.png"
     let dark = args.count >= 3 && args[2] == "dark"

@@ -1,6 +1,12 @@
 import Cocoa
 import ApplicationServices
 
+/// Private but widely-used AX SPI: get the CGWindowID for an AX window element.
+/// Bridges CGWindowList entries (used for enumeration + thumbnails in Snap Assist)
+/// to the AX handle we need to actually move a window.
+@_silgen_name("_AXUIElementGetWindow")
+func _AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
+
 /// Snaps the focused window of the frontmost app to a screen region via the
 /// Accessibility API (same permission the hotkey tap already uses — no new grant).
 ///
@@ -12,10 +18,13 @@ enum WindowManager {
     enum Move { case left, right, up, down, maximize }
     enum Edge { case left, right, top, bottom }
 
+    struct SnapResult { let screen: NSScreen; let windowID: CGWindowID }
+
     /// Snap to `fraction` of the screen along `edge` (0.5 = half, 1/3, 2/3…).
+    /// Returns the screen used + the moved window's CGWindowID (for Snap Assist).
     @discardableResult
-    static func snap(edge: Edge, fraction: CGFloat) -> Bool {
-        guard let window = focusedWindow(), let screen = targetScreen(window) else { return false }
+    static func snap(edge: Edge, fraction: CGFloat) -> SnapResult? {
+        guard let window = focusedWindow(), let screen = targetScreen(window) else { return nil }
         let vf = screen.visibleFrame
         let r: NSRect
         switch edge {
@@ -25,7 +34,31 @@ enum WindowManager {
         case .bottom: r = NSRect(x: vf.minX, y: vf.minY, width: vf.width, height: vf.height * fraction)
         }
         setFrame(window, r)
-        return true
+        return SnapResult(screen: screen, windowID: cgWindowID(of: window))
+    }
+
+    /// Find the AX window element for a given app pid + CGWindowID (Snap Assist
+    /// clicks a CGWindowList entry; we need its AX handle to move it).
+    static func axWindow(pid: pid_t, windowID: CGWindowID) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &ref) == .success,
+              let windows = ref as? [AXUIElement] else { return nil }
+        for w in windows {
+            var wid = CGWindowID(0)
+            if _AXUIElementGetWindow(w, &wid) == .success, wid == windowID { return w }
+        }
+        return nil
+    }
+
+    static func raise(_ window: AXUIElement) {
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    }
+
+    private static func cgWindowID(of window: AXUIElement) -> CGWindowID {
+        var wid = CGWindowID(0)
+        _ = _AXUIElementGetWindow(window, &wid)
+        return wid
     }
 
     @discardableResult

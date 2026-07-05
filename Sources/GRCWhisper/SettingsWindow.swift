@@ -22,6 +22,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let snapSizesPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let gridSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchLoginCheck = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
+    private let snapAssistCheck = NSButton(checkboxWithTitle: "Snap Assist — offer other windows to fill the gap after a snap", target: nil, action: nil)
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
 
@@ -229,6 +230,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         // General section
         launchLoginCheck.target = self
         launchLoginCheck.action = #selector(toggleLaunchLogin)
+        snapAssistCheck.target = self
+        snapAssistCheck.action = #selector(snapAssistToggled)
+        snapAssistCheck.lineBreakMode = .byWordWrapping
         let dataBtn = NSButton(title: "Open Data Folder", target: self, action: #selector(openDataFolder))
         dataBtn.bezelStyle = .rounded
         let quitBtn = NSButton(title: "Quit Power Tools", target: NSApp, action: #selector(NSApplication.terminate(_:)))
@@ -240,7 +244,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         chatBtn.bezelStyle = .rounded
         let generalButtons = NSStackView(views: [dataBtn, quitBtn])
         generalButtons.spacing = 8
-        col3.addArrangedSubview(section("General", [chatBtn, launchLoginCheck, generalButtons, version], width: 400))
+        col3.addArrangedSubview(section("General", [chatBtn, snapAssistCheck, launchLoginCheck, generalButtons, version], width: 400))
 
         let columns = NSStackView(views: [col1, col2, col3])
         columns.orientation = .horizontal
@@ -314,6 +318,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         aiModePopup.selectItem(withTitle: config.aiChatMode.displayName)
         snapSizesPopup.selectItem(withTitle: config.snapSizes.displayName)
         gridSizePopup.selectItem(withTitle: config.gridSize.displayName)
+        snapAssistCheck.state = config.snapAssist ? .on : .off
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
@@ -434,6 +439,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             if let value = box.objectValueOfSelectedItem as? String { box.stringValue = value }
             self.modelsChanged()
         }
+    }
+
+    @objc private func snapAssistToggled() {
+        config.snapAssist = (snapAssistCheck.state == .on)
+        config.save()
+        onConfigChange(config)
     }
 
     @objc private func toggleLaunchLogin() {

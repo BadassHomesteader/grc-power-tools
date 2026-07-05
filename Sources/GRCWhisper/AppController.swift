@@ -27,6 +27,7 @@ final class AppController {
     private let polisher: Polisher
     private let overlay = OverlayPanel()
     private let gridOverlay = GridOverlay()
+    private let snapAssist = SnapAssist()
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
 
@@ -37,6 +38,9 @@ final class AppController {
     private var winLastMove: WindowManager.Move?
     private var winStep = 0
     private static let winFractions: [CGFloat] = [0.5, 1.0 / 3.0, 2.0 / 3.0]
+    /// After an edge snap, the empty region to offer Snap Assist for (on release).
+    private var snapAssistRegion: CGRect?
+    private var snapAssistExcludeWID: CGWindowID?
     private var utterance: AppleSpeechUtterance?
     private var startTask: Task<Void, Error>?
     private var context: ContextSnapshot?
@@ -92,6 +96,7 @@ final class AppController {
                 self.handleWindow(move)
             case .windowEnd:
                 self.overlay.hide()
+                self.maybeSnapAssist()
             case .grid:
                 self.openGrid()
             }
@@ -109,6 +114,7 @@ final class AppController {
     private func keyDown() {
         guard state == .idle else { return }
         winLastMove = nil; winStep = 0   // fresh window-cycle each hold
+        snapAssistRegion = nil; snapAssistExcludeWID = nil
         let ctx = ContextSnapshot.capture()
         if ctx.isSecureField {
             overlay.showError("Secure input field — can't dictate here")
@@ -406,7 +412,7 @@ final class AppController {
     private func handleWindow(_ move: WindowManager.Move) {
         interruptDictation()
         if move == .maximize {
-            winLastMove = nil; winStep = 0
+            winLastMove = nil; winStep = 0; snapAssistRegion = nil  // no empty space to fill
             if WindowManager.maximize() {
                 overlay.showWindow(region: CGRect(x: 0, y: 0, width: 1, height: 1), label: "Maximize")
             } else { overlay.showError("No window to move") }
@@ -426,10 +432,37 @@ final class AppController {
         case .down:  edge = .bottom; region = CGRect(x: 0, y: 1 - f, width: 1, height: f); name = "Bottom"
         case .maximize: return
         }
-        guard WindowManager.snap(edge: edge, fraction: f) else {
+        guard let result = WindowManager.snap(edge: edge, fraction: f) else {
             overlay.showError("No window to move"); return
         }
+        // Stash the empty (complement) region so Snap Assist can offer it on release.
+        let vf = result.screen.visibleFrame
+        let comp: CGRect
+        switch edge {
+        case .left:   comp = CGRect(x: vf.minX + vf.width * f, y: vf.minY, width: vf.width * (1 - f), height: vf.height)
+        case .right:  comp = CGRect(x: vf.minX, y: vf.minY, width: vf.width * (1 - f), height: vf.height)
+        case .top:    comp = CGRect(x: vf.minX, y: vf.minY, width: vf.width, height: vf.height * (1 - f))
+        case .bottom: comp = CGRect(x: vf.minX, y: vf.maxY - vf.height * (1 - f), width: vf.width, height: vf.height * (1 - f))
+        }
+        snapAssistRegion = comp
+        snapAssistExcludeWID = result.windowID
         overlay.showWindow(region: region, label: "\(name) \(fracLabel)")
+    }
+
+    /// After the hotkey is released post-snap: offer the other on-screen windows to
+    /// fill the empty side (Windows-style). Off if disabled or the gap is tiny.
+    private func maybeSnapAssist() {
+        guard config.snapAssist, let region = snapAssistRegion, let exclude = snapAssistExcludeWID else {
+            snapAssistRegion = nil; snapAssistExcludeWID = nil; return
+        }
+        snapAssistRegion = nil; snapAssistExcludeWID = nil
+        guard region.width > 120, region.height > 100 else { return }
+        snapAssist.present(in: region, excluding: exclude, dark: config.appearance.isDark) { cand in
+            guard let ax = WindowManager.axWindow(pid: cand.pid, windowID: cand.windowID) else { return }
+            NSRunningApplication(processIdentifier: cand.pid)?.activate()
+            WindowManager.setWindow(ax, cocoaFrame: region)
+            WindowManager.raise(ax)
+        }
     }
 
     private func fileClipboard(_ op: FileOp) {
