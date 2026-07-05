@@ -183,6 +183,28 @@ case "advpaste-preview":
         if let data = rep.representation(using: .png, properties: [:]) { try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)") }
     }
 
+case "advancedpaste-preview":
+    let out = args.count >= 2 ? args[1] : "ap.png"
+    let dark = !(args.count >= 3 && args[2] == "light")
+    MainActor.assumeIsolated {
+        let v = AdvancedPasteView(clipboard: "The quarterly numbers came in and honestly they look rough compared to last year, we should regroup.", dark: dark)
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+    }
+
+case "findmouse-preview":
+    let out = args.count >= 2 ? args[1] : "fm.png"
+    MainActor.assumeIsolated {
+        let v = FindMouseView()
+        v.frame = NSRect(x: 0, y: 0, width: 1000, height: 680)
+        v.point = NSPoint(x: 600, y: 400); v.alpha = 1; v.converge = 0.55
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+    }
+
 case "snapassist-preview":
     let out = args.count >= 2 ? args[1] : "snapassist-preview.png"
     let dark = args.count >= 3 && args[2] == "dark"
