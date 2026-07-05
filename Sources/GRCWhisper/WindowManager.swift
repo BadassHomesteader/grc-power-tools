@@ -18,7 +18,7 @@ enum WindowManager {
     enum Move { case left, right, up, down, maximize }
     enum Edge { case left, right, top, bottom }
 
-    struct SnapResult { let screen: NSScreen; let windowID: CGWindowID }
+    struct SnapResult { let screen: NSScreen; let windowID: CGWindowID? }
 
     /// Snap to `fraction` of the screen along `edge` (0.5 = half, 1/3, 2/3…).
     /// Returns the screen used + the moved window's CGWindowID (for Snap Assist).
@@ -55,10 +55,11 @@ enum WindowManager {
         AXUIElementPerformAction(window, kAXRaiseAction as CFString)
     }
 
-    private static func cgWindowID(of window: AXUIElement) -> CGWindowID {
+    /// nil if the SPI fails — the caller must NOT use 0 as a real window ID (it
+    /// would fail to exclude the just-snapped window from Snap Assist).
+    private static func cgWindowID(of window: AXUIElement) -> CGWindowID? {
         var wid = CGWindowID(0)
-        _ = _AXUIElementGetWindow(window, &wid)
-        return wid
+        return _AXUIElementGetWindow(window, &wid) == .success ? wid : nil
     }
 
     @discardableResult

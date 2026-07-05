@@ -390,6 +390,7 @@ final class AppController {
     private func openGrid() {
         interruptDictation()
         overlay.hide()
+        snapAssistRegion = nil; snapAssistExcludeWID = nil  // the grid replaces snap-assist for this hold
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.bundleIdentifier != "com.grc.whisper",
               let window = WindowManager.frontmostWindow() else {
@@ -444,8 +445,16 @@ final class AppController {
         case .top:    comp = CGRect(x: vf.minX, y: vf.minY, width: vf.width, height: vf.height * (1 - f))
         case .bottom: comp = CGRect(x: vf.minX, y: vf.maxY - vf.height * (1 - f), width: vf.width, height: vf.height * (1 - f))
         }
-        snapAssistRegion = comp
-        snapAssistExcludeWID = result.windowID
+        // Only offer Snap Assist if we reliably know the snapped window's ID (else
+        // we couldn't exclude it and it'd appear in — and get re-snapped by — its
+        // own picker).
+        if let wid = result.windowID {
+            snapAssistRegion = comp
+            snapAssistExcludeWID = wid
+        } else {
+            snapAssistRegion = nil
+            snapAssistExcludeWID = nil
+        }
         overlay.showWindow(region: region, label: "\(name) \(fracLabel)")
     }
 
@@ -457,12 +466,23 @@ final class AppController {
         }
         snapAssistRegion = nil; snapAssistExcludeWID = nil
         guard region.width > 120, region.height > 100 else { return }
-        snapAssist.present(in: region, excluding: exclude, dark: config.appearance.isDark) { cand in
-            guard let ax = WindowManager.axWindow(pid: cand.pid, windowID: cand.windowID) else { return }
-            NSRunningApplication(processIdentifier: cand.pid)?.activate()
-            WindowManager.setWindow(ax, cocoaFrame: region)
-            WindowManager.raise(ax)
-        }
+        // The app whose window we just snapped — restore focus to it on cancel so
+        // Power Tools (a .regular Dock app) isn't left wedged frontmost.
+        let prevApp = NSWorkspace.shared.frontmostApplication
+        snapAssist.present(
+            in: region, excluding: exclude, dark: config.appearance.isDark,
+            onPick: { cand in
+                guard let ax = WindowManager.axWindow(pid: cand.pid, windowID: cand.windowID) else {
+                    self.overlay.showError("Couldn't move that window")
+                    prevApp?.activate()
+                    return
+                }
+                NSRunningApplication(processIdentifier: cand.pid)?.activate()
+                WindowManager.setWindow(ax, cocoaFrame: region)
+                WindowManager.raise(ax)
+            },
+            onCancel: { prevApp?.activate() }
+        )
     }
 
     private func fileClipboard(_ op: FileOp) {

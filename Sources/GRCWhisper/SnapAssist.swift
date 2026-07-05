@@ -6,6 +6,7 @@ import Cocoa
 @MainActor
 final class SnapAssist {
     private var window: NSWindow?
+    private var timeout: Timer?
 
     struct Candidate {
         let pid: pid_t
@@ -17,12 +18,13 @@ final class SnapAssist {
     var isVisible: Bool { window != nil }
 
     /// Show the picker filling `region` (global bottom-left rect). `onPick` gets the
-    /// chosen window; the caller moves it. Does nothing if there are no candidates.
+    /// chosen window; `onCancel` fires on Esc / click-empty / timeout (e.g. to
+    /// refocus the previous app). Does nothing if there are no candidates.
     func present(in region: CGRect, excluding excludeWID: CGWindowID, dark: Bool,
-                 onPick: @escaping (Candidate) -> Void) {
+                 onPick: @escaping (Candidate) -> Void, onCancel: @escaping () -> Void) {
         dismiss()
         let candidates = Array(Self.candidates(excluding: excludeWID).prefix(8))
-        guard !candidates.isEmpty else { return }
+        guard !candidates.isEmpty else { onCancel(); return }
 
         let win = KeyableWindow(contentRect: region, styleMask: .borderless, backing: .buffered, defer: false)
         win.isOpaque = false
@@ -35,15 +37,23 @@ final class SnapAssist {
         let view = SnapAssistView(candidates: candidates, dark: dark)
         view.frame = NSRect(origin: .zero, size: region.size)
         view.onPick = { [weak self] cand in self?.dismiss(); onPick(cand) }
-        view.onCancel = { [weak self] in self?.dismiss() }
+        view.onCancel = { [weak self] in self?.dismiss(); onCancel() }
         win.contentView = view
         window = win
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         win.makeFirstResponder(view)
+
+        // Don't leave a focus-stealing overlay up forever if the user walks away.
+        timeout = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+            guard self?.window != nil else { return }
+            self?.dismiss()
+            onCancel()
+        }
     }
 
     func dismiss() {
+        timeout?.invalidate(); timeout = nil
         window?.orderOut(nil)
         window = nil
     }
