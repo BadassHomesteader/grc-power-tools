@@ -222,8 +222,14 @@ final class ChatWindowController: NSWindowController {
     private func scrollToBottom() {
         // Defer so the just-added bubble is laid out before we measure.
         DispatchQueue.main.async { [weak self] in
-            self?.window?.contentView?.layoutSubtreeIfNeeded()
-            self?.scroll.documentView?.scrollToEndOfDocument(nil)
+            guard let self, let doc = self.scroll.documentView else { return }
+            self.window?.contentView?.layoutSubtreeIfNeeded()
+            // The document view is a plain (flipped) NSView, so it does NOT respond
+            // to scrollToEndOfDocument: — scroll the clip view to the bottom directly.
+            let clip = self.scroll.contentView
+            let y = max(0, doc.bounds.height - clip.bounds.height)
+            clip.scroll(to: NSPoint(x: 0, y: y))
+            self.scroll.reflectScrolledClipView(clip)
         }
     }
 

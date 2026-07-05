@@ -140,6 +140,19 @@ case "settings-preview":
         }
     }
 
+case "chat-live-test":
+    // Opens a real chat window and pumps the run loop so the deferred
+    // scrollToBottom() actually executes — exercises the live crash path.
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let cc = ChatWindowController(config: Config.load())
+        cc.present()
+        cc.send("Say hello in exactly three words.")   // exercises streaming + scroll
+        RunLoop.main.run(until: Date().addingTimeInterval(8))
+        print("survived")
+    }
+
 case "chat-preview":
     // Offscreen render of the AI chat window for design checks.
     let out = args.count >= 2 ? args[1] : "chat-preview.png"
