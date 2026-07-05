@@ -83,6 +83,13 @@ final class AppController {
             case .filePaste:
                 if self.state == .recording { self.cancel() }
                 self.fileClipboard(.paste)
+            case .window(let snap):
+                if self.state == .recording { self.cancel() }
+                if WindowManager.snap(snap) {
+                    self.overlay.showResult(snap.label)
+                } else {
+                    self.overlay.showError("No window to move")
+                }
             }
         }
         guard monitor.start() else {

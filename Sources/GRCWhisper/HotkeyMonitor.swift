@@ -25,6 +25,7 @@ final class HotkeyMonitor {
         case fileCopy
         case fileCut
         case filePaste
+        case window(WindowManager.Snap)
     }
 
     var handler: ((Callback) -> Void)?
@@ -44,7 +45,7 @@ final class HotkeyMonitor {
     /// mid-hold), so apps don't see an orphan keyUp.
     private var swallowedKeyUp: Int64?
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste }
+    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, window(WindowManager.Snap) }
     private var pending: Pending = .none
 
     private static let kVK_Function: Int64 = 63
@@ -58,6 +59,11 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_C: Int64 = 8
     private static let kVK_ANSI_X: Int64 = 7
     private static let kVK_ANSI_V: Int64 = 9
+    private static let kVK_Return: Int64 = 36
+    private static let kVK_LeftArrow: Int64 = 123
+    private static let kVK_RightArrow: Int64 = 124
+    private static let kVK_DownArrow: Int64 = 125
+    private static let kVK_UpArrow: Int64 = 126
 
     init(hotkey: Config.Hotkey) {
         self.hotkey = hotkey
@@ -215,6 +221,16 @@ final class HotkeyMonitor {
                 log("hotkey: +V leader armed (file paste)")
                 pending = .filePaste; swallowedKeyUp = keyCode
                 return nil
+            case Self.kVK_LeftArrow:
+                pending = .window(.leftHalf); swallowedKeyUp = keyCode; return nil
+            case Self.kVK_RightArrow:
+                pending = .window(.rightHalf); swallowedKeyUp = keyCode; return nil
+            case Self.kVK_UpArrow:
+                pending = .window(.topHalf); swallowedKeyUp = keyCode; return nil
+            case Self.kVK_DownArrow:
+                pending = .window(.bottomHalf); swallowedKeyUp = keyCode; return nil
+            case Self.kVK_Return:
+                pending = .window(.maximize); swallowedKeyUp = keyCode; return nil
             default:
                 interrupted = true
                 dispatch(.cancel)
@@ -253,6 +269,7 @@ final class HotkeyMonitor {
                 case .fileCopy: dispatch(.fileCopy)
                 case .fileCut: dispatch(.fileCut)
                 case .filePaste: dispatch(.filePaste)
+                case .window(let snap): dispatch(.window(snap))
                 }
             }
             interrupted = false

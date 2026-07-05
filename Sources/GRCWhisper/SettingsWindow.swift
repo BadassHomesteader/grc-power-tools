@@ -326,6 +326,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  C   copy the selected file(s) in Finder
         •  X   cut file(s) — then V moves them
         •  V   paste — moves cut files, or pastes copied ones
+        •  ← → ↑ ↓   snap the window to a half of the screen
+        •  ⏎   maximize the window
 
         Just release without a letter to dictate normally.
         """
