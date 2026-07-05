@@ -3,6 +3,12 @@ import Cocoa
 /// A full-screen "draw where the window goes" grid (Moom-style). Triggered by the
 /// hotkey + grid key; you drag across the grid to paint a rectangle and the target
 /// window (captured before the grid stole focus) snaps to it on release.
+/// Borderless windows can't become key by default (so keyDown/Esc never arrives).
+/// This one can, so the grid is keyboard-cancellable.
+final class KeyableWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+}
+
 @MainActor
 final class GridOverlay {
     private var window: NSWindow?
@@ -11,11 +17,11 @@ final class GridOverlay {
 
     /// `screen`: where to draw. `snap`: called with the chosen global (bottom-left)
     /// rect. `done`: always called (snap or cancel) so the caller can refocus.
-    func present(screen: NSScreen, dark: Bool,
+    func present(screen: NSScreen, cols: Int, rows: Int, dark: Bool,
                  snap: @escaping (NSRect) -> Void, done: @escaping () -> Void) {
         dismiss()
         let vf = screen.visibleFrame
-        let win = NSWindow(contentRect: vf, styleMask: .borderless, backing: .buffered, defer: false)
+        let win = KeyableWindow(contentRect: vf, styleMask: .borderless, backing: .buffered, defer: false)
         win.isOpaque = false
         win.backgroundColor = .clear
         win.level = .statusBar
@@ -23,7 +29,7 @@ final class GridOverlay {
         win.ignoresMouseEvents = false
         win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        let grid = GridView(cols: 12, rows: 8, dark: dark)
+        let grid = GridView(cols: cols, rows: rows, dark: dark)
         grid.frame = NSRect(origin: .zero, size: vf.size)
         grid.onComplete = { [weak self] rect in
             if let rect {
@@ -100,7 +106,13 @@ final class GridView: NSView {
         needsDisplay = true
     }
     override func mouseUp(with event: NSEvent) {
-        onComplete?(selectionRect())
+        // A bare click (no drag = same start/current cell) cancels instead of
+        // snapping the window to a single tiny cell.
+        if let a = startCell, let b = currentCell, a.col == b.col, a.row == b.row {
+            onComplete?(nil)
+        } else {
+            onComplete?(selectionRect())
+        }
     }
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { onComplete?(nil) }  // Esc cancels

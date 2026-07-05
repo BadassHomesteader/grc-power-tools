@@ -86,6 +86,23 @@ struct Config: Codable {
         }
     }
 
+    /// Columns × rows of the draw-a-grid window placement overlay.
+    enum GridSize: String, Codable, CaseIterable {
+        case c6x4, c8x6, c12x8, c16x10, c24x16
+
+        var cols: Int { switch self { case .c6x4: return 6; case .c8x6: return 8; case .c12x8: return 12; case .c16x10: return 16; case .c24x16: return 24 } }
+        var rows: Int { switch self { case .c6x4: return 4; case .c8x6: return 6; case .c12x8: return 8; case .c16x10: return 10; case .c24x16: return 16 } }
+        var displayName: String { "\(cols) × \(rows)" }
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = GridSize(rawValue: raw) ?? .c12x8
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer(); try c.encode(rawValue)
+        }
+    }
+
     /// What the AI leader (hold + A) does with your dictated words.
     enum AIChatMode: String, Codable, CaseIterable {
         case both     // in-app chat, with an "Open in claude.ai" button
@@ -163,13 +180,15 @@ struct Config: Codable {
     var aiChatMode: AIChatMode = .both
     /// Sizes window snaps cycle through on repeated arrow taps.
     var snapSizes: SnapSizes = .thirds
+    /// Columns × rows of the draw-a-grid overlay.
+    var gridSize: GridSize = .c12x8
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
-        case overlayPosition, appearance, aiChatMode, snapSizes
+        case overlayPosition, appearance, aiChatMode, snapSizes, gridSize
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -190,6 +209,7 @@ struct Config: Codable {
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? .dark
         aiChatMode = try c.decodeIfPresent(AIChatMode.self, forKey: .aiChatMode) ?? .both
         snapSizes = try c.decodeIfPresent(SnapSizes.self, forKey: .snapSizes) ?? .thirds
+        gridSize = try c.decodeIfPresent(GridSize.self, forKey: .gridSize) ?? .c12x8
     }
 
     static var appSupportDir: URL {

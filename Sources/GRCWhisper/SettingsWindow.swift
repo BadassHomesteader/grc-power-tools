@@ -20,6 +20,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let aiModePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let snapSizesPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let gridSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchLoginCheck = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
@@ -136,6 +137,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         for s in Config.SnapSizes.allCases { snapSizesPopup.addItem(withTitle: s.displayName) }
         snapSizesPopup.target = self
         snapSizesPopup.action = #selector(snapSizesChanged)
+        for g in Config.GridSize.allCases { gridSizePopup.addItem(withTitle: g.displayName) }
+        gridSizePopup.target = self
+        gridSizePopup.action = #selector(gridSizeChanged)
         hotkeyNote.font = .systemFont(ofSize: 11)
         hotkeyNote.textColor = .secondaryLabelColor
         hotkeyNote.stringValue = " "
@@ -148,6 +152,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             formRow("Theme", appearancePopup),
             formRow("AI (+A)", aiModePopup),
             formRow("Snap sizes", snapSizesPopup),
+            formRow("Grid (+3)", gridSizePopup),
         ], width: 340))
 
         // Cloud cleanup section (optional — used only when Cleanup is Claude/OpenAI)
@@ -308,6 +313,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         appearancePopup.selectItem(withTitle: config.appearance.displayName)
         aiModePopup.selectItem(withTitle: config.aiChatMode.displayName)
         snapSizesPopup.selectItem(withTitle: config.snapSizes.displayName)
+        gridSizePopup.selectItem(withTitle: config.gridSize.displayName)
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
@@ -321,22 +327,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private func helpText(for hotkey: Config.Hotkey) -> String {
         let key = hotkey.displayName
         return """
-        Hold \(key) and speak, then release — your words are cleaned up and typed in wherever your cursor is.
+        Hold \(key) and speak, then release — your words land at the cursor.
 
-        While still holding \(key), tap a letter before you release:
+        While holding \(key), tap a key before you release:
 
-        •  A   open an AI chat — say your question, Claude answers
-        •  T   copy text off the screen (OCR) — drag a box, it lands on your clipboard
-        •  S   copy a screenshot — drag a box to grab it
-        •  G   screenshot, then open Google Lens to search it
-        •  C   copy the selected file(s) in Finder
-        •  X   cut file(s) — then V moves them
-        •  V   paste — moves cut files, or pastes copied ones
-        •  ← → ↑ ↓   snap the window to that side — tap again to cycle sizes (set below)
-        •  ⏎   maximize the window   (keep holding, keep arrowing)
-        •  3   draw a grid to place the window — drag with the mouse, release to snap
+        •  A   AI chat — speak your question
+        •  T   copy text off the screen (OCR)
+        •  S   copy a screenshot
+        •  G   screenshot → Google Lens
+        •  C / X / V   copy · cut · paste files (Finder)
+        •  ← → ↑ ↓   snap window (tap again = resize)
+        •  ⏎   maximize   ·   3   draw-a-grid placement
 
-        Just release without a letter to dictate normally.
+        Release with no key to dictate normally.
         """
     }
 
@@ -407,6 +410,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     @objc private func snapSizesChanged() {
         guard let s = Config.SnapSizes.allCases.first(where: { $0.displayName == snapSizesPopup.titleOfSelectedItem }) else { return }
         config.snapSizes = s
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func gridSizeChanged() {
+        guard let g = Config.GridSize.allCases.first(where: { $0.displayName == gridSizePopup.titleOfSelectedItem }) else { return }
+        config.gridSize = g
         config.save()
         onConfigChange(config)
     }

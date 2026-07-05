@@ -394,7 +394,8 @@ final class AppController {
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
         gridOverlay.present(
-            screen: screen, dark: config.appearance.isDark,
+            screen: screen, cols: config.gridSize.cols, rows: config.gridSize.rows,
+            dark: config.appearance.isDark,
             snap: { rect in WindowManager.setWindow(window, cocoaFrame: rect) },
             done: { app.activate() }
         )
