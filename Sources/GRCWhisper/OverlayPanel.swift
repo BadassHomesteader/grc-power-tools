@@ -1,29 +1,30 @@
 import AppKit
 
-/// A live audio waveform: scrolling rounded bars driven by mic level samples.
+/// A live audio waveform: dense monochrome bars driven by mic level samples.
 final class WaveformView: NSView {
     private var samples: [CGFloat]
-    var barColor: NSColor = NSColor(srgbRed: 0.55, green: 0.6, blue: 1, alpha: 1)
+    var barColor: NSColor = .black
+    var barWidthFraction: CGFloat = 0.45
 
-    init(bars: Int = 64) {
-        samples = Array(repeating: 0.06, count: bars)
+    init(bars: Int = 90) {
+        samples = Array(repeating: 0.08, count: bars)
         super.init(frame: .zero)
     }
     required init?(coder: NSCoder) { fatalError() }
 
     func push(_ level: CGFloat) {
         samples.removeFirst()
-        samples.append(min(max(level, 0.06), 1))
+        samples.append(min(max(level, 0.08), 1))
         needsDisplay = true
     }
     func setSamples(_ values: [CGFloat]) { samples = values; needsDisplay = true }
-    func idle() { samples = Array(repeating: 0.06, count: samples.count); needsDisplay = true }
+    func idle() { samples = Array(repeating: 0.08, count: samples.count); needsDisplay = true }
 
     override func draw(_ dirtyRect: NSRect) {
         let n = samples.count
         guard n > 0, bounds.width > 0 else { return }
         let slot = bounds.width / CGFloat(n)
-        let barW = max(2, slot * 0.55)
+        let barW = max(1.5, slot * barWidthFraction)
         barColor.setFill()
         for (i, s) in samples.enumerated() {
             let h = max(barW, s * bounds.height)
@@ -35,89 +36,61 @@ final class WaveformView: NSView {
     }
 }
 
-/// Draws the "menu" of actions with the leader keys as keycap chips.
-final class KeycapHintView: NSView {
-    var segments: [(key: String?, label: String)] = []
-    var dark = true { didSet { needsDisplay = true } }
+/// Flat, solid rounded pill — no blur. Draws its own fill so light/dark is exact
+/// (and so the offscreen `render-overlay` preview matches the live look).
+final class FlatPill: NSView {
+    var fill: NSColor = .white
+    var stroke: NSColor?
 
     override func draw(_ dirtyRect: NSRect) {
-        let labelFont = NSFont.systemFont(ofSize: 12.5, weight: .medium)
-        let keyFont = NSFont.systemFont(ofSize: 10.5, weight: .bold)
-        let base = dark ? NSColor.white : NSColor.black
-        let labelColor = base.withAlphaComponent(dark ? 0.62 : 0.68)
-        let sep = base.withAlphaComponent(0.28)
-        let chipBG = dark ? NSColor.white.withAlphaComponent(0.9) : NSColor.black.withAlphaComponent(0.82)
-        let chipText = dark ? NSColor.black : NSColor.white
-        var x: CGFloat = 0
-        let midY = bounds.midY
-        func text(_ s: String, _ f: NSFont, _ c: NSColor) {
-            let a = NSAttributedString(string: s, attributes: [.font: f, .foregroundColor: c])
-            a.draw(at: NSPoint(x: x, y: midY - a.size().height / 2))
-            x += a.size().width
-        }
-        for (i, seg) in segments.enumerated() {
-            if i > 0 { x += 6; text("·", labelFont, sep); x += 6 }
-            if let key = seg.key {
-                let a = NSAttributedString(string: key, attributes: [.font: keyFont, .foregroundColor: chipText])
-                let kw = a.size().width, chipW = kw + 11, chipH: CGFloat = 17
-                let chip = NSRect(x: x, y: midY - chipH / 2, width: chipW, height: chipH)
-                chipBG.setFill()
-                NSBezierPath(roundedRect: chip, xRadius: 4.5, yRadius: 4.5).fill()
-                a.draw(at: NSPoint(x: x + (chipW - kw) / 2, y: midY - a.size().height / 2))
-                x += chipW + 5
-            }
-            text(seg.label, labelFont, labelColor)
-        }
-    }
-}
-
-/// Solid dark rounded pill — used only for the offscreen `render-overlay` preview
-/// (the live panel uses a real frosted NSVisualEffectView which can't render offscreen).
-final class PillView: NSView {
-    var fill = NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1)
-    override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
-                                xRadius: 20, yRadius: 20)
+        let r = bounds.insetBy(dx: 1, dy: 1)
+        let path = NSBezierPath(roundedRect: r, xRadius: 22, yRadius: 22)
         fill.setFill()
         path.fill()
+        if let stroke {
+            stroke.setStroke()
+            path.lineWidth = 1
+            path.stroke()
+        }
     }
 }
 
-/// Bottom-center (or wherever you place it) recording HUD: frosted dark pill with
-/// a mic icon, a keycap "menu" while you hold, then live waveform + text.
+/// The dictation HUD: a flat white/black pill (Claude-Desktop style) with a mic on
+/// the left, a live waveform in the middle, and "release to stop" on the right.
+/// Result/error text replaces the waveform briefly, then it hides.
 final class OverlayPanel {
-    static let width: CGFloat = 520
-    static let height: CGFloat = 86
-    private static let iconSize: CGFloat = 38
-    private static var contentX: CGFloat { 18 + iconSize + 14 }
-    private static var contentW: CGFloat { width - contentX - 20 }
-    private static var iconFrame: NSRect { NSRect(x: 18, y: (height - iconSize) / 2, width: iconSize, height: iconSize) }
-    private static var topFrame: NSRect { NSRect(x: contentX, y: 45, width: contentW, height: 24) }
-    private static var waveFrame: NSRect { NSRect(x: contentX, y: 14, width: contentW, height: 26) }
+    static let width: CGFloat = 500
+    static let height: CGFloat = 64
+    private static let iconSize: CGFloat = 24
+    private static var iconFrame: NSRect { NSRect(x: 20, y: (height - iconSize) / 2, width: iconSize, height: iconSize) }
+    private static let hintWidth: CGFloat = 116
+    private static var hintFrame: NSRect { NSRect(x: width - hintWidth - 18, y: (height - 20) / 2, width: hintWidth, height: 20) }
+    private static var waveFrame: NSRect {
+        let x = 20 + iconSize + 14
+        return NSRect(x: x, y: (height - 26) / 2, width: (width - hintWidth - 18) - x - 12, height: 26)
+    }
+    private static var textFrame: NSRect {
+        let x = 20 + iconSize + 14
+        return NSRect(x: x, y: (height - 22) / 2, width: width - x - 18, height: 22)
+    }
 
-    /// Where the pill appears on screen.
     var anchor: Config.OverlayPosition = .bottomCenter
-    /// Light or dark frosted look.
-    var scheme: Config.Appearance = .dark { didSet { applyScheme() } }
+    var scheme: Config.Appearance = .light { didSet { applyScheme() } }
 
     private let panel: NSPanel
-    private let vibrant = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: OverlayPanel.width, height: OverlayPanel.height))
+    private let pill = FlatPill(frame: NSRect(x: 0, y: 0, width: OverlayPanel.width, height: OverlayPanel.height))
     private let iconView = NSImageView()
-    private let waveform = WaveformView(bars: 64)
-    private let label = NSTextField(labelWithString: "")
-    private let hint = KeycapHintView()
+    private let waveform = WaveformView(bars: 90)
+    private let hintLabel = NSTextField(labelWithString: "release to stop")
+    private let textLabel = NSTextField(labelWithString: "")
     private var hideTimer: Timer?
 
-    private var textColor: NSColor {
-        scheme.isDark ? NSColor.white.withAlphaComponent(0.95) : NSColor.black.withAlphaComponent(0.9)
-    }
-    private var dimColor: NSColor {
-        scheme.isDark ? NSColor.white.withAlphaComponent(0.6) : NSColor.black.withAlphaComponent(0.5)
-    }
-
-    private static let menuSegments: [(key: String?, label: String)] = [
-        (nil, "Speak"), ("T", "text"), ("S", "screenshot"), ("G", "search"), ("A", "AI"),
-    ]
+    // Palette derived from the theme.
+    private var fg: NSColor { scheme.isDark ? NSColor.white.withAlphaComponent(0.95) : NSColor.black.withAlphaComponent(0.9) }
+    private var hintColor: NSColor { scheme.isDark ? NSColor.white.withAlphaComponent(0.55) : NSColor.black.withAlphaComponent(0.42) }
+    private var waveColor: NSColor { scheme.isDark ? NSColor.white.withAlphaComponent(0.82) : NSColor.black.withAlphaComponent(0.72) }
+    private var pillFill: NSColor { scheme.isDark ? NSColor(srgbRed: 0.14, green: 0.14, blue: 0.16, alpha: 1) : NSColor(srgbRed: 0.98, green: 0.98, blue: 0.99, alpha: 1) }
+    private var pillStroke: NSColor? { scheme.isDark ? nil : NSColor.black.withAlphaComponent(0.08) }
 
     init() {
         panel = NSPanel(
@@ -132,69 +105,59 @@ final class OverlayPanel {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
 
-        vibrant.blendingMode = .behindWindow
-        vibrant.state = .active
-        vibrant.wantsLayer = true
-        vibrant.layer?.cornerRadius = 20
-        vibrant.layer?.masksToBounds = true
-
         iconView.frame = Self.iconFrame
         iconView.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "GRC Whisper")
-        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
-        iconView.contentTintColor = NSColor(srgbRed: 0.62, green: 0.66, blue: 1, alpha: 1)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        vibrant.addSubview(iconView)
+        pill.addSubview(iconView)
 
         waveform.frame = Self.waveFrame
-        vibrant.addSubview(waveform)
+        pill.addSubview(waveform)
 
-        label.frame = Self.topFrame
-        label.font = .systemFont(ofSize: 14, weight: .medium)
-        label.lineBreakMode = .byTruncatingHead
-        label.maximumNumberOfLines = 1
-        label.cell?.usesSingleLineMode = true
-        label.isHidden = true
-        vibrant.addSubview(label)
+        hintLabel.frame = Self.hintFrame
+        hintLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        hintLabel.alignment = .right
+        pill.addSubview(hintLabel)
 
-        hint.frame = Self.topFrame
-        hint.segments = Self.menuSegments
-        vibrant.addSubview(hint)
+        textLabel.frame = Self.textFrame
+        textLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        textLabel.lineBreakMode = .byTruncatingTail
+        textLabel.maximumNumberOfLines = 1
+        textLabel.cell?.usesSingleLineMode = true
+        textLabel.isHidden = true
+        pill.addSubview(textLabel)
 
-        panel.contentView = vibrant
+        panel.contentView = pill
         applyScheme()
     }
 
     private func applyScheme() {
-        vibrant.material = scheme.isDark ? .hudWindow : .popover
-        vibrant.appearance = NSAppearance(named: scheme.isDark ? .darkAqua : .aqua)
-        hint.dark = scheme.isDark
-        label.textColor = textColor
+        pill.fill = pillFill
+        pill.stroke = pillStroke
+        pill.needsDisplay = true
+        iconView.contentTintColor = fg
+        waveform.barColor = waveColor
+        hintLabel.textColor = hintColor
+        if !textLabel.isHidden { textLabel.textColor = fg }
     }
 
-    /// Builds a solid-pill preview (recording/menu state) for `render-overlay`.
-    static func buildContent(dark: Bool = true) -> NSView {
-        let pill = PillView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        pill.fill = dark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1)
-                         : NSColor(srgbRed: 0.95, green: 0.95, blue: 0.97, alpha: 1)
-        let icon = NSImageView(frame: iconFrame)
-        icon.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: nil)
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
-        icon.contentTintColor = NSColor(srgbRed: 0.62, green: 0.66, blue: 1, alpha: 1)
-        pill.addSubview(icon)
-        let wave = WaveformView(bars: 64)
-        wave.frame = waveFrame
-        let samples: [CGFloat] = (0..<64).map { i in
-            let env: Double = 0.5 + 0.45 * sin(Double(i) / 7) * cos(Double(i) / 3)
-            let clamped = min(max(0.08, abs(env)), 1)
-            return CGFloat(clamped)
-        }
-        wave.setSamples(samples)
-        pill.addSubview(wave)
-        let hint = KeycapHintView(frame: topFrame)
-        hint.segments = menuSegments
-        hint.dark = dark
-        pill.addSubview(hint)
-        return pill
+    /// Builds a static preview pill (recording state) for `render-overlay`.
+    static func buildContent(dark: Bool = false) -> NSView {
+        let panel = OverlayPanel()
+        panel.scheme = dark ? .dark : .light
+        panel.waveform.setSamples((0..<90).map { i in
+            let env: Double = 0.45 + 0.4 * sin(Double(i) / 6) * cos(Double(i) / 3.5)
+            return CGFloat(min(max(0.12, abs(env)), 1))
+        })
+        panel.setMode(waveform: true)
+        panel.hintLabel.stringValue = "release to stop"
+        return panel.pill
+    }
+
+    private func setMode(waveform showWave: Bool) {
+        waveform.isHidden = !showWave
+        hintLabel.isHidden = !showWave
+        textLabel.isHidden = showWave
     }
 
     private func position() {
@@ -218,54 +181,38 @@ final class OverlayPanel {
 
     func showRecording() {
         hideTimer?.invalidate()
+        applyScheme()
         waveform.idle()
-        waveform.barColor = NSColor(srgbRed: 0.55, green: 0.6, blue: 1, alpha: 1)
-        hint.isHidden = false
-        label.isHidden = true
+        hintLabel.stringValue = "release to stop"
+        setMode(waveform: true)
         position()
         panel.orderFrontRegardless()
         panel.invalidateShadow()
     }
 
-    func showPartial(_ text: String) {
-        guard !text.isEmpty else { return }
-        hint.isHidden = true
-        label.isHidden = false
-        label.textColor = textColor
-        label.stringValue = text
-    }
+    /// The clean HUD shows only the waveform while you speak (no inline transcript).
+    func showPartial(_ text: String) {}
 
     func setLevels(_ levels: [Float]) {
         for l in levels { waveform.push(CGFloat(l)) }
     }
 
     func showProcessing() {
-        waveform.idle()
-        waveform.barColor = NSColor.white.withAlphaComponent(0.5)
-        if label.isHidden {
-            hint.isHidden = true
-            label.isHidden = false
-            label.textColor = dimColor
-            label.stringValue = "…"
-        }
+        hintLabel.stringValue = "…"
+        setMode(waveform: true)
     }
 
     func showResult(_ text: String) {
-        hint.isHidden = true
-        label.isHidden = false
-        waveform.barColor = NSColor(srgbRed: 0.3, green: 0.85, blue: 0.5, alpha: 1)
-        label.textColor = textColor
-        label.stringValue = text
+        setMode(waveform: false)
+        textLabel.textColor = fg
+        textLabel.stringValue = text
         hideAfter(1.4)
     }
 
     func showError(_ message: String) {
-        hint.isHidden = true
-        label.isHidden = false
-        waveform.idle()
-        waveform.barColor = NSColor(srgbRed: 0.95, green: 0.6, blue: 0.2, alpha: 1)
-        label.textColor = NSColor(srgbRed: 1, green: 0.75, blue: 0.4, alpha: 1)
-        label.stringValue = message
+        setMode(waveform: false)
+        textLabel.textColor = NSColor(srgbRed: 0.85, green: 0.35, blue: 0.15, alpha: 1)
+        textLabel.stringValue = message
         position()
         panel.orderFrontRegardless()
         panel.invalidateShadow()

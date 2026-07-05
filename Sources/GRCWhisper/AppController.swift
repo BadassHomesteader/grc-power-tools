@@ -30,6 +30,8 @@ final class AppController {
     private var chat: ChatWindowController?
 
     private var cycle = 0
+    /// File "cut" is Copy now + Move-on-next-paste (macOS has no real file cut).
+    private var fileCutPending = false
     private var utterance: AppleSpeechUtterance?
     private var startTask: Task<Void, Error>?
     private var context: ContextSnapshot?
@@ -72,6 +74,15 @@ final class AppController {
             case .search:
                 if self.state == .recording { self.cancel() }
                 self.captureScreenshot(search: true)
+            case .fileCopy:
+                if self.state == .recording { self.cancel() }
+                self.fileClipboard(.copy)
+            case .fileCut:
+                if self.state == .recording { self.cancel() }
+                self.fileClipboard(.cut)
+            case .filePaste:
+                if self.state == .recording { self.cancel() }
+                self.fileClipboard(.paste)
             }
         }
         guard monitor.start() else {
@@ -205,24 +216,16 @@ final class AppController {
                     return
                 }
                 let appName = ctx?.appName ?? "unknown"
-                let final: String
                 if ai {
-                    self.overlay.showProcessing()
-                    // Command mode when text is selected: rewrite it in place.
-                    let selection = await Inserter.copySelection()?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let sel = selection, !sel.isEmpty {
-                        final = await self.polisher.rewrite(instruction: raw, selection: sel, config: cfg) ?? raw
-                    } else {
-                        // Nothing selected: open a chat and send what you said (Claude Desktop-style).
-                        guard self.cycle == gen else { return }
-                        self.overlay.hide()
-                        self.openChat(with: raw)
-                        self.finishCycle()
-                        return
-                    }
-                } else {
-                    final = await self.polisher.polish(raw, config: cfg, appName: appName)
+                    // AI leader always opens the Claude chat with what you said
+                    // (Claude-Desktop style) — it does not paste a cleanup into the app.
+                    guard self.cycle == gen else { return }
+                    self.overlay.hide()
+                    self.openChat(with: raw)
+                    self.finishCycle()
+                    return
                 }
+                let final = await self.polisher.polish(raw, config: cfg, appName: appName)
                 guard self.cycle == gen else { return }
                 self.deliver(raw: raw, polished: final, durationMs: heldMs, ctx: ctx)
             } catch {
@@ -343,6 +346,32 @@ final class AppController {
                 } else {
                     self.overlay.showResult("Screenshot copied to clipboard")
                 }
+            }
+        }
+    }
+
+    enum FileOp { case copy, cut, paste }
+
+    /// hold + C / X / V: copy, cut (copy + mark for move), or paste files. Paste is a
+    /// Finder "Move Item Here" (⌥⌘V) if the last action was a cut, else a plain ⌘V.
+    /// A short delay lets the physical hotkey modifiers lift before we synthesize.
+    private func fileClipboard(_ op: FileOp) {
+        guard state == .idle else { return }
+        let (delayMs, label): (Int, String)
+        switch op {
+        case .copy:
+            fileCutPending = false; delayMs = 90; label = "Copied"
+        case .cut:
+            fileCutPending = true; delayMs = 90; label = "Cut — hold + V to move it"
+        case .paste:
+            delayMs = 90; label = fileCutPending ? "Moved" : "Pasted"
+        }
+        let move = (op == .paste) && fileCutPending
+        overlay.showResult(label)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) {
+            switch op {
+            case .copy, .cut: Inserter.fileCopy()
+            case .paste: Inserter.filePaste(move: move); self.fileCutPending = false
             }
         }
     }

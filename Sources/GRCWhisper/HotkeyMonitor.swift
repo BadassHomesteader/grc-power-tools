@@ -22,6 +22,9 @@ final class HotkeyMonitor {
         case ocr
         case screenshot
         case search
+        case fileCopy
+        case fileCut
+        case filePaste
     }
 
     var handler: ((Callback) -> Void)?
@@ -41,7 +44,7 @@ final class HotkeyMonitor {
     /// mid-hold), so apps don't see an orphan keyUp.
     private var swallowedKeyUp: Int64?
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, ai, screenshot, search }
+    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste }
     private var pending: Pending = .none
 
     private static let kVK_Function: Int64 = 63
@@ -52,6 +55,9 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_A: Int64 = 0
     private static let kVK_ANSI_S: Int64 = 1
     private static let kVK_ANSI_G: Int64 = 5
+    private static let kVK_ANSI_C: Int64 = 8
+    private static let kVK_ANSI_X: Int64 = 7
+    private static let kVK_ANSI_V: Int64 = 9
 
     init(hotkey: Config.Hotkey) {
         self.hotkey = hotkey
@@ -197,6 +203,18 @@ final class HotkeyMonitor {
                 log("hotkey: +G leader armed (Google search)")
                 pending = .search; swallowedKeyUp = keyCode
                 return nil
+            case Self.kVK_ANSI_C:
+                log("hotkey: +C leader armed (file copy)")
+                pending = .fileCopy; swallowedKeyUp = keyCode
+                return nil
+            case Self.kVK_ANSI_X:
+                log("hotkey: +X leader armed (file cut)")
+                pending = .fileCut; swallowedKeyUp = keyCode
+                return nil
+            case Self.kVK_ANSI_V:
+                log("hotkey: +V leader armed (file paste)")
+                pending = .filePaste; swallowedKeyUp = keyCode
+                return nil
             default:
                 interrupted = true
                 dispatch(.cancel)
@@ -232,6 +250,9 @@ final class HotkeyMonitor {
                 case .ocr: dispatch(.ocr)
                 case .screenshot: dispatch(.screenshot)
                 case .search: dispatch(.search)
+                case .fileCopy: dispatch(.fileCopy)
+                case .fileCut: dispatch(.fileCut)
+                case .filePaste: dispatch(.filePaste)
                 }
             }
             interrupted = false

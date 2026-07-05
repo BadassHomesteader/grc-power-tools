@@ -313,10 +313,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         While still holding \(key), tap a letter before you release:
 
-        •  T   copy text off the screen (OCR) — drag a box, the text lands on your clipboard
-        •  S   copy a screenshot to the clipboard — drag a box to grab it
-        •  G   screenshot, then open Google Lens so you can search the image
-        •  A   send to AI — rewrites highlighted text, or gives a smarter cleanup
+        •  A   open an AI chat — say your question, Claude answers
+        •  T   copy text off the screen (OCR) — drag a box, it lands on your clipboard
+        •  S   copy a screenshot — drag a box to grab it
+        •  G   screenshot, then open Google Lens to search it
+        •  C   copy the selected file(s) in Finder
+        •  X   cut file(s) — then V moves them
+        •  V   paste — moves cut files, or pastes copied ones
 
         Just release without a letter to dictate normally.
         """

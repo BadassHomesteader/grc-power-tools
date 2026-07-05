@@ -102,16 +102,29 @@ enum Inserter {
         return copied
     }
 
-    private static func postCmd(key vKey: CGKeyCode) {
+    private static func postCmd(key vKey: CGKeyCode) { postKey(vKey, flags: .maskCommand) }
+
+    /// Synthesize a modified keystroke into the focused app, tagged so our own tap
+    /// passes it through. The physical hotkey modifiers must already be released.
+    static func postKey(_ vKey: CGKeyCode, flags: CGEventFlags) {
         guard let source = CGEventSource(stateID: .privateState) else { return }
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false) else { return }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
+        down.flags = flags
+        up.flags = flags
         down.setIntegerValueField(.eventSourceUserData, value: kSyntheticEventMagic)
         up.setIntegerValueField(.eventSourceUserData, value: kSyntheticEventMagic)
         down.post(tap: .cghidEventTap)
         usleep(10_000) // 10ms between down and up
         up.post(tap: .cghidEventTap)
+    }
+
+    /// File copy = ⌘C (copies selected Finder items to the clipboard).
+    static func fileCopy() { postKey(CGKeyCode(kVK_ANSI_C), flags: .maskCommand) }
+
+    /// File paste. move=false → ⌘V (copy here); move=true → ⌥⌘V ("Move Item Here"),
+    /// which is macOS's real cut-paste for files.
+    static func filePaste(move: Bool) {
+        postKey(CGKeyCode(kVK_ANSI_V), flags: move ? [.maskCommand, .maskAlternate] : .maskCommand)
     }
 }
