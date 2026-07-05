@@ -89,6 +89,26 @@ case "rewrite":
     }
     print(out)
 
+case "chat":
+    // grc-whisper chat "<message>"  — smoke-test the streaming AI chat backend.
+    guard args.count >= 2 else { usage() }
+    let msg = args.dropFirst().joined(separator: " ")
+    guard let key = Keychain.get("claude"), !key.isEmpty else {
+        print("no Claude key saved (add one in Settings ▸ AI)"); exit(1)
+    }
+    let cfg = Config.load()
+    do {
+        let reply = try runBlocking {
+            try await CloudPolish.claudeChatStream(
+                messages: [["role": "user", "content": msg]],
+                system: "You are a helpful assistant.",
+                model: cfg.claudeModel, apiKey: key, onUpdate: { _ in })
+        }
+        print(reply)
+    } catch {
+        print("chat failed: \(error)"); exit(1)
+    }
+
 case "ocr":
     // grc-whisper ocr <image>  — OCR an image file (tests table reconstruction)
     guard args.count >= 2, let png = try? Data(contentsOf: URL(fileURLWithPath: args[1])) else { usage() }
@@ -102,9 +122,12 @@ case "lens":
 
 case "settings-preview":
     MainActor.assumeIsolated {
-        let sc = SettingsWindowController(store: Store(), config: Config.load()) { _ in }
+        var cfg = Config.load()
+        if args.count >= 3, args[2] == "light" { cfg.appearance = .light }
+        if args.count >= 3, args[2] == "dark" { cfg.appearance = .dark }
+        let sc = SettingsWindowController(store: Store(), config: cfg, onConfigChange: { _ in })
         guard let window = sc.window else { exit(1) }
-        window.setContentSize(NSSize(width: 940, height: 660))
+        window.setContentSize(NSSize(width: 1120, height: 680))
         window.layoutIfNeeded()
         guard let content = window.contentView else { exit(1) }
         content.layoutSubtreeIfNeeded()
@@ -117,6 +140,29 @@ case "settings-preview":
         }
     }
 
+case "chat-preview":
+    // Offscreen render of the AI chat window for design checks.
+    let out = args.count >= 2 ? args[1] : "chat-preview.png"
+    MainActor.assumeIsolated {
+        var cfg = Config.load()
+        if args.count >= 3, args[2] == "light" { cfg.appearance = .light }
+        if args.count >= 3, args[2] == "dark" { cfg.appearance = .dark }
+        let cc = ChatWindowController(config: cfg)
+        guard let window = cc.window else { exit(1) }
+        window.setContentSize(NSSize(width: 520, height: 620))
+        cc.previewSeed()
+        window.layoutIfNeeded()
+        guard let content = window.contentView else { exit(1) }
+        content.layoutSubtreeIfNeeded()
+        if let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+            content.cacheDisplay(in: content.bounds, to: rep)
+            if let data = rep.representation(using: .png, properties: [:]) {
+                try? data.write(to: URL(fileURLWithPath: out))
+                print("wrote \(out)")
+            }
+        }
+    }
+
 case "doctor":
     let report = try! runBlocking { await Doctor.report() }
     print(report)
@@ -124,8 +170,9 @@ case "doctor":
 case "render-overlay":
     // Offscreen preview of the dictation pill for design checks.
     let out = args.count >= 2 ? args[1] : "overlay-preview.png"
+    let dark = !(args.count >= 3 && args[2] == "light")
     MainActor.assumeIsolated {
-        let content = OverlayPanel.buildContent()
+        let content = OverlayPanel.buildContent(dark: dark)
         guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { exit(1) }
         content.cacheDisplay(in: content.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {

@@ -53,6 +53,69 @@ enum CloudPolish {
         return trimmed
     }
 
+    /// Streaming multi-turn chat against the Anthropic Messages API. `messages` is
+    /// the full conversation ([{role, content}] alternating user/assistant). The
+    /// running assistant text is delivered to `onUpdate` as tokens arrive; the full
+    /// final text is returned. Only text is ever sent — this is the AI-chat backend.
+    static func claudeChatStream(
+        messages: [[String: String]], system: String, model: String, apiKey: String,
+        onUpdate: @escaping (String) -> Void
+    ) async throws -> String {
+        var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 120
+        req.setValue("application/json", forHTTPHeaderField: "content-type")
+        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 2048,
+            "stream": true,
+            "system": system,
+            "messages": messages,
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (bytes, resp) = try await URLSession.shared.bytes(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw CloudError.badResponse }
+        guard http.statusCode == 200 else {
+            var data = Data()
+            for try await b in bytes { data.append(b) }
+            throw CloudError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+
+        var acc = ""
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard !payload.isEmpty,
+                  let obj = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any],
+                  let type = obj["type"] as? String else { continue }
+            switch type {
+            case "content_block_delta":
+                if let delta = obj["delta"] as? [String: Any], let t = delta["text"] as? String {
+                    acc += t
+                    onUpdate(acc)
+                }
+            case "message_delta":
+                if let delta = obj["delta"] as? [String: Any],
+                   (delta["stop_reason"] as? String) == "refusal" { throw CloudError.refused }
+            case "error":
+                let msg = (obj["error"] as? [String: Any])?["message"] as? String ?? "stream error"
+                throw CloudError.http(0, msg)
+            case "message_stop":
+                let trimmed = acc.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { throw CloudError.badResponse }
+                return trimmed
+            default:
+                continue
+            }
+        }
+        let trimmed = acc.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw CloudError.badResponse }
+        return trimmed
+    }
+
     /// OpenAI Chat Completions.
     static func openai(instructions: String, prompt: String, model: String, apiKey: String) async throws -> String {
         var req = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)

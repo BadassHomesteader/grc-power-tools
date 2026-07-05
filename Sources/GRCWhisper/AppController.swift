@@ -14,13 +14,20 @@ final class AppController {
     var onStateChange: ((State) -> Void)?
     var lastTranscript: String = ""
     /// Live-mutable: the menu updates polish mode without a relaunch.
-    var config: Config { didSet { overlay.anchor = config.overlayPosition } }
+    var config: Config {
+        didSet {
+            overlay.anchor = config.overlayPosition
+            overlay.scheme = config.appearance
+            chat?.updateConfig(config)
+        }
+    }
 
     let store: Store
     private let audio: AudioCapture
     private let polisher: Polisher
     private let overlay = OverlayPanel()
     private var hotkey: HotkeyMonitor?
+    private var chat: ChatWindowController?
 
     private var cycle = 0
     private var utterance: AppleSpeechUtterance?
@@ -38,6 +45,7 @@ final class AppController {
 
     func start() async throws {
         overlay.anchor = config.overlayPosition
+        overlay.scheme = config.appearance
         guard await AudioCapture.requestMicPermission() else {
             throw NSError(domain: "GRCWhisper", code: 10,
                           userInfo: [NSLocalizedDescriptionKey: "Microphone permission denied"])
@@ -200,13 +208,17 @@ final class AppController {
                 let final: String
                 if ai {
                     self.overlay.showProcessing()
-                    // Command mode when text is selected; otherwise smart cloud cleanup.
+                    // Command mode when text is selected: rewrite it in place.
                     let selection = await Inserter.copySelection()?.trimmingCharacters(in: .whitespacesAndNewlines)
                     if let sel = selection, !sel.isEmpty {
                         final = await self.polisher.rewrite(instruction: raw, selection: sel, config: cfg) ?? raw
                     } else {
-                        final = await self.polisher.polish(raw, config: cfg, appName: appName,
-                                                           engineOverride: Polisher.preferredCloud(cfg))
+                        // Nothing selected: open a chat and send what you said (Claude Desktop-style).
+                        guard self.cycle == gen else { return }
+                        self.overlay.hide()
+                        self.openChat(with: raw)
+                        self.finishCycle()
+                        return
                     }
                 } else {
                     final = await self.polisher.polish(raw, config: cfg, appName: appName)
@@ -333,6 +345,14 @@ final class AppController {
                 }
             }
         }
+    }
+
+    /// Open (or focus) the AI chat window. Optionally seed it with a message and send.
+    func openChat(with text: String = "") {
+        if chat == nil { chat = ChatWindowController(config: config) }
+        chat?.updateConfig(config)
+        chat?.present()
+        if !text.isEmpty { chat?.send(text) }
     }
 
     private func finishCycle() {

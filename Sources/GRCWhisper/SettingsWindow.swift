@@ -7,6 +7,7 @@ import ServiceManagement
 final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSComboBoxDelegate {
     private let store: Store
     private let onConfigChange: (Config) -> Void
+    private let onOpenChat: () -> Void
     private var config: Config
 
     private static let claudeModels = ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8", "claude-fable-5"]
@@ -16,6 +17,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let hotkeyPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let cleanupPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let positionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchLoginCheck = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
@@ -30,13 +32,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let claudeModelField = NSComboBox()
     private let openaiModelField = NSComboBox()
 
-    init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void) {
+    init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void, onOpenChat: @escaping () -> Void = {}) {
         self.store = store
         self.config = config
         self.onConfigChange = onConfigChange
+        self.onOpenChat = onOpenChat
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 940, height: 660),
+            contentRect: NSRect(x: 0, y: 0, width: 1120, height: 680),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
@@ -83,11 +86,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         header.spacing = 2
         root.addArrangedSubview(header)
 
-        // Two columns so everything fits on screen without scrolling.
-        let leftCol = NSStackView()
-        leftCol.orientation = .vertical; leftCol.alignment = .leading; leftCol.spacing = 16
-        let rightCol = NSStackView()
-        rightCol.orientation = .vertical; rightCol.alignment = .leading; rightCol.spacing = 16
+        // Three columns so everything fits on screen without scrolling:
+        //  1) how-to + dictation   2) permissions + dictionary   3) AI keys + general
+        let col1 = NSStackView()
+        col1.orientation = .vertical; col1.alignment = .leading; col1.spacing = 16
+        let col2 = NSStackView()
+        col2.orientation = .vertical; col2.alignment = .leading; col2.spacing = 16
+        let col3 = NSStackView()
+        col3.orientation = .vertical; col3.alignment = .leading; col3.spacing = 16
 
         // Status section
         statusStack.orientation = .vertical
@@ -100,13 +106,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let statusButtons = NSStackView(views: [recheck, openAX])
         statusButtons.spacing = 8
 
-        // How-to section (top of the left column for discoverability).
+        // Column 1 · How-to (top for discoverability).
         helpLabel.font = .systemFont(ofSize: 12)
         helpLabel.textColor = .labelColor
-        helpLabel.preferredMaxLayoutWidth = 400
-        leftCol.addArrangedSubview(section("How to use it", [helpLabel]))
+        helpLabel.preferredMaxLayoutWidth = 300
+        col1.addArrangedSubview(section("How to use it", [helpLabel], width: 340))
 
-        leftCol.addArrangedSubview(section("Permissions", [statusStack, statusButtons]))
+        // Column 2 · Permissions ("the green lights").
+        col2.addArrangedSubview(section("Permissions", [statusStack, statusButtons], width: 360))
 
         // Dictation section
         for mode in Config.PolishMode.allCases { cleanupPopup.addItem(withTitle: mode.displayName) }
@@ -118,23 +125,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         for p in Config.OverlayPosition.allCases { positionPopup.addItem(withTitle: p.displayName) }
         positionPopup.target = self
         positionPopup.action = #selector(positionChanged)
+        for a in Config.Appearance.allCases { appearancePopup.addItem(withTitle: a.displayName) }
+        appearancePopup.target = self
+        appearancePopup.action = #selector(appearanceChanged)
         hotkeyNote.font = .systemFont(ofSize: 11)
         hotkeyNote.textColor = .secondaryLabelColor
         hotkeyNote.stringValue = " "
 
-        rightCol.addArrangedSubview(section("Dictation", [
+        col1.addArrangedSubview(section("Dictation", [
             formRow("Hotkey", hotkeyPopup),
             hotkeyNote,
             formRow("Cleanup", cleanupPopup),
             formRow("Bar position", positionPopup),
-        ]))
+            formRow("Theme", appearancePopup),
+        ], width: 340))
 
         // Cloud cleanup section (optional — used only when Cleanup is Claude/OpenAI)
-        let cloudNote = NSTextField(labelWithString: "Only used when Cleanup is set to Claude or OpenAI. Keys are saved in a private, owner-only file in the app's data folder, and only the transcribed text is sent — never your audio.")
+        let cloudNote = NSTextField(labelWithString: "Used when Cleanup is Claude or OpenAI, and for the AI chat (hold your hotkey + A). Keys are saved in a private, owner-only file in the app's data folder — they persist across reinstalls — and only text is ever sent, never your audio.")
         cloudNote.font = .systemFont(ofSize: 11)
         cloudNote.textColor = .secondaryLabelColor
         cloudNote.lineBreakMode = .byWordWrapping
-        cloudNote.preferredMaxLayoutWidth = 400
+        cloudNote.preferredMaxLayoutWidth = 360
         for f in [claudeKeyField, openaiKeyField, claudeModelField, openaiModelField] {
             f.widthAnchor.constraint(equalToConstant: 200).isActive = true
             f.target = self
@@ -156,23 +167,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let claudeKeyRow = NSStackView(views: [claudeKeyField, saveClaude]); claudeKeyRow.spacing = 8
         let openaiKeyRow = NSStackView(views: [openaiKeyField, saveOpenai]); openaiKeyRow.spacing = 8
 
-        rightCol.addArrangedSubview(section("Cloud cleanup (optional)", [
+        // Column 3 · AI API keys.
+        col3.addArrangedSubview(section("AI · cloud cleanup & chat", [
             cloudNote,
             formRow("Claude key", claudeKeyRow),
             formRow("Claude model", claudeModelField),
             formRow("OpenAI key", openaiKeyRow),
             formRow("OpenAI model", openaiModelField),
-        ]))
+        ], width: 400))
 
         // Dictionary section
-        let col1 = NSTableColumn(identifier: .init("term"))
-        col1.title = "Term"
-        col1.width = 180
-        let col2 = NSTableColumn(identifier: .init("misheard"))
-        col2.title = "Sounds like (comma-separated)"
-        col2.width = 300
-        dictTable.addTableColumn(col1)
-        dictTable.addTableColumn(col2)
+        let termCol = NSTableColumn(identifier: .init("term"))
+        termCol.title = "Term"
+        termCol.width = 110
+        let misheardCol = NSTableColumn(identifier: .init("misheard"))
+        misheardCol.title = "Sounds like (comma-separated)"
+        misheardCol.width = 180
+        dictTable.addTableColumn(termCol)
+        dictTable.addTableColumn(misheardCol)
         dictTable.dataSource = self
         dictTable.delegate = self
         dictTable.usesAlternatingRowBackgroundColors = true
@@ -183,7 +195,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         scroll.borderType = .bezelBorder
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.heightAnchor.constraint(equalToConstant: 130).isActive = true
-        scroll.widthAnchor.constraint(equalToConstant: 400).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 320).isActive = true
 
         termField.placeholderString = "KYAW"
         termField.widthAnchor.constraint(equalToConstant: 120).isActive = true
@@ -197,7 +209,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let dictButtons = NSStackView(views: [addBtn, removeBtn]); dictButtons.spacing = 8
         let dictControls = NSStackView(views: [dictFields, dictButtons])
         dictControls.orientation = .vertical; dictControls.alignment = .leading; dictControls.spacing = 8
-        leftCol.addArrangedSubview(section("Personal dictionary", [scroll, dictControls]))
+        col2.addArrangedSubview(section("Personal dictionary", [scroll, dictControls], width: 360))
 
         // General section
         launchLoginCheck.target = self
@@ -209,11 +221,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let version = NSTextField(labelWithString: "Local-only · no network · v1.0.0")
         version.font = .systemFont(ofSize: 11)
         version.textColor = .tertiaryLabelColor
+        let chatBtn = NSButton(title: "Open AI Chat", target: self, action: #selector(openChat))
+        chatBtn.bezelStyle = .rounded
         let generalButtons = NSStackView(views: [dataBtn, quitBtn])
         generalButtons.spacing = 8
-        rightCol.addArrangedSubview(section("General", [launchLoginCheck, generalButtons, version]))
+        col3.addArrangedSubview(section("General", [chatBtn, launchLoginCheck, generalButtons, version], width: 400))
 
-        let columns = NSStackView(views: [leftCol, rightCol])
+        let columns = NSStackView(views: [col1, col2, col3])
         columns.orientation = .horizontal
         columns.alignment = .top
         columns.spacing = 18
@@ -242,7 +256,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         loadConfigIntoControls()
     }
 
-    private func section(_ title: String, _ views: [NSView]) -> NSView {
+    private func section(_ title: String, _ views: [NSView], width: CGFloat = 340) -> NSView {
         let heading = NSTextField(labelWithString: title.uppercased())
         heading.font = .systemFont(ofSize: 11, weight: .semibold)
         heading.textColor = .secondaryLabelColor
@@ -251,10 +265,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         content.alignment = .leading
         content.spacing = 8
         content.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 14, right: 14)
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        box.layer?.cornerRadius = 10
+        let box = SectionBox()
         box.translatesAutoresizingMaskIntoConstraints = false
         content.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(content)
@@ -263,7 +274,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             content.bottomAnchor.constraint(equalTo: box.bottomAnchor),
             content.leadingAnchor.constraint(equalTo: box.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-            box.widthAnchor.constraint(equalToConstant: 440),
+            box.widthAnchor.constraint(equalToConstant: width),
         ])
         return box
     }
@@ -284,6 +295,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         hotkeyPopup.selectItem(withTitle: config.hotkey.displayName)
         cleanupPopup.selectItem(withTitle: config.polish.displayName)
         positionPopup.selectItem(withTitle: config.overlayPosition.displayName)
+        appearancePopup.selectItem(withTitle: config.appearance.displayName)
+        applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
         openaiModelField.stringValue = config.openaiModel
@@ -358,6 +371,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         onConfigChange(config)
     }
 
+    @objc private func appearanceChanged() {
+        guard let a = Config.Appearance.allCases.first(where: { $0.displayName == appearancePopup.titleOfSelectedItem }) else { return }
+        config.appearance = a
+        config.save()
+        applyWindowAppearance()
+        onConfigChange(config)
+    }
+
+    @objc private func openChat() { onOpenChat() }
+
+    private func applyWindowAppearance() {
+        window?.appearance = NSAppearance(named: config.appearance.isDark ? .darkAqua : .aqua)
+    }
+
     /// NSComboBox fires its action on Return/end-editing; also catch list picks.
     func comboBoxSelectionDidChange(_ notification: Notification) {
         guard let box = notification.object as? NSComboBox else { return }
@@ -400,20 +427,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             dot.heightAnchor.constraint(equalToConstant: 10).isActive = true
 
             let name = NSTextField(labelWithString: c.name)
-            name.font = .systemFont(ofSize: 12, weight: .medium)
-            name.widthAnchor.constraint(equalToConstant: 150).isActive = true
+            name.font = .systemFont(ofSize: 12, weight: .semibold)
+
+            let head = NSStackView(views: [dot, name])
+            head.spacing = 8
+            head.alignment = .centerY
 
             let detail = NSTextField(labelWithString: c.detail)
             detail.font = .systemFont(ofSize: 11)
             detail.textColor = .secondaryLabelColor
             detail.lineBreakMode = .byWordWrapping
-            detail.preferredMaxLayoutWidth = 330
+            detail.preferredMaxLayoutWidth = 320
             detail.cell?.wraps = true
 
-            let row = NSStackView(views: [dot, name, detail])
-            row.spacing = 8
-            row.alignment = .top
-            statusStack.addArrangedSubview(row)
+            let item = NSStackView(views: [head, detail])
+            item.orientation = .vertical
+            item.alignment = .leading
+            item.spacing = 3
+            statusStack.addArrangedSubview(item)
         }
     }
 
@@ -455,4 +486,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 /// Flipped clip view so the scroll document pins to the top, not the bottom.
 final class FlippedClipView: NSClipView {
     override var isFlipped: Bool { true }
+}
+
+/// Rounded section card whose fill re-resolves on light/dark theme changes.
+/// (A plain `layer.backgroundColor = .cgColor` is a static snapshot and would
+/// keep its original shade when the window appearance flips.)
+final class SectionBox: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 10
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        // Runs in this view's effective-appearance context, so the semantic
+        // color resolves correctly for the current theme.
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
 }

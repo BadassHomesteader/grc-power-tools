@@ -38,12 +38,16 @@ final class WaveformView: NSView {
 /// Draws the "menu" of actions with the leader keys as keycap chips.
 final class KeycapHintView: NSView {
     var segments: [(key: String?, label: String)] = []
-    var labelColor = NSColor.white.withAlphaComponent(0.6)
+    var dark = true { didSet { needsDisplay = true } }
 
     override func draw(_ dirtyRect: NSRect) {
         let labelFont = NSFont.systemFont(ofSize: 12.5, weight: .medium)
         let keyFont = NSFont.systemFont(ofSize: 10.5, weight: .bold)
-        let sep = NSColor.white.withAlphaComponent(0.28)
+        let base = dark ? NSColor.white : NSColor.black
+        let labelColor = base.withAlphaComponent(dark ? 0.62 : 0.68)
+        let sep = base.withAlphaComponent(0.28)
+        let chipBG = dark ? NSColor.white.withAlphaComponent(0.9) : NSColor.black.withAlphaComponent(0.82)
+        let chipText = dark ? NSColor.black : NSColor.white
         var x: CGFloat = 0
         let midY = bounds.midY
         func text(_ s: String, _ f: NSFont, _ c: NSColor) {
@@ -54,10 +58,10 @@ final class KeycapHintView: NSView {
         for (i, seg) in segments.enumerated() {
             if i > 0 { x += 6; text("·", labelFont, sep); x += 6 }
             if let key = seg.key {
-                let a = NSAttributedString(string: key, attributes: [.font: keyFont, .foregroundColor: NSColor.black])
+                let a = NSAttributedString(string: key, attributes: [.font: keyFont, .foregroundColor: chipText])
                 let kw = a.size().width, chipW = kw + 11, chipH: CGFloat = 17
                 let chip = NSRect(x: x, y: midY - chipH / 2, width: chipW, height: chipH)
-                NSColor.white.withAlphaComponent(0.9).setFill()
+                chipBG.setFill()
                 NSBezierPath(roundedRect: chip, xRadius: 4.5, yRadius: 4.5).fill()
                 a.draw(at: NSPoint(x: x + (chipW - kw) / 2, y: midY - a.size().height / 2))
                 x += chipW + 5
@@ -70,10 +74,11 @@ final class KeycapHintView: NSView {
 /// Solid dark rounded pill — used only for the offscreen `render-overlay` preview
 /// (the live panel uses a real frosted NSVisualEffectView which can't render offscreen).
 final class PillView: NSView {
+    var fill = NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1)
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
                                 xRadius: 20, yRadius: 20)
-        NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1).setFill()
+        fill.setFill()
         path.fill()
     }
 }
@@ -92,13 +97,23 @@ final class OverlayPanel {
 
     /// Where the pill appears on screen.
     var anchor: Config.OverlayPosition = .bottomCenter
+    /// Light or dark frosted look.
+    var scheme: Config.Appearance = .dark { didSet { applyScheme() } }
 
     private let panel: NSPanel
+    private let vibrant = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: OverlayPanel.width, height: OverlayPanel.height))
     private let iconView = NSImageView()
     private let waveform = WaveformView(bars: 64)
     private let label = NSTextField(labelWithString: "")
     private let hint = KeycapHintView()
     private var hideTimer: Timer?
+
+    private var textColor: NSColor {
+        scheme.isDark ? NSColor.white.withAlphaComponent(0.95) : NSColor.black.withAlphaComponent(0.9)
+    }
+    private var dimColor: NSColor {
+        scheme.isDark ? NSColor.white.withAlphaComponent(0.6) : NSColor.black.withAlphaComponent(0.5)
+    }
 
     private static let menuSegments: [(key: String?, label: String)] = [
         (nil, "Speak"), ("T", "text"), ("S", "screenshot"), ("G", "search"), ("A", "AI"),
@@ -117,11 +132,8 @@ final class OverlayPanel {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
 
-        let vibrant = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.height))
-        vibrant.material = .hudWindow
         vibrant.blendingMode = .behindWindow
         vibrant.state = .active
-        vibrant.appearance = NSAppearance(named: .darkAqua)
         vibrant.wantsLayer = true
         vibrant.layer?.cornerRadius = 20
         vibrant.layer?.masksToBounds = true
@@ -138,7 +150,6 @@ final class OverlayPanel {
 
         label.frame = Self.topFrame
         label.font = .systemFont(ofSize: 14, weight: .medium)
-        label.textColor = NSColor.white.withAlphaComponent(0.95)
         label.lineBreakMode = .byTruncatingHead
         label.maximumNumberOfLines = 1
         label.cell?.usesSingleLineMode = true
@@ -150,11 +161,21 @@ final class OverlayPanel {
         vibrant.addSubview(hint)
 
         panel.contentView = vibrant
+        applyScheme()
+    }
+
+    private func applyScheme() {
+        vibrant.material = scheme.isDark ? .hudWindow : .popover
+        vibrant.appearance = NSAppearance(named: scheme.isDark ? .darkAqua : .aqua)
+        hint.dark = scheme.isDark
+        label.textColor = textColor
     }
 
     /// Builds a solid-pill preview (recording/menu state) for `render-overlay`.
-    static func buildContent() -> NSView {
+    static func buildContent(dark: Bool = true) -> NSView {
         let pill = PillView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        pill.fill = dark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1)
+                         : NSColor(srgbRed: 0.95, green: 0.95, blue: 0.97, alpha: 1)
         let icon = NSImageView(frame: iconFrame)
         icon.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: nil)
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
@@ -171,6 +192,7 @@ final class OverlayPanel {
         pill.addSubview(wave)
         let hint = KeycapHintView(frame: topFrame)
         hint.segments = menuSegments
+        hint.dark = dark
         pill.addSubview(hint)
         return pill
     }
@@ -209,7 +231,7 @@ final class OverlayPanel {
         guard !text.isEmpty else { return }
         hint.isHidden = true
         label.isHidden = false
-        label.textColor = NSColor.white.withAlphaComponent(0.95)
+        label.textColor = textColor
         label.stringValue = text
     }
 
@@ -223,7 +245,7 @@ final class OverlayPanel {
         if label.isHidden {
             hint.isHidden = true
             label.isHidden = false
-            label.textColor = NSColor.white.withAlphaComponent(0.6)
+            label.textColor = dimColor
             label.stringValue = "…"
         }
     }
@@ -232,7 +254,7 @@ final class OverlayPanel {
         hint.isHidden = true
         label.isHidden = false
         waveform.barColor = NSColor(srgbRed: 0.3, green: 0.85, blue: 0.5, alpha: 1)
-        label.textColor = NSColor.white.withAlphaComponent(0.95)
+        label.textColor = textColor
         label.stringValue = text
         hideAfter(1.4)
     }

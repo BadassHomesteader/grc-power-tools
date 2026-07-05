@@ -38,6 +38,12 @@ struct Config: Codable {
         }
     }
 
+    enum Appearance: String, Codable, CaseIterable {
+        case dark, light
+        var displayName: String { self == .dark ? "Dark" : "Lite" }
+        var isDark: Bool { self == .dark }
+    }
+
     enum PolishMode: String, Codable, CaseIterable {
         case apple    // Apple FoundationModels (on-device)
         case claude   // Claude API (cloud, opt-in)
@@ -94,12 +100,15 @@ struct Config: Codable {
     var openaiModel: String = "gpt-4o-mini"
     /// Where the dictation bar appears.
     var overlayPosition: OverlayPosition = .bottomCenter
+    /// Light or dark theme for the overlay, settings, and chat windows.
+    var appearance: Appearance = .dark
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
-        case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel, overlayPosition
+        case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
+        case overlayPosition, appearance
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -117,6 +126,7 @@ struct Config: Codable {
         claudeModel = try c.decodeIfPresent(String.self, forKey: .claudeModel) ?? "claude-haiku-4-5"
         openaiModel = try c.decodeIfPresent(String.self, forKey: .openaiModel) ?? "gpt-4o-mini"
         overlayPosition = try c.decodeIfPresent(OverlayPosition.self, forKey: .overlayPosition) ?? .bottomCenter
+        appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? .dark
     }
 
     static var appSupportDir: URL {

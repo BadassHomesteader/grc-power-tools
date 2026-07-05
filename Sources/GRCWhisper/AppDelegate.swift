@@ -55,11 +55,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showSettings(_ sender: Any?) {
         if settings == nil {
-            settings = SettingsWindowController(store: store, config: config) { [weak self] newConfig in
+            settings = SettingsWindowController(store: store, config: config, onConfigChange: { [weak self] newConfig in
                 self?.config = newConfig
-                self?.controller?.config = newConfig  // cleanup mode applies live
+                self?.controller?.config = newConfig  // cleanup mode + theme apply live
                 self?.statusItem.menu = self?.buildStatusMenu()
-            }
+            }, onOpenChat: { [weak self] in
+                self?.controller?.openChat()
+            })
         }
         settings?.show()
     }
@@ -82,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ocrMenuItem = NSMenuItem(title: "Capture Text from Screen", action: #selector(captureScreenText), keyEquivalent: "")
         ocrMenuItem.target = self
         appMenu.addItem(ocrMenuItem)
+        let chatMenuItem = NSMenuItem(title: "New AI Chat", action: #selector(openChat), keyEquivalent: "n")
+        chatMenuItem.target = self
+        appMenu.addItem(chatMenuItem)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide GRC Whisper", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(withTitle: "Quit GRC Whisper", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -154,6 +159,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func captureScreenText() {
         controller?.captureScreenText()
+    }
+
+    @objc private func openChat() {
+        controller?.openChat()
     }
 
     @objc private func copyHistoryItem(_ sender: NSMenuItem) {
