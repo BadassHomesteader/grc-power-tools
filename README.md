@@ -27,13 +27,13 @@ A fully-local macOS power-user toolkit built around one hotkey — a private [Wi
 ## How it works
 
 ```
-hold Fn ──► mic (always-warm, 1s pre-roll) ──► SpeechAnalyzer (streams while you speak)
+hold ⌥⇧ ──► mic (always-warm, 1s pre-roll) ──► SpeechAnalyzer (streams while you speak)
 release ──► finalize (~0.2-0.6s) ──► Tier-0 cleanup (dictionary + fillers)
-        ──► on-device LLM polish (deadline-guarded, falls back to Tier-0)
-        ──► clipboard-swap paste into the focused app (your clipboard is restored)
+       ──► on-device LLM polish (deadline-guarded, falls back to Tier-0)
+       ──► clipboard-swap paste into the focused app (your clipboard is restored)
 ```
 
-- **Hold Fn** (Globe) to talk, release to insert. **Esc** cancels. Pressing any other key while holding cancels (so Fn+arrow combos still work).
+- **Hold Option + Shift** (either side — it's ambidextrous) to talk, release to insert. **Esc** cancels. This one hotkey is also a *leader*: hold it and tap a letter or arrow for a different tool (see [Leader chords](#leader-chords-hold-your-hotkey-tap-a-letter) below) instead of speaking. Configurable in Settings (Fn, Right Option, Control+Option, etc.).
 - Live partial transcript shows in a bottom-center overlay that never steals focus.
 - The polish pass removes fillers (um/uh), applies self-corrections ("meet Tuesday — scratch that, Wednesday" → Wednesday only), fixes punctuation, and respects your personal dictionary. If the LLM is slow or unavailable, you get the deterministic Tier-0 cleanup instead — never nothing.
 - Raw + polished text for every dictation is kept in local history (menu bar ▸ Recent).
@@ -58,7 +58,7 @@ TCC permissions attach to the app bundle's ID + signature, which `scripts/bundle
 1. **Microphone** — prompted on first launch.
 2. **Accessibility** — required for the global hotkey tap and the paste keystroke. The app prompts; toggle **GRC Whisper** on.
 3. **Input Monitoring** — macOS sometimes also requires this for the keyboard listener; grant it if it appears.
-4. **System Settings ▸ Keyboard ▸ "Press 🌐 key" → "Do Nothing"** — otherwise macOS opens emoji/dictation on the Fn key and fights the hotkey.
+4. **Only if you switch the hotkey to Fn/Globe:** System Settings ▸ Keyboard ▸ "Press 🌐 key" → "Do Nothing", otherwise macOS opens emoji/dictation on the Fn key and fights the hotkey. The default **Option + Shift** hotkey needs no such remap and works on external keyboards too.
 
 Then verify with the menu bar ▸ **Permission Doctor…**, or:
 
@@ -91,7 +91,7 @@ The personal dictionary does two jobs: deterministic replacement of misheard var
 
 | key | default | notes |
 |-----|---------|-------|
-| `hotkey` | `fn` | `fn`, `rightOption`, `rightCommand`, `ctrlOption` (use `ctrlOption` for non-Apple keyboards — they don't deliver Fn) |
+| `hotkey` | `optionShift` | `optionShift` (default, ambidextrous, any keyboard), `fn`, `rightOption`, `rightCommand`, `ctrlOption`, `shiftCommand`. `fn` isn't delivered by non-Apple keyboards — use `optionShift` or `ctrlOption` there. |
 | `polish` | `apple` | `apple` (on-device AI), `claude`/`openai` (cloud, opt-in), `basic` (dictionary+fillers only), `off` (raw) |
 | `claudeModel` | `claude-haiku-4-5` | cloud model when `polish: claude` (change to `claude-opus-4-8` for max quality) |
 | `openaiModel` | `gpt-4o-mini` | cloud model when `polish: openai` |
@@ -112,15 +112,27 @@ History, dictionary, and logs live in the same folder. Delete the folder to rese
 
 ## Leader chords (hold your hotkey, tap a letter)
 
-Your dictation hotkey doubles as a leader — hold it and the bar shows the menu (`Speak · T text · S screenshot · G search · A ask AI`). Tap a letter or just speak:
+Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay shows the menu (`A ai · T text · S shot · G lens` / `C X V files · ← → ↑ ↓ windows`). Keep holding and tap a key, or just speak. Until you speak, the overlay shows the hint strip; the moment you talk it swaps to the live waveform.
 
+**Text & AI**
 - **hold + speak + release** → dictation (as normal).
-- **hold + T** → **text (OCR)**: drag a screen region, the recognized text is copied to your clipboard (paste with ⌘V). Tables come back **tab-separated** so they paste into Excel/Sheets/Numbers as a grid. Fully local via Apple Vision.
+- **hold + A**, then speak → **AI chat**: what you say opens a streaming Claude chat window. Set the mode in Settings — *native* (in-app window), *browser* (claude.ai tab), or *both* (a native window with a “claude.ai ↗” button).
+- **hold + T** → **text (OCR)**: drag a screen region, the recognized text is copied to your clipboard. Tables come back **tab-separated** so they paste into Excel/Sheets/Numbers as a grid. Fully local via Apple Vision.
 - **hold + S** → **screenshot**: drag a region, the image is copied to your clipboard.
 - **hold + G** → **Google Lens**: drag a region → image to clipboard + Google Lens results open in your browser (Circle-to-Search style).
-- **hold + A** → **AI** (routes to Claude, falling back to OpenAI, then on-device):
-  - *nothing selected* → this dictation is cleaned by the cloud AI instead of the on-device model ("smart cleanup").
-  - *text selected* → **command mode**: keep holding, speak an instruction ("make this formal", "translate to Spanish"), release → the AI rewrites your selection in place.
+
+**Files** (with the Finder frontmost)
+- **hold + C** copy the selected files · **hold + X** cut · **hold + V** paste — cut files are *moved* into the front Finder window. A keyboard cut/paste for files, like Windows Explorer.
+
+**Windows**
+- **hold + ← / → / ↑ / ↓** → snap the focused window to that side/edge. Tap the same arrow again to **cycle sizes** (½ · ⅓ · ⅔ by default; ¼/¾ or ⅕/⅘ selectable in Settings — each set includes the larger complement from the other side).
+- **hold + Return** → maximize.
+- Right after a snap, **Snap Assist** offers the other windows — click one to fill the empty space (Windows-style).
+- **hold + 3** → **grid draw mode**: drag across an on-screen grid to place the window (Moom-style). Grid dimensions are configurable.
+
+**Clipboard & cursor**
+- **hold + P** → **Advanced Paste**: a palette to paste the clipboard as plain text or transform it — summarize, rewrite, bullets, markdown, or translate (AI transforms use your configured cloud model).
+- **hold + M** → **Find My Mouse**: dims the screen and spotlights the cursor.
 
 T / S / G need Screen Recording permission the first time (System Settings ▸ Privacy & Security ▸ Screen Recording, then quit & reopen). OCR is also on the menu-bar mic ▸ Capture Text from Screen.
 

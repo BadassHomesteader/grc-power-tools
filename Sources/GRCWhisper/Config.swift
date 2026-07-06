@@ -3,12 +3,12 @@ import Foundation
 /// All user-tunable settings, persisted as JSON in Application Support.
 struct Config: Codable {
     enum Hotkey: String, Codable, CaseIterable {
-        case fn            // hold Globe/Fn (default, Wispr parity)
+        case fn            // hold Globe/Fn (Wispr parity; needs "Press 🌐 → Do Nothing")
         case rightOption
         case rightCommand
         case ctrlOption    // hold Control+Option together (external keyboards)
         case shiftCommand  // hold Shift+Command together
-        case optionShift   // hold Option+Shift together — ambidextrous, low-collision
+        case optionShift   // hold Option+Shift together — DEFAULT: ambidextrous, low-collision, any keyboard
 
         var displayName: String {
             switch self {
@@ -25,7 +25,7 @@ struct Config: Codable {
         // wipe the whole config on load).
         init(from decoder: Decoder) throws {
             let raw = try decoder.singleValueContainer().decode(String.self)
-            self = Hotkey(rawValue: raw) ?? .fn
+            self = Hotkey(rawValue: raw) ?? .optionShift
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.singleValueContainer(); try c.encode(rawValue)
@@ -168,7 +168,7 @@ struct Config: Codable {
         }
     }
 
-    var hotkey: Hotkey = .fn
+    var hotkey: Hotkey = .optionShift
     var polish: PolishMode = .apple
     var localeIdentifier: String = "en_US"
     /// Soft deadline for the LLM polish pass; on expiry we fall back to Tier-0 text.
@@ -209,7 +209,7 @@ struct Config: Codable {
     // settings never invalidates an older config file.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        hotkey = try c.decodeIfPresent(Hotkey.self, forKey: .hotkey) ?? .fn
+        hotkey = try c.decodeIfPresent(Hotkey.self, forKey: .hotkey) ?? .optionShift
         polish = try c.decodeIfPresent(PolishMode.self, forKey: .polish) ?? .apple
         localeIdentifier = try c.decodeIfPresent(String.self, forKey: .localeIdentifier) ?? "en_US"
         llmDeadlineMs = try c.decodeIfPresent(Int.self, forKey: .llmDeadlineMs) ?? 2500
