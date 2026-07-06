@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.png" width="120" alt="Power Tools"></p>
+
 # Power Tools  (formerly GRC Whisper)
 
 A fully-local macOS power-user toolkit built around one hotkey — a private [Wispr Flow](https://wisprflow.ai) replacement and more. Hold a key, speak, release: polished text appears in whatever app has focus. Or tap a letter/arrow while holding for AI chat, OCR, screenshots, file cut/paste, and window snapping.
@@ -5,6 +7,22 @@ A fully-local macOS power-user toolkit built around one hotkey — a private [Wi
 **The app bundle and data folder are still named `GRC Whisper` / bundle ID `com.grc.whisper`** so macOS permissions and saved keys survive the rename.
 
 **Everything runs on this Mac.** Wispr Flow sends every word you speak (plus surrounding screen context) to its cloud. Power Tools makes zero network calls for dictation: speech recognition is Apple's on-device `SpeechAnalyzer` (macOS 26), text cleanup is Apple's on-device Foundation Model, history lives in a local SQLite file. Little-Snitch-clean by design.
+
+## Screenshots
+
+<p align="center"><img src="docs/overlay.png" width="560" alt="Dictation overlay"></p>
+<p align="center"><em>Hold your hotkey and talk — mic, a live waveform, and “release to stop.” Let go and polished text lands in whatever app has focus.</em></p>
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/windows.png" alt="Window snapping"><br><b>Window snapping</b> — hold + arrows to snap a window to a side; tap again to cycle ½ · ⅓ · ⅔.</td>
+<td width="50%" valign="top"><img src="docs/snap-assist.png" alt="Snap Assist"><br><b>Snap Assist</b> — right after a snap, pick another window to fill the empty half (like Windows).</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="docs/advanced-paste.png" alt="Advanced Paste"><br><b>Advanced Paste</b> — hold + P for plain text, summarize, rewrite, bullets, markdown, or translate.</td>
+<td width="50%" valign="top"><img src="docs/settings.png" alt="Settings"><br><b>Settings</b> — choose your hotkey, light/dark theme, snap sizes, grid, and AI-chat mode.</td>
+</tr>
+</table>
 
 ## How it works
 
