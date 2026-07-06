@@ -2,11 +2,15 @@
 
 # Power Tools  (formerly GRC Whisper)
 
-A fully-local macOS power-user toolkit built around one hotkey — a private [Wispr Flow](https://wisprflow.ai) replacement and more. Hold a key, speak, release: polished text appears in whatever app has focus. Or tap a letter/arrow while holding for AI chat, OCR, screenshots, file cut/paste, and window snapping.
+> **The PowerToys of macOS.** One hotkey, a whole toolbox — and the core tools never leave your Mac.
+
+Power Tools puts a suite of power-user utilities behind a single hotkey. **Hold Option + Shift**, then speak or tap a letter/arrow: dictate into any app, open a Claude chat, snap and tile windows, OCR the screen, grab a screenshot, cut & paste files, transform your clipboard, or spotlight your cursor. If you've missed Windows PowerToys on the Mac, this is that — FancyZones-style snapping, Advanced Paste, Text Extractor, and Find My Mouse — plus on-device dictation and AI chat.
+
+**In the box:** 🎙 Dictation · 💬 AI chat · 🪟 Window snapping + Snap Assist · ▦ Grid placement · 🔤 OCR (Text Extractor) · 📸 Screenshots · 🔎 Google Lens · 🗂 File cut/paste · 📋 Advanced Paste · 🖱 Find My Mouse
 
 **The app bundle and data folder are still named `GRC Whisper` / bundle ID `com.grc.whisper`** so macOS permissions and saved keys survive the rename.
 
-**Everything runs on this Mac.** Wispr Flow sends every word you speak (plus surrounding screen context) to its cloud. Power Tools makes zero network calls for dictation: speech recognition is Apple's on-device `SpeechAnalyzer` (macOS 26), text cleanup is Apple's on-device Foundation Model, history lives in a local SQLite file. Little-Snitch-clean by design.
+**The core tools run entirely on this Mac.** Dictation never leaves the machine — speech recognition is Apple's on-device `SpeechAnalyzer` (macOS 26), text cleanup is Apple's on-device Foundation Model, and history lives in a local SQLite file. The only network calls are the *opt-in* AI features — AI chat, cloud cleanup, and Advanced Paste's smart transforms — and only when you invoke them, with your own API key. Little-Snitch-clean by design.
 
 ## Screenshots
 

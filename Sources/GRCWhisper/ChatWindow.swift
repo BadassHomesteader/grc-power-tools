@@ -72,10 +72,10 @@ final class ChatWindowController: NSWindowController, NSTextFieldDelegate, NSWin
 
     /// Static sample transcript for the offscreen `chat-preview` design check.
     func previewSeed() {
-        addBubble(role: "user", text: "What does Wispr Flow use for its AI?")
-        addBubble(role: "assistant", text: "Wispr Flow does its transcription in the cloud — it streams your audio to their servers rather than running on-device. Power Tools is the opposite: everything here runs locally on your Mac, and only this AI chat reaches out (with your own key).")
+        addBubble(role: "user", text: "What can Power Tools do?")
+        addBubble(role: "assistant", text: "Hold Option+Shift and you get a whole toolbox: dictate into any app, snap and tile windows, OCR the screen, transform your clipboard, and more. The core tools run on-device — this AI chat is the one part that reaches out, with your own key.")
         addBubble(role: "user", text: "Nice. Summarize that in one line.")
-        addBubble(role: "assistant", text: "Wispr Flow = cloud transcription; Power Tools = fully on-device, cloud only for opt-in AI.")
+        addBubble(role: "assistant", text: "One hotkey, many tools — local by default, cloud only for opt-in AI.")
     }
 
     /// Send text (from voice or typed). If a reply is already streaming, the new

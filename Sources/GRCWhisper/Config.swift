@@ -3,7 +3,7 @@ import Foundation
 /// All user-tunable settings, persisted as JSON in Application Support.
 struct Config: Codable {
     enum Hotkey: String, Codable, CaseIterable {
-        case fn            // hold Globe/Fn (Wispr parity; needs "Press 🌐 → Do Nothing")
+        case fn            // hold Globe/Fn (needs "Press 🌐 → Do Nothing" in Keyboard settings)
         case rightOption
         case rightCommand
         case ctrlOption    // hold Control+Option together (external keyboards)

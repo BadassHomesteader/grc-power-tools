@@ -4,7 +4,7 @@ import AVFoundation
 /// Always-warm microphone capture with a pre-roll ring buffer.
 ///
 /// The engine runs continuously so the ~500ms macOS mic spin-up never eats the
-/// first syllable (Handy #1283 / Wispr's "missing first words" class). While idle,
+/// first syllable (the classic "missing first words" problem in this app class). While idle,
 /// buffers land in a short ring; at key-down `beginHold()` stops trimming the ring
 /// (so nothing is lost while the speech analyzer spins up), and `beginRecording`
 /// flushes the ring to the consumer then streams live buffers.
