@@ -7,7 +7,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "GRCWhisper",
-            path: "Sources/GRCWhisper",
+            path: "Sources/PowerTools",
             swiftSettings: [.unsafeFlags(["-swift-version", "5"])]
         )
     ]

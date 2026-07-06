@@ -24,12 +24,12 @@ APP="$DIST/$APP_NAME.app"
 # failure). No external dependencies, so swiftc is equivalent.
 echo "==> swiftc release build"
 mkdir -p .build
-swiftc -swift-version 5 -O Sources/GRCWhisper/*.swift -o .build/GRCWhisper
+swiftc -swift-version 5 -O Sources/PowerTools/*.swift -o .build/PowerTools
 
 echo "==> assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/GRCWhisper "$APP/Contents/MacOS/$APP_NAME"
+cp .build/PowerTools "$APP/Contents/MacOS/$APP_NAME"
 if [[ -f Resources/AppIcon.icns ]]; then
     cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
