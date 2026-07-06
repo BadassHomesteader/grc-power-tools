@@ -65,6 +65,12 @@ ln -s /Applications "$STAGE/Applications"
 hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 rm -rf "$STAGE"
 
+echo "==> sign + notarize + staple the .dmg itself (so the downloaded image opens with no Gatekeeper prompt, not just the app inside)"
+codesign --force --sign "$SIGN_ID" --timestamp "$DMG"
+xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+xcrun stapler staple "$DMG"
+xcrun stapler validate "$DMG"
+
 echo ""
 echo "==> DONE: $DMG"
 echo "    Signed + notarized + stapled — friends download it, drag to Applications, and it just opens."
