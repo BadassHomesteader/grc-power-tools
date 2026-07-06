@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/icon.png" width="120" alt="Power Tools"></p>
 
-# Power Tools  (formerly GRC Whisper)
+# Power Tools
 
 > **The PowerToys of macOS.** One hotkey, a whole toolbox — and the core tools never leave your Mac.
 
