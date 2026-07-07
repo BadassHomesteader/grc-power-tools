@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Power Tools — the PowerToys of macOS</title>
-<meta name="description" content="A fully-local macOS power-user toolkit behind one hotkey: dictation, AI chat, window snapping, Advanced Paste, OCR, Find My Mouse, and more. Free and open source.">
+<meta name="description" content="A fully-local macOS power-user toolkit behind one hotkey: dictation, AI chat, Alt-Tab-style window switching, snap palette, clipboard history with images, Advanced Paste, OCR, and more. Free and open source.">
 <meta property="og:title" content="Power Tools — the PowerToys of macOS">
-<meta property="og:description" content="One hotkey, a whole toolbox. Dictation, AI chat, window snapping, Advanced Paste, OCR and more — running on your Mac.">
+<meta property="og:description" content="One hotkey, a whole toolbox. Dictation, AI chat, window snapping + Moom-style palette, Win+V clipboard history, Windows-style ⌘Tab, OCR and more — running on your Mac.">
 <meta property="og:image" content="assets/icon.png">
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/icon.png">
@@ -148,7 +148,7 @@
   <header class="hero">
     <span class="eyebrow">A fully-local macOS power-user toolkit</span>
     <h1>One&nbsp;hotkey,<br><span class="hl">a whole toolbox</span>.</h1>
-    <p class="sub">Dictation, AI chat, window snapping, Advanced Paste, OCR and more — the PowerToys of macOS, running entirely on your Mac.</p>
+    <p class="sub">Dictation, AI chat, window snapping with a Moom-style palette, Win+V-style clipboard history, a real Alt-Tab, OCR and more — the PowerToys of macOS, running entirely on your Mac.</p>
     <div class="cta">
       <a class="pill pill-dark" href="https://github.com/BadassHomesteader/grc-power-tools/releases/latest/download/Power-Tools.dmg">Download for Mac ↗</a>
       <a class="pill pill-out" href="https://github.com/BadassHomesteader/grc-power-tools">View on GitHub</a>
@@ -169,7 +169,10 @@
     <div class="grid">
       <div class="feat"><span class="ic">🎙</span><h3>Dictation</h3><p>Hold, speak, release. On-device transcription with LLM cleanup — no cloud.</p></div>
       <div class="feat"><span class="ic">💬</span><h3>AI chat</h3><p><kbd>hold + A</kbd> then speak — opens a streaming Claude chat with your message.</p></div>
-      <div class="feat"><span class="ic">🪟</span><h3>Window snapping</h3><p><kbd>hold + ←→↑↓</kbd> to snap; tap again to cycle ½ · ⅓ · ⅔. Plus Snap Assist.</p></div>
+      <div class="feat"><span class="ic">🪟</span><h3>Window snapping</h3><p><kbd>hold + ←→↑↓</kbd> to snap; repeat to cycle sizes, chain <kbd>← ↑</kbd> for a corner. Plus Snap Assist.</p></div>
+      <div class="feat"><span class="ic">🎛</span><h3>Snap palette</h3><p><kbd>hold + W</kbd> — Fill, halves, quarters, thirds and a mini-grid, drawn as mini window diagrams with live preview.</p></div>
+      <div class="feat"><span class="ic">🔀</span><h3>⌘Tab, fixed</h3><p>Like Windows Alt-Tab: last <em>window</em> first, across apps — two Excel windows are two entries. <kbd>⇧⌘⇥</kbd> walks back.</p></div>
+      <div class="feat"><span class="ic">🕘</span><h3>Clipboard history</h3><p><kbd>hold + H</kbd> — your recent copies, text and images with thumbnails. Pick one, it pastes and becomes the clipboard.</p></div>
       <div class="feat"><span class="ic">▦</span><h3>Grid placement</h3><p><kbd>hold + 3</kbd> and drag across a grid to place a window, Moom-style.</p></div>
       <div class="feat"><span class="ic">📋</span><h3>Advanced Paste</h3><p><kbd>hold + P</kbd> to paste as plain text — or summarize, rewrite, bullets, translate.</p></div>
       <div class="feat"><span class="ic">🔤</span><h3>OCR / Text Extractor</h3><p><kbd>hold + T</kbd> and drag a region — recognized text and tables to your clipboard.</p></div>
@@ -185,10 +188,12 @@
     <p class="label">02 — A look inside</p>
     <h2>Built like a native app, not a menu-bar toy.</h2>
     <div class="showcase">
+      <figure><div class="frame"><img src="assets/snap-palette.png" alt="Snap palette — halves, thirds, mini-grid"></div><figcaption><b>Snap palette.</b> <kbd>hold + W</kbd> — every target drawn as a mini window diagram, with a drag-to-sketch grid.</figcaption></figure>
+      <figure><div class="frame"><img src="assets/clipboard-history.png" alt="Clipboard history palette"></div><figcaption><b>Clipboard history.</b> The Win+V macOS never shipped — text and images, thumbnails included.</figcaption></figure>
       <figure><div class="frame"><img src="assets/windows.png" alt="Window snapping"></div><figcaption><b>Window snapping.</b> Snap to any side, cycle sizes, then fill the gap with Snap Assist.</figcaption></figure>
       <figure><div class="frame"><img src="assets/snap-assist.png" alt="Snap Assist"></div><figcaption><b>Snap Assist.</b> After a snap, pick another window to fill the empty half.</figcaption></figure>
       <figure><div class="frame"><img src="assets/advanced-paste.png" alt="Advanced Paste palette"></div><figcaption><b>Advanced Paste.</b> A palette to reshape whatever's on your clipboard.</figcaption></figure>
-      <figure><div class="frame"><img src="assets/settings.png" alt="Settings"></div><figcaption><b>Settings.</b> Pick your hotkey, theme, snap sizes, grid, and AI-chat mode.</figcaption></figure>
+      <figure><div class="frame"><img src="assets/settings.png" alt="Settings"></div><figcaption><b>Settings.</b> Six tidy tabs — hotkey, snapping, AI, dictionary, permissions.</figcaption></figure>
     </div>
   </div>
 </section>
