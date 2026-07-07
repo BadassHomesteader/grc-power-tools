@@ -1,68 +1,186 @@
 import Cocoa
 import ApplicationServices
 
-/// ⌘` fixed: jump to the LAST WINDOW YOU USED, regardless of app. macOS's own
-/// ⌘` only cycles windows of the frontmost app; this makes it an Alt-Tab-style
-/// quick toggle — tap to go back to the previous window, tap again to return —
-/// without touching ⌘Tab (which still switches whole apps).
+/// ⌘Tab, but like Windows Alt-Tab: WINDOW-level most-recently-used switching.
+/// Two Excel windows are two entries; tap ⌘Tab to bounce to the last window
+/// you used (any app), hold ⌘ and tap Tab again to walk deeper down the MRU
+/// list (⇧⌘Tab walks backwards); releasing ⌘ commits. Each step raises the
+/// window immediately, so you always see where you are — no HUD needed.
 ///
-/// v1 semantics: "previous window" = the focused window of the previously
-/// active app (tracked via NSWorkspace activation history, resolved via AX at
-/// press time so closed windows never go stale). Within-app window focus
-/// changes aren't tracked — that would need per-app AX observers.
+/// Tracking: app switches come from NSWorkspace activation notifications;
+/// window switches WITHIN the frontmost app come from an AX observer on its
+/// focused-window-changed notification (re-attached on each app activation).
 @MainActor
 final class WindowSwitcher {
-    private var current: pid_t = 0
-    private var history: [pid_t] = []   // most recently used first, excludes current
+    struct Entry: Equatable {
+        let pid: pid_t
+        let windowID: CGWindowID
+    }
+
+    private var current: Entry?
+    private var history: [Entry] = []      // most recently used first, excludes current
+
+    /// Hold-⌘-and-Tab cycling session: a snapshot of [current] + history taken
+    /// at the first Tab, so raising windows mid-cycle doesn't reshuffle the
+    /// list underneath the user. Committed to history when ⌘ is released.
+    private var session: [Entry]?
+    private var sessionIndex = 0
+    private var suppress = false           // ignore focus events during a session
+    private var lastCycleAt = Date.distantPast
+
+    private var observer: AXObserver?
+    private var observedPid: pid_t = 0
 
     func start() {
-        current = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             let pid = app.processIdentifier
-            Task { @MainActor in self?.activated(pid) }
+            Task { @MainActor in
+                guard let self else { return }
+                self.observeFocus(of: pid)
+                // The newly active app's focused window needs a beat to settle.
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(200)) {
+                    self.noteFocusChange()
+                }
+            }
+        }
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier {
+            observeFocus(of: pid)
+            noteFocusChange()
         }
     }
 
-    private func activated(_ pid: pid_t) {
-        guard pid != current else { return }
-        if current != 0 {
-            history.removeAll { $0 == current }
-            history.insert(current, at: 0)
-            if history.count > 8 { history.removeLast() }
+    // MARK: Focus tracking
+
+    /// Watch the (new) frontmost app for focused-window changes, so switching
+    /// between two windows of the SAME app lands in the history too.
+    private func observeFocus(of pid: pid_t) {
+        guard pid != observedPid else { return }
+        if let observer {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
         }
-        current = pid
+        observer = nil
+        observedPid = 0
+        var obs: AXObserver?
+        let callback: AXObserverCallback = { _, _, _, refcon in
+            guard let refcon else { return }
+            let me = Unmanaged<WindowSwitcher>.fromOpaque(refcon).takeUnretainedValue()
+            Task { @MainActor in me.noteFocusChange() }
+        }
+        guard AXObserverCreate(pid, callback, &obs) == .success, let obs else { return }
+        let axApp = AXUIElementCreateApplication(pid)
+        AXObserverAddNotification(obs, axApp, kAXFocusedWindowChangedNotification as CFString,
+                                  Unmanaged.passUnretained(self).toOpaque())
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
+        observer = obs
+        observedPid = pid
     }
 
-    /// Raise the previous app's focused window and activate it. Skips apps that
-    /// have quit; falls back to a plain app activation if no window resolves
-    /// (e.g. Finder with no windows). Returns false if there's nowhere to go.
-    @discardableResult
-    func switchToPrevious() -> Bool {
-        while let pid = history.first {
-            guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
-                history.removeFirst()
-                continue
-            }
-            let axApp = AXUIElementCreateApplication(pid)
-            var focused: CFTypeRef?
-            if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focused) == .success,
-               let win = focused {
-                // Raise just that window — it becomes key without dragging the
-                // app's other windows forward.
-                AXUIElementPerformAction(win as! AXUIElement, kAXRaiseAction as CFString)
-            }
-            // We're a BACKGROUND app here, so NSRunningApplication.activate()
-            // alone is ignored under macOS 14+ cooperative activation. The AX
-            // frontmost attribute is honored for Accessibility-trusted apps.
-            AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
-            app.activate(options: [.activateIgnoringOtherApps])
-            log("switcher: → \(app.localizedName ?? "pid \(pid)")")
-            return true
+    private func focusedEntry(of pid: pid_t) -> Entry? {
+        let axApp = AXUIElementCreateApplication(pid)
+        var f: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &f) == .success,
+              let f else { return nil }
+        var wid = CGWindowID(0)
+        guard _AXUIElementGetWindow(f as! AXUIElement, &wid) == .success else { return nil }
+        return Entry(pid: pid, windowID: wid)
+    }
+
+    private func noteFocusChange() {
+        guard !suppress else { return }
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              let entry = focusedEntry(of: pid), entry != current else { return }
+        if let cur = current {
+            history.removeAll { $0 == cur }
+            history.insert(cur, at: 0)
         }
-        log("switcher: no previous window to switch to")
-        return false
+        history.removeAll { $0 == entry }
+        if history.count > 20 { history.removeLast() }
+        current = entry
+    }
+
+    // MARK: Cycling (⌘Tab held session)
+
+    func cycle(back: Bool) {
+        // Safety valve: if a ⌘-release was missed (sleep, tap hiccup), a stale
+        // session would freeze history tracking forever.
+        if session != nil, Date().timeIntervalSince(lastCycleAt) > 4 { endCycle() }
+        lastCycleAt = Date()
+
+        if session == nil {
+            noteFocusChange()  // make sure `current` reflects reality at session start
+            guard let cur = current else {
+                log("switcher: nothing to cycle to")
+                return
+            }
+            var snap = [cur] + history
+            let actual = NSWorkspace.shared.frontmostApplication.flatMap { focusedEntry(of: $0.processIdentifier) }
+            if actual != cur {
+                // The frontmost app has no trackable window (e.g. window-less
+                // Finder) — from here, `current` IS the last window, so a dead
+                // sentinel fills slot 0 and the first Tab lands on `current`.
+                snap.insert(Entry(pid: -1, windowID: 0), at: 0)
+            }
+            guard snap.count > 1 else {
+                log("switcher: nothing to cycle to")
+                return
+            }
+            session = snap
+            sessionIndex = 0
+            suppress = true
+        }
+        guard var snap = session, snap.count > 1 else { return }
+        var attempts = snap.count
+        while attempts > 0 {
+            attempts -= 1
+            sessionIndex = (sessionIndex + (back ? -1 : 1) + snap.count) % snap.count
+            let target = snap[sessionIndex]
+            if raise(target) { break }
+            // Window is gone — drop it and keep walking in the same direction.
+            snap.remove(at: sessionIndex)
+            if back { sessionIndex = sessionIndex % max(snap.count, 1) }
+            else { sessionIndex = (sessionIndex - 1 + max(snap.count, 1)) % max(snap.count, 1) }
+            if snap.count < 2 { break }
+        }
+        session = snap
+    }
+
+    /// ⌘ released: commit the landing window as most-recent and resume tracking.
+    func endCycle() {
+        guard let snap = session, snap.indices.contains(sessionIndex) else {
+            session = nil
+            suppress = false
+            return
+        }
+        let landed = snap[sessionIndex]
+        session = nil
+        suppress = false
+        if let cur = current, cur != landed {
+            history.removeAll { $0 == cur }
+            history.insert(cur, at: 0)
+        }
+        history.removeAll { $0 == landed }
+        if history.count > 20 { history.removeLast() }
+        current = landed
+    }
+
+    /// Raise a specific window and bring its app frontmost. Returns false if
+    /// the window no longer exists.
+    private func raise(_ entry: Entry) -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated,
+              let win = WindowManager.axWindow(pid: entry.pid, windowID: entry.windowID) else {
+            return false
+        }
+        AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+        // Background app activating another app: NSRunningApplication.activate()
+        // alone is ignored under macOS 14+ cooperative activation; the AX
+        // frontmost attribute is honored for Accessibility-trusted apps.
+        let axApp = AXUIElementCreateApplication(entry.pid)
+        AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        app.activate(options: [.activateIgnoringOtherApps])
+        log("switcher: → \(app.localizedName ?? "pid \(entry.pid)") window \(entry.windowID)")
+        return true
     }
 }

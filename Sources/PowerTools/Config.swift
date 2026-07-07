@@ -200,8 +200,8 @@ struct Config: Codable {
     var windowPalette: Bool = true
     /// Record text/image copies; hold + H opens the recent-clips palette (Win+V).
     var clipboardHistory: Bool = true
-    /// ⌘` jumps to the last window you used across apps (replaces macOS's
-    /// same-app-only window cycling). ⇧⌘` is never touched.
+    /// ⌘Tab works like Windows Alt-Tab: window-level MRU switching across apps
+    /// (replaces the macOS app switcher; ⇧⌘Tab walks backwards). ⌘` untouched.
     var lastWindowSwitch: Bool = true
 
     init() {}

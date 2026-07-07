@@ -25,7 +25,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let snapAssistCheck = NSButton(checkboxWithTitle: "Snap Assist — offer other windows to fill the gap after a snap", target: nil, action: nil)
     private let windowPaletteCheck = NSButton(checkboxWithTitle: "Snap palette (hold hotkey + W)", target: nil, action: nil)
     private let clipboardHistoryCheck = NSButton(checkboxWithTitle: "Clipboard history — hold hotkey + H to paste a recent copy or image", target: nil, action: nil)
-    private let lastWindowCheck = NSButton(checkboxWithTitle: "⌘` jumps to the last window you used — across apps (⇧⌘` untouched)", target: nil, action: nil)
+    private let lastWindowCheck = NSButton(checkboxWithTitle: "⌘⇥ works like Windows Alt-Tab — last window first, per window not app", target: nil, action: nil)
     private let tabView = NSTabView()
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
@@ -170,7 +170,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         dataBtn.bezelStyle = .rounded
         let quitBtn = NSButton(title: "Quit Power Tools", target: NSApp, action: #selector(NSApplication.terminate(_:)))
         quitBtn.bezelStyle = .rounded
-        let version = NSTextField(labelWithString: "Local-only · no network · v1.4.0")
+        let version = NSTextField(labelWithString: "Local-only · no network · v1.5.0")
         version.font = .systemFont(ofSize: 11)
         version.textColor = .tertiaryLabelColor
         let buttons = NSStackView(views: [chatBtn, dataBtn, quitBtn])
@@ -376,7 +376,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         Release with no key to dictate normally.
 
-        Anytime (no hotkey): ⌘` jumps to the last window you used — across apps.
+        Anytime: ⌘⇥ = last WINDOW first (Alt-Tab style) — keep ⌘ held and tap ⇥ to walk deeper, ⇧⌘⇥ backwards.
         """
     }
 

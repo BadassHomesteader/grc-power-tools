@@ -125,8 +125,10 @@ final class AppController {
                 self.openAdvancedPaste()
             case .clipboardHistory:
                 self.openClipboardHistory()
-            case .lastWindow:
-                _ = self.windowSwitcher.switchToPrevious()
+            case .cycleWindow(let back):
+                self.windowSwitcher.cycle(back: back)
+            case .cycleEnd:
+                self.windowSwitcher.endCycle()
             case .findMouse:
                 self.interruptDictation()
                 self.findMouse.flash()

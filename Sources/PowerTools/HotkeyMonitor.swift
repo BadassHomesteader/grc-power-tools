@@ -32,14 +32,18 @@ final class HotkeyMonitor {
         case advancedPaste                // paste-as palette
         case clipboardHistory             // recent-copies palette (Win+V)
         case findMouse                    // spotlight the cursor
-        case lastWindow                   // ⌘` — last window across apps
+        case cycleWindow(back: Bool)      // ⌘Tab / ⇧⌘Tab — Alt-Tab-style window MRU
+        case cycleEnd                     // ⌘ released — commit the cycle
     }
 
     var handler: ((Callback) -> Void)?
-    /// Live-toggleable: when true, exact ⌘` is intercepted for the cross-app
-    /// last-window switch. Plain Bool (same discipline as `held` — set on main,
-    /// read on the tap thread; a torn read is impossible for a Bool here).
+    /// Live-toggleable: when true, ⌘Tab / ⇧⌘Tab are intercepted for the
+    /// Alt-Tab-style window switcher (replacing the macOS app switcher).
+    /// Plain Bool (same discipline as `held` — set on main, read on the tap
+    /// thread; a torn read is impossible for a Bool here).
     var lastWindowSwitch = true
+    /// True between the first intercepted ⌘Tab and the ⌘ release.
+    private var cycling = false
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -79,7 +83,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_W: Int64 = 13
     private static let kVK_ANSI_H: Int64 = 4
     private static let kVK_ANSI_3: Int64 = 20
-    private static let kVK_ANSI_Grave: Int64 = 50
+    private static let kVK_Tab: Int64 = 48
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
     private static let kVK_RightArrow: Int64 = 124
@@ -177,19 +181,24 @@ final class HotkeyMonitor {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
-        // ⌘` → last window across apps (when enabled). Exact-match only: ⇧⌘`,
-        // ⌥⌘` etc. pass through to the system untouched. Auto-repeat swallowed
-        // but not dispatched, so holding the key doesn't ping-pong windows.
-        if lastWindowSwitch, keyCode == Self.kVK_ANSI_Grave,
-           flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]) == .maskCommand {
-            if type == .keyDown {
+        // ⌘Tab / ⇧⌘Tab → Alt-Tab-style window switcher (when enabled). This
+        // suppresses the macOS app switcher. ⌃/⌥ combos pass through untouched.
+        // Auto-repeat swallowed but not dispatched (tap Tab to step).
+        if lastWindowSwitch, keyCode == Self.kVK_Tab, type == .keyDown {
+            let mods = flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate])
+            if mods == .maskCommand || mods == [.maskCommand, .maskShift] {
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                    cycling = true
                     swallowedKeyUps.insert(keyCode)
-                    dispatch(.lastWindow)
+                    dispatch(.cycleWindow(back: mods.contains(.maskShift)))
                 }
                 return nil
             }
-            // keyUp handled by the swallowedKeyUps path below.
+        }
+        // ⌘ released while a cycle session is open → commit it. Not consumed.
+        if cycling, type == .flagsChanged, !flags.contains(.maskCommand) {
+            cycling = false
+            dispatch(.cycleEnd)
         }
 
         switch hotkey {
