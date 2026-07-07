@@ -239,6 +239,9 @@ struct Config: Codable {
     /// ⌘Tab works like Windows Alt-Tab: window-level MRU switching across apps
     /// (replaces the macOS app switcher; ⇧⌘Tab walks backwards). ⌘` untouched.
     var lastWindowSwitch: Bool = true
+    /// Mute the speakers while the dictation key is held, so a call or music
+    /// playing through them can't bleed into the transcript. Restored on release.
+    var muteWhileDictating: Bool = true
 
     /// Quick Capture (hold hotkey + N): POST a typed/dictated line to any HTTP
     /// endpoint — a personal todo app, an n8n webhook, etc. Nothing app-specific
@@ -256,7 +259,7 @@ struct Config: Codable {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
         case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
-        case windowPalette, clipboardHistory, lastWindowSwitch
+        case windowPalette, clipboardHistory, lastWindowSwitch, muteWhileDictating
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
     }
@@ -284,6 +287,7 @@ struct Config: Codable {
         windowPalette = try c.decodeIfPresent(Bool.self, forKey: .windowPalette) ?? true
         clipboardHistory = try c.decodeIfPresent(Bool.self, forKey: .clipboardHistory) ?? true
         lastWindowSwitch = try c.decodeIfPresent(Bool.self, forKey: .lastWindowSwitch) ?? true
+        muteWhileDictating = try c.decodeIfPresent(Bool.self, forKey: .muteWhileDictating) ?? true
         captureEndpoint = try c.decodeIfPresent(String.self, forKey: .captureEndpoint) ?? ""
         captureAuthHeader = try c.decodeIfPresent(String.self, forKey: .captureAuthHeader) ?? "X-Api-Key"
         captureBodyTemplate = try c.decodeIfPresent(String.self, forKey: .captureBodyTemplate) ?? "{\"title\":\"%TEXT%\"}"

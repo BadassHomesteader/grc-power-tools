@@ -26,6 +26,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let windowPaletteCheck = NSButton(checkboxWithTitle: "Snap palette (hold hotkey + W)", target: nil, action: nil)
     private let clipboardHistoryCheck = NSButton(checkboxWithTitle: "Clipboard history — hold hotkey + H to paste a recent copy or image", target: nil, action: nil)
     private let lastWindowCheck = NSButton(checkboxWithTitle: "⌘⇥ works like Windows Alt-Tab — last window first, per window not app", target: nil, action: nil)
+    private let muteDictationCheck = NSButton(checkboxWithTitle: "Mute speakers while dictating — keeps calls & music out of the transcript", target: nil, action: nil)
     private let tabView = NSTabView()
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
@@ -125,6 +126,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         clipboardHistoryCheck.action = #selector(clipboardHistoryToggled)
         lastWindowCheck.target = self
         lastWindowCheck.action = #selector(lastWindowToggled)
+        muteDictationCheck.target = self
+        muteDictationCheck.action = #selector(muteDictationToggled)
 
         tabView.addTabViewItem(tab("General", generalTab()))
         tabView.addTabViewItem(tab("Dictation", dictationTab()))
@@ -186,7 +189,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         dataBtn.bezelStyle = .rounded
         let quitBtn = NSButton(title: "Quit Power Tools", target: NSApp, action: #selector(NSApplication.terminate(_:)))
         quitBtn.bezelStyle = .rounded
-        let version = NSTextField(labelWithString: "Local-only · no network · v1.5.0")
+        let version = NSTextField(labelWithString: "Local-only · no network · v1.5.1")
         version.font = .systemFont(ofSize: 11)
         version.textColor = .tertiaryLabelColor
         let buttons = NSStackView(views: [chatBtn, dataBtn, quitBtn])
@@ -206,6 +209,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                 formRow("Bar position", positionPopup),
                 formRow("Theme", appearancePopup),
                 formRow("AI (+A)", aiModePopup),
+                muteDictationCheck,
             ], width: 480),
         ])
     }
@@ -418,6 +422,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         windowPaletteCheck.state = config.windowPalette ? .on : .off
         clipboardHistoryCheck.state = config.clipboardHistory ? .on : .off
         lastWindowCheck.state = config.lastWindowSwitch ? .on : .off
+        muteDictationCheck.state = config.muteWhileDictating ? .on : .off
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
@@ -641,6 +646,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func clipboardHistoryToggled() {
         config.clipboardHistory = (clipboardHistoryCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func muteDictationToggled() {
+        config.muteWhileDictating = (muteDictationCheck.state == .on)
         config.save()
         onConfigChange(config)
     }

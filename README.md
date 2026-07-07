@@ -120,6 +120,7 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 
 **Text & AI**
 - **hold + speak + release** → dictation (as normal).
+- **On a Zoom/Teams call?** The speakers auto-mute for exactly as long as you hold the key, then restore — so the meeting audio never bleeds through the mic into your transcript. Toggle in Settings ▸ Dictation.
 - **hold + A**, then speak → **AI chat**: what you say opens a streaming Claude chat window. Set the mode in Settings — *native* (in-app window), *browser* (claude.ai tab), or *both* (a native window with a “claude.ai ↗” button).
 - **hold + T** → **text (OCR)**: drag a screen region, the recognized text is copied to your clipboard. Tables come back **tab-separated** so they paste into Excel/Sheets/Numbers as a grid. Fully local via Apple Vision.
 - **hold + S** → **screenshot**: drag a region, the image is copied to your clipboard.

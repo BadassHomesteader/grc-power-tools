@@ -34,6 +34,7 @@ final class AppController {
     private let advancedPaste = AdvancedPaste()
     private let quickCapture = QuickCapture()
     private let findMouse = FindMouse()
+    private let ducker = AudioDucker()
     private let windowPalette = WindowPalette()
     private let clipboardPalette = ClipboardPalette()
     private let windowSwitcher = WindowSwitcher()
@@ -182,6 +183,9 @@ final class AppController {
         onStateChange?(.recording)
         recordingStarted = Date()
         overlay.showRecording()
+        // On a call (or with music playing), the speakers feed straight back
+        // into the mic — mute output for exactly the duration of the hold.
+        if config.muteWhileDictating { ducker.duck() }
         if config.polish == .apple { polisher.prewarm() }
 
         guard let format = audio.currentFormat, format.sampleRate > 0 else {
@@ -228,6 +232,7 @@ final class AppController {
 
     private func keyUp(ai: Bool = false) {
         guard state == .recording, let utt = utterance else { return }
+        ducker.restore()  // speakers back the instant the key lifts
         maxUtteranceTimer?.invalidate()
         let gen = cycle
         let heldMs = Int((Date().timeIntervalSince(recordingStarted ?? Date())) * 1000)
@@ -349,6 +354,7 @@ final class AppController {
     /// hold). A cycle already in .processing is protected by the finish watchdog.
     private func cancel() {
         guard state == .recording else { return }
+        ducker.restore()
         maxUtteranceTimer?.invalidate()
         audio.endRecording()
         let utt = utterance
@@ -363,6 +369,7 @@ final class AppController {
 
     private func fail(_ message: String) {
         log("controller: \(message)")
+        ducker.restore()
         maxUtteranceTimer?.invalidate()
         audio.endRecording()
         utterance = nil
