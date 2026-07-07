@@ -168,6 +168,42 @@ struct Config: Codable {
         }
     }
 
+    /// A Quick Capture "connection": hold the hotkey + `leaderKey` opens a capture
+    /// panel that POSTs to `endpoint`. Each has its own token (Keychain account
+    /// `capture:<id>`). Nothing app-specific — a connection can point anywhere.
+    struct Connection: Codable {
+        var id: String
+        var name: String
+        var leaderKey: String   // single letter, e.g. "N"; case-insensitive
+        var endpoint: String
+        var authHeader: String
+        var bodyTemplate: String
+
+        var tokenAccount: String { "capture:\(id)" }
+
+        init(id: String, name: String, leaderKey: String, endpoint: String,
+             authHeader: String = "X-Api-Key", bodyTemplate: String = "{\"title\":\"%TEXT%\"}") {
+            self.id = id; self.name = name; self.leaderKey = leaderKey.uppercased()
+            self.endpoint = endpoint; self.authHeader = authHeader; self.bodyTemplate = bodyTemplate
+        }
+
+        private enum CodingKeys: String, CodingKey { case id, name, leaderKey, endpoint, authHeader, bodyTemplate }
+
+        // Lenient: a partial/legacy element decodes with defaults instead of throwing.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+            name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Connection"
+            leaderKey = (try c.decodeIfPresent(String.self, forKey: .leaderKey) ?? "").uppercased()
+            endpoint = try c.decodeIfPresent(String.self, forKey: .endpoint) ?? ""
+            authHeader = try c.decodeIfPresent(String.self, forKey: .authHeader) ?? "X-Api-Key"
+            bodyTemplate = try c.decodeIfPresent(String.self, forKey: .bodyTemplate) ?? "{\"title\":\"%TEXT%\"}"
+        }
+    }
+
+    /// Quick Capture connections. Each has its own hotkey leader letter.
+    var connections: [Connection] = []
+
     var hotkey: Hotkey = .optionShift
     var polish: PolishMode = .apple
     var localeIdentifier: String = "en_US"
@@ -222,6 +258,7 @@ struct Config: Codable {
         case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
         case windowPalette, clipboardHistory, lastWindowSwitch
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
+        case connections
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -250,6 +287,24 @@ struct Config: Codable {
         captureEndpoint = try c.decodeIfPresent(String.self, forKey: .captureEndpoint) ?? ""
         captureAuthHeader = try c.decodeIfPresent(String.self, forKey: .captureAuthHeader) ?? "X-Api-Key"
         captureBodyTemplate = try c.decodeIfPresent(String.self, forKey: .captureBodyTemplate) ?? "{\"title\":\"%TEXT%\"}"
+        // try? so a malformed element can never wipe the whole config on load.
+        connections = (try? c.decodeIfPresent([Connection].self, forKey: .connections)) ?? []
+    }
+
+    /// One-time migration: fold the pre-multi-connection single fields into
+    /// connections[]. Returns true if anything changed (so the caller persists).
+    mutating func migrateLegacyCapture() -> Bool {
+        guard connections.isEmpty, !captureEndpoint.isEmpty else { return false }
+        let conn = Connection(id: "default", name: "Todo", leaderKey: "N",
+                              endpoint: captureEndpoint, authHeader: captureAuthHeader,
+                              bodyTemplate: captureBodyTemplate)
+        connections = [conn]
+        // Move the token from the legacy account to the per-connection one.
+        if let tok = Keychain.get("capture"), Keychain.get(conn.tokenAccount) == nil {
+            Keychain.set(tok, account: conn.tokenAccount)
+        }
+        captureEndpoint = ""   // consumed; connections[] is now the source of truth
+        return true
     }
 
     static var appSupportDir: URL {
@@ -263,11 +318,12 @@ struct Config: Codable {
 
     static func load() -> Config {
         guard let data = try? Data(contentsOf: configURL),
-              let cfg = try? JSONDecoder().decode(Config.self, from: data) else {
+              var cfg = try? JSONDecoder().decode(Config.self, from: data) else {
             let cfg = Config()
             cfg.save()
             return cfg
         }
+        if cfg.migrateLegacyCapture() { cfg.save() }
         return cfg
     }
 

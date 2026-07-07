@@ -200,7 +200,7 @@ case "quickcapture-preview":
     let out = args.count >= 2 ? args[1] : "quickcapture-preview.png"
     let dark = !(args.count >= 3 && args[2] == "light")
     MainActor.assumeIsolated {
-        let v = QuickCaptureView(dark: dark, prefill: "Email the Q3 vendor list to Dana")
+        let v = QuickCaptureView(dark: dark, title: "Todo", prefill: "Email the Q3 vendor list to Dana")
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
         v.layoutSubtreeIfNeeded()  // the input field is Auto Layout; realize it before caching
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }

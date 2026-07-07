@@ -21,6 +21,7 @@ final class AppController {
             chat?.updateConfig(config)
             clipboardWatcher.enabled = config.clipboardHistory
             hotkey?.lastWindowSwitch = config.lastWindowSwitch
+            hotkey?.setConnectionLeaders(Self.leaderMap(config.connections))
         }
     }
 
@@ -86,6 +87,7 @@ final class AppController {
 
         let monitor = HotkeyMonitor(hotkey: config.hotkey)
         monitor.lastWindowSwitch = config.lastWindowSwitch
+        monitor.setConnectionLeaders(Self.leaderMap(config.connections))
         monitor.handler = { [weak self] event in
             guard let self else { return }
             switch event {
@@ -127,8 +129,8 @@ final class AppController {
                 self.openWindowPalette()
             case .advancedPaste:
                 self.openAdvancedPaste()
-            case .quickCapture:
-                self.openQuickCapture()
+            case .quickCapture(let connId):
+                self.openQuickCapture(connectionId: connId)
             case .clipboardHistory:
                 self.openClipboardHistory()
             case .cycleWindow(let back):
@@ -486,15 +488,25 @@ final class AppController {
         }
     }
 
-    /// hold + N: Quick Capture. Open a small input panel; the typed/dictated line
-    /// is POSTed to the user's configured connection (Config.capture*). No endpoint
-    /// set → a hint toast. The frontmost app is remembered so focus returns to it.
-    private func openQuickCapture() {
+    /// Build the tap's keyCode→connectionId leader map from the configured
+    /// connections (skipping any with an unusable leader letter).
+    static func leaderMap(_ conns: [Config.Connection]) -> [Int64: String] {
+        var m: [Int64: String] = [:]
+        for c in conns where !c.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let kc = HotkeyMonitor.keyCode(forLetter: c.leaderKey) { m[kc] = c.id }
+        }
+        return m
+    }
+
+    /// hold + <leader>: Quick Capture for a specific connection. Open a small input
+    /// panel; the typed/dictated line is POSTed to that connection's endpoint. The
+    /// frontmost app is remembered so focus returns to it.
+    private func openQuickCapture(connectionId: String) {
         interruptDictation()
         overlay.hide()
-        let endpoint = config.captureEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !endpoint.isEmpty else {
-            overlay.showError("Set up Quick Capture in Settings ▸ Connections")
+        guard let conn = config.connections.first(where: { $0.id == connectionId }),
+              !conn.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            overlay.showError("Set up this connection in Settings ▸ Connections")
             return
         }
         let priorApp = NSWorkspace.shared.frontmostApplication
@@ -502,34 +514,33 @@ final class AppController {
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
         quickCapture.present(
-            dark: config.appearance.isDark, screen: screen,
-            onSubmit: { text in self.sendCapture(text, endpoint: endpoint, restore: priorApp) },
+            dark: config.appearance.isDark, screen: screen, title: conn.name,
+            onSubmit: { text in self.sendCapture(text, connection: conn, restore: priorApp) },
             onCancel: { priorApp?.activate() }
         )
     }
 
-    /// POST the captured text. On success, a brief toast and focus returns to the
-    /// app you were in. On failure, re-open the panel pre-filled so the text isn't
-    /// lost — no automatic retry (the endpoint has no idempotency key).
-    private func sendCapture(_ text: String, endpoint: String, restore: NSRunningApplication?) {
-        let header = config.captureAuthHeader.trimmingCharacters(in: .whitespacesAndNewlines)
-        let token = Keychain.get("capture") ?? ""
-        let template = config.captureBodyTemplate
+    /// POST the captured text to a connection. On success, a green toast and focus
+    /// returns to the app you were in. On failure, re-open the panel pre-filled so
+    /// the text isn't lost — no automatic retry (the endpoint has no idempotency key).
+    private func sendCapture(_ text: String, connection conn: Config.Connection, restore: NSRunningApplication?) {
+        let header = conn.authHeader.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = Keychain.get(conn.tokenAccount) ?? ""
         overlay.showProcessing()
         Task {
             do {
-                try await CloudPolish.postCapture(text: text, endpoint: endpoint, header: header,
-                                                  token: token, bodyTemplate: template)
+                try await CloudPolish.postCapture(text: text, endpoint: conn.endpoint, header: header,
+                                                  token: token, bodyTemplate: conn.bodyTemplate)
                 await MainActor.run { self.overlay.showSuccess("Captured  \(text)"); restore?.activate() }
             } catch {
                 await MainActor.run {
-                    self.overlay.showError("Quick Capture failed — check Settings ▸ Connections")
+                    self.overlay.showError("\(conn.name) capture failed — check Settings ▸ Connections")
                     let mouse = NSEvent.mouseLocation
                     let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
                     if let screen {
                         self.quickCapture.present(
-                            dark: self.config.appearance.isDark, screen: screen, prefill: text,
-                            onSubmit: { t in self.sendCapture(t, endpoint: endpoint, restore: restore) },
+                            dark: self.config.appearance.isDark, screen: screen, title: conn.name, prefill: text,
+                            onSubmit: { t in self.sendCapture(t, connection: conn, restore: restore) },
                             onCancel: { restore?.activate() }
                         )
                     }

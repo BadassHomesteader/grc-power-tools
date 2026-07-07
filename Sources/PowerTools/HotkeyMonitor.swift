@@ -31,7 +31,7 @@ final class HotkeyMonitor {
         case windowPalette                // Moom-style snap palette
         case advancedPaste                // paste-as palette
         case clipboardHistory             // recent-copies palette (Win+V)
-        case quickCapture                 // send a line to a configured connection
+        case quickCapture(connectionId: String)  // send a line to a configured connection
         case findMouse                    // spotlight the cursor
         case cycleWindow(back: Bool)      // ⌘Tab / ⇧⌘Tab — Alt-Tab-style window MRU
         case cycleEnd                     // ⌘ released — commit the cycle
@@ -43,6 +43,29 @@ final class HotkeyMonitor {
     /// Plain Bool (same discipline as `held` — set on main, read on the tap
     /// thread; a torn read is impossible for a Bool here).
     var lastWindowSwitch = true
+
+    /// Quick Capture leaders: keyCode → connection id, user-assigned per connection.
+    /// A dictionary isn't safe to read on the tap thread while main writes it, so it
+    /// is guarded by a lock (leader edits are rare; the read is one lookup per tap).
+    private var _connectionLeaders: [Int64: String] = [:]
+    private let leadersLock = NSLock()
+    func setConnectionLeaders(_ map: [Int64: String]) {
+        leadersLock.lock(); _connectionLeaders = map; leadersLock.unlock()
+    }
+    private func connectionLeader(for keyCode: Int64) -> String? {
+        leadersLock.lock(); defer { leadersLock.unlock() }; return _connectionLeaders[keyCode]
+    }
+
+    /// Virtual keycode for an A–Z letter (nil for anything else). Used to translate
+    /// a connection's user-chosen leader letter into the tap's keycode space.
+    static func keyCode(forLetter letter: String) -> Int64? {
+        guard let ch = letter.uppercased().first else { return nil }
+        let map: [Character: Int64] = [
+            "A": 0, "B": 11, "C": 8, "D": 2, "E": 14, "F": 3, "G": 5, "H": 4, "I": 34,
+            "J": 38, "K": 40, "L": 37, "M": 46, "N": 45, "O": 31, "P": 35, "Q": 12,
+            "R": 15, "S": 1, "T": 17, "U": 32, "V": 9, "W": 13, "X": 7, "Y": 16, "Z": 6]
+        return map[ch]
+    }
     /// True between the first intercepted ⌘Tab and the ⌘ release.
     private var cycling = false
 
@@ -62,7 +85,7 @@ final class HotkeyMonitor {
     /// keys (e.g. two arrows) are each tracked, not just the last one.
     private var swallowedKeyUps: Set<Int64> = []
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, clipboardHistory, findMouse, quickCapture }
+    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, clipboardHistory, findMouse, quickCapture(String) }
     private var pending: Pending = .none
     /// Set once an arrow/Return moves a window this hold, so release ends the
     /// window session instead of dispatching a dictation.
@@ -81,7 +104,6 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_V: Int64 = 9
     private static let kVK_ANSI_P: Int64 = 35
     private static let kVK_ANSI_M: Int64 = 46
-    private static let kVK_ANSI_N: Int64 = 45
     private static let kVK_ANSI_W: Int64 = 13
     private static let kVK_ANSI_H: Int64 = 4
     private static let kVK_ANSI_3: Int64 = 20
@@ -290,10 +312,6 @@ final class HotkeyMonitor {
                 log("hotkey: +M leader armed (find mouse)")
                 pending = .findMouse; swallowedKeyUps.insert(keyCode)
                 return nil
-            case Self.kVK_ANSI_N:
-                log("hotkey: +N leader armed (quick capture)")
-                pending = .quickCapture; swallowedKeyUps.insert(keyCode)
-                return nil // the input panel opens on release, so a held modifier can't fight typing
             case Self.kVK_ANSI_3:
                 // Grid draw mode. Enter windowMode so release ends the session (no
                 // dictation); the grid overlay itself takes over via the mouse.
@@ -324,6 +342,13 @@ final class HotkeyMonitor {
                 dispatch(.window(move))
                 return nil
             default:
+                // A user-assigned Quick Capture connection leader (e.g. +N, +E).
+                // Armed here, opens on release like the other pending leaders.
+                if let connId = connectionLeader(for: keyCode) {
+                    log("hotkey: connection leader armed (\(connId))")
+                    pending = .quickCapture(connId); swallowedKeyUps.insert(keyCode)
+                    return nil
+                }
                 // During a window session (grid/palette open) other keys pass
                 // through untouched — digits reach the palette's local monitor —
                 // and must NOT dispatch a cancel that would race the palette.
@@ -375,7 +400,7 @@ final class HotkeyMonitor {
                 case .advancedPaste: dispatch(.advancedPaste)
                 case .clipboardHistory: dispatch(.clipboardHistory)
                 case .findMouse: dispatch(.findMouse)
-                case .quickCapture: dispatch(.quickCapture)
+                case .quickCapture(let id): dispatch(.quickCapture(connectionId: id))
                 }
             }
             interrupted = false

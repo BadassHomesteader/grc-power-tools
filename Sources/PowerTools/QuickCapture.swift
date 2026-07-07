@@ -11,10 +11,10 @@ final class QuickCapture {
     private var window: NSWindow?
     private var keyMonitor: Any?
 
-    func present(dark: Bool, screen: NSScreen, prefill: String = "",
+    func present(dark: Bool, screen: NSScreen, title: String = "Quick Capture", prefill: String = "",
                  onSubmit: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
         dismiss()
-        let view = QuickCaptureView(dark: dark, prefill: prefill)
+        let view = QuickCaptureView(dark: dark, title: title, prefill: prefill)
         let size = view.fittingSize
         let vf = screen.visibleFrame
         let origin = NSPoint(x: vf.midX - size.width / 2, y: vf.midY - size.height / 2)
@@ -73,12 +73,14 @@ final class QuickCaptureView: NSView, NSTextFieldDelegate {
     var onSubmit: ((String) -> Void)?
     var onCancel: (() -> Void)?
     private let dark: Bool
+    private let title: String
 
     private static let width: CGFloat = 460
     private static let height: CGFloat = 118
 
-    init(dark: Bool, prefill: String) {
+    init(dark: Bool, title: String, prefill: String) {
         self.dark = dark
+        self.title = title
         super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.height))
         setup(prefill: prefill)
     }
@@ -115,7 +117,8 @@ final class QuickCaptureView: NSView, NSTextFieldDelegate {
     override func draw(_ dirtyRect: NSRect) {
         NSBezierPath(roundedRect: bounds, xRadius: 16, yRadius: 16).setClip()
         bg.setFill(); bounds.fill()
-        ("Quick Capture" as NSString).draw(at: NSPoint(x: 20, y: 15),
+        let heading = title.isEmpty ? "Quick Capture" : "Quick Capture · \(title)"
+        (heading as NSString).draw(at: NSPoint(x: 20, y: 15),
             withAttributes: [.font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: fg])
         ("↵ to send  ·  esc to cancel" as NSString).draw(at: NSPoint(x: 20, y: Self.height - 25),
             withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: dim])

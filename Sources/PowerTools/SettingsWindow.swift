@@ -40,10 +40,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let claudeModelField = NSComboBox()
     private let openaiModelField = NSComboBox()
 
+    // Quick Capture connections: a table + an editor for the selected/new one.
+    private let connTable = NSTableView()
+    private var connEntries: [Config.Connection] = []
+    private var editingConnId: String?   // id being edited (new one gets a fresh UUID)
+    private let connNameField = NSTextField()
+    private let connLeaderPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let captureEndpointField = NSTextField()
     private let captureHeaderField = NSTextField()
     private let captureTokenField = NSSecureTextField()
     private let captureBodyField = NSTextField()
+    // Leader letters offered for connections — excludes ones already used by other
+    // tools (A T S G C X V P M W H) and non-letters (3, arrows, ⏎, ⇥).
+    private static let connLeaderLetters = ["N","E","B","D","F","I","J","K","L","O","Q","R","U","Y","Z"]
 
     init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void, onOpenChat: @escaping () -> Void = {}) {
         self.store = store
@@ -62,6 +71,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         super.init(window: window)
         window.delegate = self
         buildUI()
+        connEntries = config.connections   // so the table has rows before show() runs (also used by previews)
         reloadDictionary()
         Task { await refreshStatus() }
     }
@@ -250,15 +260,37 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     private func connectionsTab() -> NSView {
-        let note = NSTextField(labelWithString: "Quick Capture (hold your hotkey + N): type or dictate a line and it's POSTed to any endpoint you choose — a personal todo app, an n8n webhook, anything. %TEXT% in the body is replaced with what you typed (JSON-escaped). The token is stored in a private, owner-only file like your AI keys; leave the header blank to send no auth. Endpoint blank = off.")
+        let note = NSTextField(labelWithString: "Quick Capture: hold your hotkey + a connection's letter to pop up an input box, then type or dictate a line and it's POSTed to that connection — a todo app, an n8n webhook, anything. Add as many as you like, each on its own key. %TEXT% in the body becomes what you typed (JSON-escaped); %TODAY% becomes today's date. Tokens are stored in a private, owner-only file like your AI keys; leave the header blank for no auth.")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         note.lineBreakMode = .byWordWrapping
-        note.preferredMaxLayoutWidth = 500
+        note.preferredMaxLayoutWidth = 520
+
+        let nameCol = NSTableColumn(identifier: .init("connName")); nameCol.title = "Name"; nameCol.width = 120
+        let keyCol = NSTableColumn(identifier: .init("connKey")); keyCol.title = "Key"; keyCol.width = 40
+        let epCol = NSTableColumn(identifier: .init("connEndpoint")); epCol.title = "Endpoint"; epCol.width = 320
+        connTable.addTableColumn(nameCol); connTable.addTableColumn(keyCol); connTable.addTableColumn(epCol)
+        connTable.dataSource = self
+        connTable.delegate = self
+        connTable.usesAlternatingRowBackgroundColors = true
+        connTable.rowHeight = 22
+        let scroll = NSScrollView()
+        scroll.documentView = connTable
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(equalToConstant: 130).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 520).isActive = true
+
+        let newBtn = NSButton(title: "New", target: self, action: #selector(newConnection)); newBtn.bezelStyle = .rounded
+        let removeBtn = NSButton(title: "Remove", target: self, action: #selector(removeConnection)); removeBtn.bezelStyle = .rounded
+        let listButtons = NSStackView(views: [newBtn, removeBtn]); listButtons.spacing = 8
+
+        for l in Self.connLeaderLetters { connLeaderPopup.addItem(withTitle: l) }
+        connNameField.widthAnchor.constraint(equalToConstant: 200).isActive = true
+        connNameField.placeholderString = "Todo"
         for f in [captureEndpointField, captureHeaderField, captureBodyField] {
             f.widthAnchor.constraint(equalToConstant: 320).isActive = true
-            f.target = self
-            f.action = #selector(saveCaptureSettings)
         }
         captureTokenField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         captureTokenField.target = self
@@ -266,16 +298,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         captureEndpointField.placeholderString = "https://your-app.example.com/api/tasks"
         captureHeaderField.placeholderString = "X-Api-Key"
         captureBodyField.placeholderString = "{\"title\":\"%TEXT%\"}"
-        let saveToken = NSButton(title: "Save", target: self, action: #selector(saveCaptureToken))
-        saveToken.bezelStyle = .rounded
+        let saveToken = NSButton(title: "Save token", target: self, action: #selector(saveCaptureToken)); saveToken.bezelStyle = .rounded
         let tokenRow = NSStackView(views: [captureTokenField, saveToken]); tokenRow.spacing = 8
+        let saveConnBtn = NSButton(title: "Save connection", target: self, action: #selector(saveConnection)); saveConnBtn.bezelStyle = .rounded
+
         return vstack([
-            section("Quick Capture · send a line to a connection", [
-                note,
+            section("Connections", [note, scroll, listButtons], width: 560),
+            section("Edit connection", [
+                formRow("Name", connNameField),
+                formRow("Hotkey", connLeaderPopup),
                 formRow("Endpoint", captureEndpointField),
                 formRow("Auth header", captureHeaderField),
                 formRow("Token", tokenRow),
                 formRow("Body", captureBodyField),
+                saveConnBtn,
             ], width: 560),
         ])
     }
@@ -388,11 +424,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         openaiModelField.stringValue = config.openaiModel
         claudeKeyField.placeholderString = Keychain.has("claude") ? "•••••• saved — paste to replace" : "sk-ant-…"
         openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
-        captureEndpointField.stringValue = config.captureEndpoint
-        captureHeaderField.stringValue = config.captureAuthHeader
-        captureBodyField.stringValue = config.captureBodyTemplate
-        captureTokenField.stringValue = ""
-        captureTokenField.placeholderString = Keychain.has("capture") ? "•••••• saved — paste to replace" : "your API key / token"
+        connEntries = config.connections
+        connTable.reloadData()
+        if connEntries.isEmpty {
+            newConnection()
+        } else {
+            connTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)  // loads editor via delegate
+        }
         helpLabel.stringValue = helpText(for: config.hotkey)
     }
 
@@ -439,22 +477,77 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         openaiKeyField.placeholderString = "•••••• saved — paste to replace"
     }
 
-    @objc private func saveCaptureSettings() {
-        config.captureEndpoint = captureEndpointField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let h = captureHeaderField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        config.captureAuthHeader = h  // blank is allowed — means send no auth header
-        let b = captureBodyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        config.captureBodyTemplate = b.isEmpty ? "{\"title\":\"%TEXT%\"}" : b
+    /// Clear the editor for a brand-new connection (fresh id so a token can be
+    /// saved before the connection itself is).
+    @objc private func newConnection() {
+        editingConnId = UUID().uuidString
+        connNameField.stringValue = ""
+        connLeaderPopup.selectItem(at: 0)
+        captureEndpointField.stringValue = ""
+        captureHeaderField.stringValue = "X-Api-Key"
+        captureBodyField.stringValue = "{\"title\":\"%TEXT%\"}"
+        captureTokenField.stringValue = ""
+        captureTokenField.placeholderString = "your API key / token"
+        connTable.deselectAll(nil)
+    }
+
+    /// Upsert the edited connection into the list and persist.
+    @objc private func saveConnection() {
+        guard let id = editingConnId else { newConnection(); return }
+        let endpoint = captureEndpointField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty else {
+            appAlert("Add an endpoint URL before saving this connection.")
+            return
+        }
+        let leader = connLeaderPopup.titleOfSelectedItem ?? "N"
+        // Reject a leader already claimed by a different connection.
+        if connEntries.contains(where: { $0.id != id && $0.leaderKey.uppercased() == leader.uppercased() }) {
+            appAlert("The \(leader) key is already used by another connection. Pick a different letter.")
+            return
+        }
+        let name = connNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let header = captureHeaderField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = captureBodyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let conn = Config.Connection(id: id, name: name.isEmpty ? "Connection" : name, leaderKey: leader,
+                                     endpoint: endpoint, authHeader: header,
+                                     bodyTemplate: body.isEmpty ? "{\"title\":\"%TEXT%\"}" : body)
+        if let idx = connEntries.firstIndex(where: { $0.id == id }) { connEntries[idx] = conn }
+        else { connEntries.append(conn) }
+        config.connections = connEntries
         config.save()
         onConfigChange(config)
+        connTable.reloadData()
+        if let row = connEntries.firstIndex(where: { $0.id == id }) {
+            connTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+    }
+
+    @objc private func removeConnection() {
+        let row = connTable.selectedRow
+        guard row >= 0, row < connEntries.count else { return }
+        let removed = connEntries.remove(at: row)
+        Keychain.set("", account: removed.tokenAccount)   // drop its token too
+        config.connections = connEntries
+        config.save()
+        onConfigChange(config)
+        connTable.reloadData()
+        newConnection()
     }
 
     @objc private func saveCaptureToken() {
+        guard let id = editingConnId else { return }
         let v = captureTokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !v.isEmpty else { return }
-        Keychain.set(v, account: "capture")
+        Keychain.set(v, account: "capture:\(id)")
         captureTokenField.stringValue = ""
         captureTokenField.placeholderString = "•••••• saved — paste to replace"
+    }
+
+    private func appAlert(_ message: String) {
+        let a = NSAlert()
+        a.messageText = message
+        a.addButton(withTitle: "OK")
+        a.beginSheetModal(for: window ?? NSWindow(), completionHandler: nil)
     }
 
     @objc private func modelsChanged() {
@@ -613,15 +706,48 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         dictTable.reloadData()
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { dictEntries.count }
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        tableView === connTable ? connEntries.count : dictEntries.count
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let entry = dictEntries[row]
-        let text = tableColumn?.identifier.rawValue == "term" ? entry.term : entry.misheard
+        let text: String
+        if tableView === connTable {
+            guard row < connEntries.count else { return nil }
+            let c = connEntries[row]
+            switch tableColumn?.identifier.rawValue {
+            case "connName": text = c.name
+            case "connKey": text = c.leaderKey
+            default: text = c.endpoint
+            }
+        } else {
+            let entry = dictEntries[row]
+            text = tableColumn?.identifier.rawValue == "term" ? entry.term : entry.misheard
+        }
         let field = NSTextField(labelWithString: text)
         field.font = .systemFont(ofSize: 12)
         field.lineBreakMode = .byTruncatingTail
         return field
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard (notification.object as? NSTableView) === connTable else { return }
+        let row = connTable.selectedRow
+        guard row >= 0, row < connEntries.count else { return }
+        let c = connEntries[row]
+        editingConnId = c.id
+        connNameField.stringValue = c.name
+        if let idx = Self.connLeaderLetters.firstIndex(of: c.leaderKey) {
+            connLeaderPopup.selectItem(at: idx)
+        } else {
+            connLeaderPopup.addItem(withTitle: c.leaderKey)   // preserve an unusual saved letter
+            connLeaderPopup.selectItem(withTitle: c.leaderKey)
+        }
+        captureEndpointField.stringValue = c.endpoint
+        captureHeaderField.stringValue = c.authHeader
+        captureBodyField.stringValue = c.bodyTemplate
+        captureTokenField.stringValue = ""
+        captureTokenField.placeholderString = Keychain.has(c.tokenAccount) ? "•••••• saved — paste to replace" : "your API key / token"
     }
 
     @objc private func addDictEntry() {
