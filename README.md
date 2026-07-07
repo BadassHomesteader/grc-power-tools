@@ -6,7 +6,7 @@
 
 Power Tools puts a suite of power-user utilities behind a single hotkey. **Hold Option + Shift**, then speak or tap a letter/arrow: dictate into any app, open a Claude chat, snap and tile windows, OCR the screen, grab a screenshot, cut & paste files, transform your clipboard, or spotlight your cursor. If you've missed Windows PowerToys on the Mac, this is that — FancyZones-style snapping, Advanced Paste, Text Extractor, and Find My Mouse — plus on-device dictation and AI chat.
 
-**In the box:** 🎙 Dictation · 💬 AI chat · 🪟 Window snapping + Snap Assist · ▦ Grid placement · 🔤 OCR (Text Extractor) · 📸 Screenshots · 🔎 Google Lens · 🗂 File cut/paste · 📋 Advanced Paste · 🖱 Find My Mouse
+**In the box:** 🎙 Dictation · 💬 AI chat · 🪟 Window snapping + Snap Assist · 🎛 Snap palette (Moom-style) · ▦ Grid placement · 🔤 OCR (Text Extractor) · 📸 Screenshots · 🔎 Google Lens · 🗂 File cut/paste · 📋 Advanced Paste · 🖱 Find My Mouse
 
 **The app bundle and data folder are still named `GRC Whisper` / bundle ID `com.grc.whisper`** so macOS permissions and saved keys survive the rename.
 
@@ -116,7 +116,7 @@ History, dictionary, and logs live in the same folder. Delete the folder to rese
 
 ## Leader chords (hold your hotkey, tap a letter)
 
-Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay shows the menu (`A ai · T text · S shot · G lens` / `C X V files · ← → ↑ ↓ windows`). Keep holding and tap a key, or just speak. Until you speak, the overlay shows the hint strip; the moment you talk it swaps to the live waveform.
+Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay shows the menu (`A ai · T text · S shot · G lens` / `C X V files · W palette · ← → ↑ ↓ win`). Keep holding and tap a key, or just speak. Until you speak, the overlay shows the hint strip; the moment you talk it swaps to the live waveform.
 
 **Text & AI**
 - **hold + speak + release** → dictation (as normal).
@@ -130,6 +130,8 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 
 **Windows**
 - **hold + ← / → / ↑ / ↓** → snap the focused window to that side/edge. Tap the same arrow again to **cycle sizes** (½ · ⅓ · ⅔ by default; ¼/¾ or ⅕/⅘ selectable in Settings — each set includes the larger complement from the other side).
+- **Chain two arrows for a corner** — ← then ↑ lands the **top-left quarter** (Moom-style); the sizes you've cycled on each axis carry into the corner.
+- **hold + W** → **snap palette**: a compact panel of targets drawn as mini window diagrams — Fill + four halves (hold **⌥** for center + quarters), thirds, and a **mini-grid** you drag across to sketch any rectangle. Digits `1–0` or click apply; arrows move the highlight with a **live preview outline** on the screen; **Tab** retargets another display; Esc closes.
 - **hold + Return** → maximize.
 - Right after a snap, **Snap Assist** offers the other windows — click one to fill the empty space (Windows-style).
 - **hold + 3** → **grid draw mode**: drag across an on-screen grid to place the window (Moom-style). Grid dimensions are configurable.

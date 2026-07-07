@@ -28,6 +28,7 @@ final class HotkeyMonitor {
         case window(WindowManager.Move)  // fires immediately, repeatable while held
         case windowEnd                    // hotkey released after window moves
         case grid                         // draw-a-grid window placement
+        case windowPalette                // Moom-style snap palette
         case advancedPaste                // paste-as palette
         case findMouse                    // spotlight the cursor
     }
@@ -69,6 +70,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_V: Int64 = 9
     private static let kVK_ANSI_P: Int64 = 35
     private static let kVK_ANSI_M: Int64 = 46
+    private static let kVK_ANSI_W: Int64 = 13
     private static let kVK_ANSI_3: Int64 = 20
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
@@ -257,6 +259,13 @@ final class HotkeyMonitor {
                 swallowedKeyUps.insert(keyCode)
                 dispatch(.grid)
                 return nil
+            case Self.kVK_ANSI_W:
+                // Snap palette. Like the grid: release just ends the session; the
+                // palette (a keyable panel) takes over from here.
+                windowMode = true
+                swallowedKeyUps.insert(keyCode)
+                dispatch(.windowPalette)
+                return nil
             case Self.kVK_LeftArrow, Self.kVK_RightArrow, Self.kVK_UpArrow, Self.kVK_DownArrow, Self.kVK_Return:
                 // Window moves fire immediately and can repeat while held (tap ←←
                 // to shrink). Release then just ends the session (no dictation).
@@ -273,6 +282,10 @@ final class HotkeyMonitor {
                 dispatch(.window(move))
                 return nil
             default:
+                // During a window session (grid/palette open) other keys pass
+                // through untouched — digits reach the palette's local monitor —
+                // and must NOT dispatch a cancel that would race the palette.
+                if windowMode { return Unmanaged.passUnretained(event) }
                 interrupted = true
                 dispatch(.cancel)
                 return Unmanaged.passUnretained(event)

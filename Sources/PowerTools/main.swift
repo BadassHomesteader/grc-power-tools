@@ -225,6 +225,24 @@ case "snapassist-preview":
         }
     }
 
+case "palette-preview":
+    // Offscreen render of the snap palette for design checks.
+    let out = args.count >= 2 ? args[1] : "palette-preview.png"
+    let dark = !(args.count >= 3 && args[2] == "light")
+    MainActor.assumeIsolated {
+        guard let screen = NSScreen.main else { exit(1) }
+        let cfg = Config.load()
+        let v = WindowPaletteView(dark: dark, gridCols: cfg.gridSize.cols, gridRows: cfg.gridSize.rows,
+                                  screens: NSScreen.screens, initialScreen: screen)
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        v.previewState(highlight: 2, gridSel: ((2, 1), (7, 6)), quarters: args.contains("quarters"))
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
 case "grid-preview":
     let out = args.count >= 2 ? args[1] : "grid-preview.png"
     let dark = args.count >= 3 && args[2] == "dark"

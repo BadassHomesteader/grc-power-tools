@@ -23,6 +23,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let gridSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchLoginCheck = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let snapAssistCheck = NSButton(checkboxWithTitle: "Snap Assist — offer other windows to fill the gap after a snap", target: nil, action: nil)
+    private let windowPaletteCheck = NSButton(checkboxWithTitle: "Snap palette (hold hotkey + W) — halves · quarters · thirds · grid", target: nil, action: nil)
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
 
@@ -233,18 +234,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         snapAssistCheck.target = self
         snapAssistCheck.action = #selector(snapAssistToggled)
         snapAssistCheck.lineBreakMode = .byWordWrapping
+        windowPaletteCheck.target = self
+        windowPaletteCheck.action = #selector(windowPaletteToggled)
+        windowPaletteCheck.lineBreakMode = .byWordWrapping
         let dataBtn = NSButton(title: "Open Data Folder", target: self, action: #selector(openDataFolder))
         dataBtn.bezelStyle = .rounded
         let quitBtn = NSButton(title: "Quit Power Tools", target: NSApp, action: #selector(NSApplication.terminate(_:)))
         quitBtn.bezelStyle = .rounded
-        let version = NSTextField(labelWithString: "Local-only · no network · v1.0.0")
+        let version = NSTextField(labelWithString: "Local-only · no network · v1.1.0")
         version.font = .systemFont(ofSize: 11)
         version.textColor = .tertiaryLabelColor
         let chatBtn = NSButton(title: "Open AI Chat", target: self, action: #selector(openChat))
         chatBtn.bezelStyle = .rounded
         let generalButtons = NSStackView(views: [dataBtn, quitBtn])
         generalButtons.spacing = 8
-        col3.addArrangedSubview(section("General", [chatBtn, snapAssistCheck, launchLoginCheck, generalButtons, version], width: 400))
+        col3.addArrangedSubview(section("General", [chatBtn, snapAssistCheck, windowPaletteCheck, launchLoginCheck, generalButtons, version], width: 400))
 
         let columns = NSStackView(views: [col1, col2, col3])
         columns.orientation = .horizontal
@@ -319,6 +323,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         snapSizesPopup.selectItem(withTitle: config.snapSizes.displayName)
         gridSizePopup.selectItem(withTitle: config.gridSize.displayName)
         snapAssistCheck.state = config.snapAssist ? .on : .off
+        windowPaletteCheck.state = config.windowPalette ? .on : .off
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
@@ -343,7 +348,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  C / X / V   copy · cut · paste files (Finder)
         •  P   Advanced Paste — plain, or AI: summarize / rewrite / translate
         •  M   find my mouse — spotlight the cursor
-        •  ← → ↑ ↓   snap window (tap again = resize)
+        •  W   snap palette — halves · quarters · thirds · mini-grid
+        •  ← → ↑ ↓   snap window (repeat = resize · chain ← ↑ = corner)
         •  ⏎   maximize   ·   3   draw-a-grid placement
 
         Release with no key to dictate normally.
@@ -445,6 +451,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func snapAssistToggled() {
         config.snapAssist = (snapAssistCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func windowPaletteToggled() {
+        config.windowPalette = (windowPaletteCheck.state == .on)
         config.save()
         onConfigChange(config)
     }

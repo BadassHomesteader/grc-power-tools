@@ -30,6 +30,7 @@ final class AppController {
     private let snapAssist = SnapAssist()
     private let advancedPaste = AdvancedPaste()
     private let findMouse = FindMouse()
+    private let windowPalette = WindowPalette()
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
 
@@ -40,6 +41,11 @@ final class AppController {
     private var winLastMove: WindowManager.Move?
     private var winStep = 0
     private static let winFractions: [CGFloat] = [0.5, 1.0 / 3.0, 2.0 / 3.0]
+    /// Chained-snap state within one leader hold: the horizontal and vertical
+    /// constraints applied so far, so ← then ↑ lands the top-left corner
+    /// (Moom-style chaining) instead of the second press replacing the first.
+    private var chainH: (edge: WindowManager.Edge, f: CGFloat, label: String)?
+    private var chainV: (edge: WindowManager.Edge, f: CGFloat, label: String)?
     /// After an edge snap, the empty region to offer Snap Assist for (on release).
     private var snapAssistRegion: CGRect?
     private var snapAssistExcludeWID: CGWindowID?
@@ -95,12 +101,20 @@ final class AppController {
                 self.interruptDictation()
                 self.fileClipboard(.paste)
             case .window(let move):
-                self.handleWindow(move)
+                // While the leader is held the tap swallows arrows/Return, so the
+                // palette (if open) gets them forwarded here instead of snapping.
+                if self.windowPalette.isVisible { self.windowPalette.leaderKey(move) }
+                else { self.handleWindow(move) }
             case .windowEnd:
                 self.overlay.hide()
                 self.maybeSnapAssist()
             case .grid:
-                self.openGrid()
+                // "3" is the grid chord — but with the palette open it's the
+                // palette's Right ½ digit, not a second overlay.
+                if self.windowPalette.isVisible { self.windowPalette.applyDigit("3") }
+                else { self.openGrid() }
+            case .windowPalette:
+                self.openWindowPalette()
             case .advancedPaste:
                 self.openAdvancedPaste()
             case .findMouse:
@@ -121,6 +135,7 @@ final class AppController {
     private func keyDown() {
         guard state == .idle else { return }
         winLastMove = nil; winStep = 0   // fresh window-cycle each hold
+        chainH = nil; chainV = nil       // fresh chain each hold
         snapAssistRegion = nil; snapAssistExcludeWID = nil
         let ctx = ContextSnapshot.capture()
         if ctx.isSecureField {
@@ -459,12 +474,35 @@ final class AppController {
         )
     }
 
+    /// hold + W: Moom-style snap palette — Fill/halves (⌥ quarters), thirds, and a
+    /// mini-grid. Capture the front window NOW, before the palette steals focus.
+    private func openWindowPalette() {
+        interruptDictation()
+        overlay.hide()
+        snapAssistRegion = nil; snapAssistExcludeWID = nil  // the palette replaces snap-assist for this hold
+        guard config.windowPalette else { return }
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.bundleIdentifier != "com.grc.whisper",
+              let target = WindowManager.frontmostWindow() else {
+            overlay.showError("Click into a window first, then hold + W")
+            return
+        }
+        guard let screen = WindowManager.screen(of: target) ?? NSScreen.main else { return }
+        windowPalette.present(
+            dark: config.appearance.isDark,
+            gridCols: config.gridSize.cols, gridRows: config.gridSize.rows,
+            target: target, screen: screen,
+            done: { app.activate() }
+        )
+    }
+
     /// Arrow/Return in window mode. Fires on each keydown; repeating the same
     /// direction cycles the size (½ → ⅓ → ⅔) so "tap ← ←" shrinks the left snap.
     private func handleWindow(_ move: WindowManager.Move) {
         interruptDictation()
         if move == .maximize {
             winLastMove = nil; winStep = 0; snapAssistRegion = nil  // no empty space to fill
+            chainH = nil; chainV = nil
             if WindowManager.maximize() {
                 overlay.showWindow(region: CGRect(x: 0, y: 0, width: 1, height: 1), label: "Maximize")
             } else { overlay.showError("No window to move") }
@@ -474,6 +512,33 @@ final class AppController {
         if move == winLastMove { winStep = (winStep + 1) % steps.count }
         else { winStep = 0; winLastMove = move }
         let (f, fracLabel) = steps[winStep]
+
+        // Chain bookkeeping: remember this axis's constraint. If the OTHER axis
+        // was already snapped this hold, the two combine into a corner (Moom's
+        // "← then ↑ = top-left"). Same-axis repeats keep cycling sizes as before.
+        switch move {
+        case .left:     chainH = (.left, f, fracLabel)
+        case .right:    chainH = (.right, f, fracLabel)
+        case .up:       chainV = (.top, f, fracLabel)
+        case .down:     chainV = (.bottom, f, fracLabel)
+        case .maximize: return
+        }
+        if let h = chainH, let v = chainV {
+            guard WindowManager.snapCorner(hEdge: h.edge, hFraction: h.f,
+                                           vEdge: v.edge, vFraction: v.f) != nil else {
+                overlay.showError("No window to move"); return
+            }
+            // The empty complement of a corner is L-shaped — Snap Assist sits out.
+            snapAssistRegion = nil; snapAssistExcludeWID = nil
+            let region = CGRect(x: h.edge == .left ? 0 : 1 - h.f,
+                                y: v.edge == .top ? 0 : 1 - v.f,
+                                width: h.f, height: v.f)
+            let corner = "\(v.edge == .top ? "Top" : "Bottom") \(h.edge == .left ? "Left" : "Right")"
+            let label = (h.f == 0.5 && v.f == 0.5) ? "\(corner) ¼" : "\(corner) \(h.label) × \(v.label)"
+            overlay.showWindow(region: region, label: label)
+            return
+        }
+
         let edge: WindowManager.Edge
         let region: CGRect
         let name: String

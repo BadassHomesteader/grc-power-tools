@@ -196,6 +196,8 @@ struct Config: Codable {
     var gridSize: GridSize = .c12x8
     /// After snapping a window to a side, offer the other windows to fill the gap.
     var snapAssist: Bool = true
+    /// Moom-style snap palette on hold + W.
+    var windowPalette: Bool = true
 
     init() {}
 
@@ -203,6 +205,7 @@ struct Config: Codable {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
         case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
+        case windowPalette
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -225,6 +228,7 @@ struct Config: Codable {
         snapSizes = try c.decodeIfPresent(SnapSizes.self, forKey: .snapSizes) ?? .thirds
         snapAssist = try c.decodeIfPresent(Bool.self, forKey: .snapAssist) ?? true
         gridSize = try c.decodeIfPresent(GridSize.self, forKey: .gridSize) ?? .c12x8
+        windowPalette = try c.decodeIfPresent(Bool.self, forKey: .windowPalette) ?? true
     }
 
     static var appSupportDir: URL {

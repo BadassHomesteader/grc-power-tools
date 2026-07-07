@@ -62,6 +62,23 @@ enum WindowManager {
         return _AXUIElementGetWindow(window, &wid) == .success ? wid : nil
     }
 
+    /// Snap into a corner: a horizontal edge×fraction combined with a vertical
+    /// edge×fraction (chained arrows — e.g. ← then ↑ = top-left quarter).
+    @discardableResult
+    static func snapCorner(hEdge: Edge, hFraction: CGFloat, vEdge: Edge, vFraction: CGFloat) -> SnapResult? {
+        guard let window = focusedWindow(), let screen = targetScreen(window) else { return nil }
+        let vf = screen.visibleFrame
+        let w = vf.width * hFraction
+        let h = vf.height * vFraction
+        let x = hEdge == .left ? vf.minX : vf.maxX - w
+        let y = vEdge == .bottom ? vf.minY : vf.maxY - h
+        setFrame(window, NSRect(x: x, y: y, width: w, height: h))
+        return SnapResult(screen: screen, windowID: cgWindowID(of: window))
+    }
+
+    /// The screen a window mostly sits on (palette placement).
+    static func screen(of window: AXUIElement) -> NSScreen? { targetScreen(window) }
+
     @discardableResult
     static func maximize() -> Bool {
         guard let window = focusedWindow(), let screen = targetScreen(window) else { return false }
