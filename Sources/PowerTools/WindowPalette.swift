@@ -189,10 +189,11 @@ final class WindowPaletteView: NSView {
     private var gridStart: (c: Int, r: Int)?
     private var gridCurrent: (c: Int, r: Int)?
 
-    private static let width: CGFloat = 460
+    private static let width: CGFloat = 500
     private static let pad: CGFloat = 14
     private static let headerH: CGFloat = 42
-    private static let btnW: CGFloat = 80
+    private static let perRow = 6
+    private static let btnW: CGFloat = 72
     private static let btnH: CGFloat = 58
     private static let btnGap: CGFloat = 8
     private static let gridGap: CGFloat = 10
@@ -228,25 +229,28 @@ final class WindowPaletteView: NSView {
 
     private var row1: [Action] {
         quarters
-        ? [Action(key: "1", title: "Center", region: NSRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)),
+        ? [Action(key: "1", title: "Fill", region: NSRect(x: 0, y: 0, width: 1, height: 1)),
            Action(key: "2", title: "Top Left", region: NSRect(x: 0, y: 0, width: 0.5, height: 0.5)),
            Action(key: "3", title: "Top Right", region: NSRect(x: 0.5, y: 0, width: 0.5, height: 0.5)),
            Action(key: "4", title: "Btm Left", region: NSRect(x: 0, y: 0.5, width: 0.5, height: 0.5)),
-           Action(key: "5", title: "Btm Right", region: NSRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5))]
+           Action(key: "5", title: "Btm Right", region: NSRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5)),
+           Action(key: "6", title: "Center", region: NSRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))]
         : [Action(key: "1", title: "Fill", region: NSRect(x: 0, y: 0, width: 1, height: 1)),
            Action(key: "2", title: "Left ½", region: NSRect(x: 0, y: 0, width: 0.5, height: 1)),
-           Action(key: "3", title: "Right ½", region: NSRect(x: 0.5, y: 0, width: 0.5, height: 1)),
-           Action(key: "4", title: "Top ½", region: NSRect(x: 0, y: 0, width: 1, height: 0.5)),
-           Action(key: "5", title: "Bottom ½", region: NSRect(x: 0, y: 0.5, width: 1, height: 0.5))]
+           Action(key: "3", title: "Center ½", region: NSRect(x: 0.25, y: 0, width: 0.5, height: 1)),
+           Action(key: "4", title: "Right ½", region: NSRect(x: 0.5, y: 0, width: 0.5, height: 1)),
+           Action(key: "5", title: "Top ½", region: NSRect(x: 0, y: 0, width: 1, height: 0.5)),
+           Action(key: "6", title: "Bottom ½", region: NSRect(x: 0, y: 0.5, width: 1, height: 0.5))]
     }
 
     private var row2: [Action] {
         let t = 1.0 / 3.0
-        return [Action(key: "6", title: "Left ⅓", region: NSRect(x: 0, y: 0, width: t, height: 1)),
-                Action(key: "7", title: "Center ⅓", region: NSRect(x: t, y: 0, width: t, height: 1)),
-                Action(key: "8", title: "Right ⅓", region: NSRect(x: 2 * t, y: 0, width: t, height: 1)),
-                Action(key: "9", title: "Left ⅔", region: NSRect(x: 0, y: 0, width: 2 * t, height: 1)),
-                Action(key: "0", title: "Right ⅔", region: NSRect(x: t, y: 0, width: 2 * t, height: 1))]
+        return [Action(key: "7", title: "Fill", region: NSRect(x: 0, y: 0, width: 1, height: 1)),
+                Action(key: "8", title: "Left ⅓", region: NSRect(x: 0, y: 0, width: t, height: 1)),
+                Action(key: "9", title: "Center ⅓", region: NSRect(x: t, y: 0, width: t, height: 1)),
+                Action(key: "0", title: "Right ⅓", region: NSRect(x: 2 * t, y: 0, width: t, height: 1)),
+                Action(key: "-", title: "Left ⅔", region: NSRect(x: 0, y: 0, width: 2 * t, height: 1)),
+                Action(key: "=", title: "Right ⅔", region: NSRect(x: t, y: 0, width: 2 * t, height: 1))]
     }
 
     private var actions: [Action] { row1 + row2 }
@@ -254,7 +258,7 @@ final class WindowPaletteView: NSView {
     // MARK: Layout
 
     private func buttonRect(_ i: Int) -> NSRect {
-        let row = i / 5, col = i % 5
+        let row = i / Self.perRow, col = i % Self.perRow
         return NSRect(x: Self.pad + CGFloat(col) * (Self.btnW + Self.btnGap),
                       y: Self.headerH + CGFloat(row) * (Self.btnH + Self.btnGap),
                       width: Self.btnW, height: Self.btnH)
@@ -314,14 +318,14 @@ final class WindowPaletteView: NSView {
         guard quarters != on else { return }
         quarters = on
         needsDisplay = true
-        if highlighted < 5 { previewHighlighted() }
+        if highlighted < Self.perRow { previewHighlighted() }
     }
 
     func nudgeHighlight(dc: Int, dr: Int) {
-        var row = highlighted / 5, col = highlighted % 5
-        col = min(max(col + dc, 0), 4)
+        var row = highlighted / Self.perRow, col = highlighted % Self.perRow
+        col = min(max(col + dc, 0), Self.perRow - 1)
         row = min(max(row + dr, 0), 1)
-        setHighlight(row * 5 + col)
+        setHighlight(row * Self.perRow + col)
     }
 
     func applyHighlighted() {
@@ -449,7 +453,7 @@ final class WindowPaletteView: NSView {
         drawGrid()
 
         let tabHint = screens.count > 1 ? " · ⇥ display" : ""
-        let footer = "1–0 or click · ⌥ quarters\(tabHint) · esc" as NSString
+        let footer = "keys or click · ⌥ quarters\(tabHint) · esc" as NSString
         footer.draw(at: NSPoint(x: Self.pad + 6, y: bounds.height - 21),
             withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: dim])
     }
