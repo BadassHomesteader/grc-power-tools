@@ -19,6 +19,7 @@ final class AppController {
             overlay.anchor = config.overlayPosition
             overlay.scheme = config.appearance
             chat?.updateConfig(config)
+            clipboardWatcher.enabled = config.clipboardHistory
         }
     }
 
@@ -31,6 +32,8 @@ final class AppController {
     private let advancedPaste = AdvancedPaste()
     private let findMouse = FindMouse()
     private let windowPalette = WindowPalette()
+    private let clipboardPalette = ClipboardPalette()
+    private lazy var clipboardWatcher = ClipboardHistory(store: store, enabled: config.clipboardHistory)
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
 
@@ -117,6 +120,8 @@ final class AppController {
                 self.openWindowPalette()
             case .advancedPaste:
                 self.openAdvancedPaste()
+            case .clipboardHistory:
+                self.openClipboardHistory()
             case .findMouse:
                 self.interruptDictation()
                 self.findMouse.flash()
@@ -127,6 +132,7 @@ final class AppController {
                 NSLocalizedDescriptionKey: "Couldn't install the global hotkey — grant Accessibility permission and relaunch"])
         }
         hotkey = monitor
+        clipboardWatcher.start()
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
     }
 
@@ -444,6 +450,42 @@ final class AppController {
                 await MainActor.run { self.overlay.showError("Paste transform failed"); app.activate() }
             }
         }
+    }
+
+    /// hold + H: clipboard history palette. Capture the target app NOW (before the
+    /// palette steals focus); the picked clip pastes there and stays on the
+    /// clipboard (Win+V semantics).
+    private func openClipboardHistory() {
+        interruptDictation()
+        overlay.hide()
+        guard config.clipboardHistory else {
+            overlay.showError("Clipboard history is off — enable it in Settings ▸ General")
+            return
+        }
+        let clips = store.recentClips(9)
+        guard !clips.isEmpty else {
+            overlay.showError("No clipboard history yet — copy something first")
+            return
+        }
+        guard let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != "com.grc.whisper" else {
+            overlay.showError("Click into a text field first, then hold + H")
+            return
+        }
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        clipboardPalette.present(
+            clips: clips, dark: config.appearance.isDark, screen: screen,
+            onPick: { text in
+                app.activate()
+                // let focus land back in the target field before the synthetic ⌘V
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(220)) {
+                    Inserter.pasteLeavingOnClipboard(text)
+                    self.store.addClip(text)  // picked clip moves to the top
+                }
+            },
+            onCancel: { app.activate() }
+        )
     }
 
     enum FileOp { case copy, cut, paste }

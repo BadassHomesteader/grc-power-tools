@@ -30,6 +30,7 @@ final class HotkeyMonitor {
         case grid                         // draw-a-grid window placement
         case windowPalette                // Moom-style snap palette
         case advancedPaste                // paste-as palette
+        case clipboardHistory             // recent-copies palette (Win+V)
         case findMouse                    // spotlight the cursor
     }
 
@@ -51,7 +52,7 @@ final class HotkeyMonitor {
     /// keys (e.g. two arrows) are each tracked, not just the last one.
     private var swallowedKeyUps: Set<Int64> = []
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, findMouse }
+    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, clipboardHistory, findMouse }
     private var pending: Pending = .none
     /// Set once an arrow/Return moves a window this hold, so release ends the
     /// window session instead of dispatching a dictation.
@@ -71,6 +72,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_P: Int64 = 35
     private static let kVK_ANSI_M: Int64 = 46
     private static let kVK_ANSI_W: Int64 = 13
+    private static let kVK_ANSI_H: Int64 = 4
     private static let kVK_ANSI_3: Int64 = 20
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
@@ -248,6 +250,10 @@ final class HotkeyMonitor {
                 log("hotkey: +P leader armed (advanced paste)")
                 pending = .advancedPaste; swallowedKeyUps.insert(keyCode)
                 return nil
+            case Self.kVK_ANSI_H:
+                log("hotkey: +H leader armed (clipboard history)")
+                pending = .clipboardHistory; swallowedKeyUps.insert(keyCode)
+                return nil
             case Self.kVK_ANSI_M:
                 log("hotkey: +M leader armed (find mouse)")
                 pending = .findMouse; swallowedKeyUps.insert(keyCode)
@@ -331,6 +337,7 @@ final class HotkeyMonitor {
                 case .fileCut: dispatch(.fileCut)
                 case .filePaste: dispatch(.filePaste)
                 case .advancedPaste: dispatch(.advancedPaste)
+                case .clipboardHistory: dispatch(.clipboardHistory)
                 case .findMouse: dispatch(.findMouse)
                 }
             }

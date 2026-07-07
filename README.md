@@ -6,7 +6,7 @@
 
 Power Tools puts a suite of power-user utilities behind a single hotkey. **Hold Option + Shift**, then speak or tap a letter/arrow: dictate into any app, open a Claude chat, snap and tile windows, OCR the screen, grab a screenshot, cut & paste files, transform your clipboard, or spotlight your cursor. If you've missed Windows PowerToys on the Mac, this is that — FancyZones-style snapping, Advanced Paste, Text Extractor, and Find My Mouse — plus on-device dictation and AI chat.
 
-**In the box:** 🎙 Dictation · 💬 AI chat · 🪟 Window snapping + Snap Assist · 🎛 Snap palette (Moom-style) · ▦ Grid placement · 🔤 OCR (Text Extractor) · 📸 Screenshots · 🔎 Google Lens · 🗂 File cut/paste · 📋 Advanced Paste · 🖱 Find My Mouse
+**In the box:** 🎙 Dictation · 💬 AI chat · 🪟 Window snapping + Snap Assist · 🎛 Snap palette (Moom-style) · ▦ Grid placement · 📋 Clipboard history (Win+V-style) · 📅 Menu-bar calendar · 🔤 OCR (Text Extractor) · 📸 Screenshots · 🔎 Google Lens · 🗂 File cut/paste · 📝 Advanced Paste · 🖱 Find My Mouse
 
 **The app bundle and data folder are still named `GRC Whisper` / bundle ID `com.grc.whisper`** so macOS permissions and saved keys survive the rename.
 
@@ -138,7 +138,11 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 
 **Clipboard & cursor**
 - **hold + P** → **Advanced Paste**: a palette to paste the clipboard as plain text or transform it — summarize, rewrite, bullets, markdown, or translate (AI transforms use your configured cloud model).
+- **hold + H** → **Clipboard history** (the Windows Win+V gap): a palette of your recent text copies — digits/arrows pick one, it pastes into the app you came from and becomes the current clipboard. Recording is local (SQLite, last 200), and anything marked concealed/transient by password managers is never recorded. Toggle in Settings ▸ General.
 - **hold + M** → **Find My Mouse**: dims the screen and spotlights the cursor.
+
+**Menu bar**
+- **Calendar**: today's date sits in the menu bar (like the Windows taskbar clock) — click it for a month grid with ◀ ▶ browsing. No Calendar permission needed (display-only). Toggle in Settings ▸ General. If you run a menu-bar manager (Bartender/Ice), drag the item out of its hidden section.
 
 T / S / G need Screen Recording permission the first time (System Settings ▸ Privacy & Security ▸ Screen Recording, then quit & reopen). OCR is also on the menu-bar mic ▸ Capture Text from Screen.
 

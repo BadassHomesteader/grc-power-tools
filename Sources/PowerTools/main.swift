@@ -121,13 +121,15 @@ case "lens":
     print(url?.absoluteString ?? "(lens upload failed)")
 
 case "settings-preview":
+    // settings-preview [out.png] [light|dark] [tabIndex]
     MainActor.assumeIsolated {
         var cfg = Config.load()
         if args.count >= 3, args[2] == "light" { cfg.appearance = .light }
         if args.count >= 3, args[2] == "dark" { cfg.appearance = .dark }
         let sc = SettingsWindowController(store: Store(), config: cfg, onConfigChange: { _ in })
+        if args.count >= 4, let tab = Int(args[3]) { sc.selectTab(tab) }
         guard let window = sc.window else { exit(1) }
-        window.setContentSize(NSSize(width: 1200, height: 740))
+        window.setContentSize(NSSize(width: 660, height: 640))
         window.layoutIfNeeded()
         guard let content = window.contentView else { exit(1) }
         content.layoutSubtreeIfNeeded()
@@ -220,6 +222,42 @@ case "snapassist-preview":
         view.frame = NSRect(x: 0, y: 0, width: 940, height: 760)
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
         view.cacheDisplay(in: view.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
+case "cliphistory-preview":
+    // Offscreen render of the clipboard-history palette for design checks.
+    let out = args.count >= 2 ? args[1] : "cliphistory-preview.png"
+    let dark = !(args.count >= 3 && args[2] == "light")
+    MainActor.assumeIsolated {
+        let now = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-180))
+        let older = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7200))
+        let clips = [
+            ClipEntry(id: 5, timestamp: now, content: "az staticwebapp secrets list -n kaw-survey-swa -g rg-gridops"),
+            ClipEntry(id: 4, timestamp: now, content: "The crew completed 14 surveys today; 3 premises had no access.\nSecond visits are scheduled for Thursday."),
+            ClipEntry(id: 3, timestamp: older, content: "juergs@gmail.com"),
+            ClipEntry(id: 2, timestamp: older, content: "https://github.com/BadassHomesteader/grc-power-tools"),
+            ClipEntry(id: 1, timestamp: older, content: "#4a73ff"),
+        ]
+        let v = ClipboardPaletteView(clips: clips, dark: dark)
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
+case "calendar-preview":
+    // Offscreen render of the menu-bar calendar popover content.
+    let out = args.count >= 2 ? args[1] : "calendar-preview.png"
+    MainActor.assumeIsolated {
+        let v = MonthGridView(frame: NSRect(x: 0, y: 0, width: 264, height: 268))
+        v.appearance = NSAppearance(named: args.contains("dark") ? .darkAqua : .aqua)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {
             try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
         }

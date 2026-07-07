@@ -198,6 +198,10 @@ struct Config: Codable {
     var snapAssist: Bool = true
     /// Moom-style snap palette on hold + W.
     var windowPalette: Bool = true
+    /// Record text copies; hold + H opens the recent-clips palette (Win+V).
+    var clipboardHistory: Bool = true
+    /// Date in the menu bar; click for a month-grid calendar popover.
+    var menuCalendar: Bool = true
 
     init() {}
 
@@ -205,7 +209,7 @@ struct Config: Codable {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
         case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
-        case windowPalette
+        case windowPalette, clipboardHistory, menuCalendar
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -229,6 +233,8 @@ struct Config: Codable {
         snapAssist = try c.decodeIfPresent(Bool.self, forKey: .snapAssist) ?? true
         gridSize = try c.decodeIfPresent(GridSize.self, forKey: .gridSize) ?? .c12x8
         windowPalette = try c.decodeIfPresent(Bool.self, forKey: .windowPalette) ?? true
+        clipboardHistory = try c.decodeIfPresent(Bool.self, forKey: .clipboardHistory) ?? true
+        menuCalendar = try c.decodeIfPresent(Bool.self, forKey: .menuCalendar) ?? true
     }
 
     static var appSupportDir: URL {

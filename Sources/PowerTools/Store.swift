@@ -17,6 +17,12 @@ struct DictEntry {
     let misheard: String    // comma-separated variants ASR produces ("K Y A W, kayak")
 }
 
+struct ClipEntry {
+    let id: Int64
+    let timestamp: String
+    let content: String
+}
+
 /// SQLite-backed history + personal dictionary. Single-connection, serialized via a queue.
 final class Store {
     private var db: OpaquePointer?
@@ -41,6 +47,11 @@ final class Store {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             term TEXT NOT NULL UNIQUE,
             misheard TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS clips(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            content TEXT NOT NULL
         );
         """)
     }
@@ -95,6 +106,53 @@ final class Store {
             }
             return out
         }
+    }
+
+    // MARK: Clipboard history
+
+    /// Add (or bump) a clip: an identical existing clip moves to the top instead
+    /// of duplicating. The table is trimmed to the newest 200 entries.
+    func addClip(_ content: String) {
+        queue.sync {
+            guard let db else { return }
+            var del: OpaquePointer?
+            if sqlite3_prepare_v2(db, "DELETE FROM clips WHERE content = ?", -1, &del, nil) == SQLITE_OK {
+                sqlite3_bind_text(del, 1, content, -1, SQLITE_TRANSIENT)
+                sqlite3_step(del)
+            }
+            sqlite3_finalize(del)
+            var ins: OpaquePointer?
+            if sqlite3_prepare_v2(db, "INSERT INTO clips(ts, content) VALUES(?,?)", -1, &ins, nil) == SQLITE_OK {
+                sqlite3_bind_text(ins, 1, ISO8601DateFormatter().string(from: Date()), -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(ins, 2, content, -1, SQLITE_TRANSIENT)
+                sqlite3_step(ins)
+            }
+            sqlite3_finalize(ins)
+            exec("DELETE FROM clips WHERE id NOT IN (SELECT id FROM clips ORDER BY id DESC LIMIT 200)")
+        }
+    }
+
+    func recentClips(_ limit: Int = 9) -> [ClipEntry] {
+        queue.sync {
+            guard let db else { return [] }
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT id, ts, content FROM clips ORDER BY id DESC LIMIT ?", -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int(stmt, 1, Int32(limit))
+            var out: [ClipEntry] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(ClipEntry(
+                    id: sqlite3_column_int64(stmt, 0),
+                    timestamp: String(cString: sqlite3_column_text(stmt, 1)),
+                    content: String(cString: sqlite3_column_text(stmt, 2))
+                ))
+            }
+            return out
+        }
+    }
+
+    func clearClips() {
+        queue.sync { exec("DELETE FROM clips") }
     }
 
     // MARK: Dictionary

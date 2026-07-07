@@ -23,7 +23,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let gridSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchLoginCheck = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let snapAssistCheck = NSButton(checkboxWithTitle: "Snap Assist — offer other windows to fill the gap after a snap", target: nil, action: nil)
-    private let windowPaletteCheck = NSButton(checkboxWithTitle: "Snap palette (hold hotkey + W) — halves · quarters · thirds · grid", target: nil, action: nil)
+    private let windowPaletteCheck = NSButton(checkboxWithTitle: "Snap palette (hold hotkey + W)", target: nil, action: nil)
+    private let clipboardHistoryCheck = NSButton(checkboxWithTitle: "Clipboard history — hold hotkey + H to paste a recent copy", target: nil, action: nil)
+    private let menuCalendarCheck = NSButton(checkboxWithTitle: "Calendar in the menu bar — click the date for a month view", target: nil, action: nil)
+    private let tabView = NSTabView()
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
 
@@ -44,13 +47,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         self.onOpenChat = onOpenChat
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 740),
+            contentRect: NSRect(x: 0, y: 0, width: 660, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
         window.title = "Power Tools"
         window.center()
-        window.setFrameAutosaveName("GRCWhisperSettings")
+        window.setFrameAutosaveName("GRCWhisperSettingsTabs")
         super.init(window: window)
         window.delegate = self
         buildUI()
@@ -69,58 +72,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     // MARK: Build
 
+    /// Tabbed layout (one tab per concern) so the window stays small as tools
+    /// accumulate: General · Dictation · Windows · AI · Dictionary · Permissions.
     private func buildUI() {
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.alignment = .leading
-        root.spacing = 18
-        root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
-        root.translatesAutoresizingMaskIntoConstraints = false
-
-        // Header
-        let title = NSTextField(labelWithString: "Power Tools")
-        title.font = .systemFont(ofSize: 20, weight: .bold)
-        let subtitle = NSTextField(labelWithString: "One hotkey — dictate, chat with AI, grab text & screenshots, move files, and snap windows. Everything runs on this Mac.")
-        subtitle.font = .systemFont(ofSize: 12)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.lineBreakMode = .byWordWrapping
-        subtitle.preferredMaxLayoutWidth = 520
-        let header = NSStackView(views: [title, subtitle])
-        header.orientation = .vertical
-        header.alignment = .leading
-        header.spacing = 2
-        root.addArrangedSubview(header)
-
-        // Three columns so everything fits on screen without scrolling:
-        //  1) how-to + dictation   2) permissions + dictionary   3) AI keys + general
-        let col1 = NSStackView()
-        col1.orientation = .vertical; col1.alignment = .leading; col1.spacing = 16
-        let col2 = NSStackView()
-        col2.orientation = .vertical; col2.alignment = .leading; col2.spacing = 16
-        let col3 = NSStackView()
-        col3.orientation = .vertical; col3.alignment = .leading; col3.spacing = 16
-
-        // Status section
-        statusStack.orientation = .vertical
-        statusStack.alignment = .leading
-        statusStack.spacing = 6
-        let recheck = NSButton(title: "Re-check", target: self, action: #selector(recheck))
-        recheck.bezelStyle = .rounded
-        let openAX = NSButton(title: "Open Accessibility Settings", target: self, action: #selector(openAccessibility))
-        openAX.bezelStyle = .rounded
-        let statusButtons = NSStackView(views: [recheck, openAX])
-        statusButtons.spacing = 8
-
-        // Column 1 · How-to (top for discoverability).
-        helpLabel.font = .systemFont(ofSize: 12)
-        helpLabel.textColor = .labelColor
-        helpLabel.preferredMaxLayoutWidth = 300
-        col1.addArrangedSubview(section("How to use it", [helpLabel], width: 340))
-
-        // Column 2 · Permissions ("the green lights").
-        col2.addArrangedSubview(section("Permissions", [statusStack, statusButtons], width: 360))
-
-        // Dictation section
+        // Control wiring (shared by whichever tab hosts the control).
         for mode in Config.PolishMode.allCases { cleanupPopup.addItem(withTitle: mode.displayName) }
         cleanupPopup.target = self
         cleanupPopup.action = #selector(cleanupChanged)
@@ -145,26 +100,119 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         hotkeyNote.font = .systemFont(ofSize: 11)
         hotkeyNote.textColor = .secondaryLabelColor
         hotkeyNote.stringValue = " "
+        launchLoginCheck.target = self
+        launchLoginCheck.action = #selector(toggleLaunchLogin)
+        snapAssistCheck.target = self
+        snapAssistCheck.action = #selector(snapAssistToggled)
+        windowPaletteCheck.target = self
+        windowPaletteCheck.action = #selector(windowPaletteToggled)
+        clipboardHistoryCheck.target = self
+        clipboardHistoryCheck.action = #selector(clipboardHistoryToggled)
+        menuCalendarCheck.target = self
+        menuCalendarCheck.action = #selector(menuCalendarToggled)
 
-        col1.addArrangedSubview(section("Dictation", [
-            formRow("Hotkey", hotkeyPopup),
-            hotkeyNote,
-            formRow("Cleanup", cleanupPopup),
-            formRow("Bar position", positionPopup),
-            formRow("Theme", appearancePopup),
-            formRow("AI (+A)", aiModePopup),
-            formRow("Snap sizes", snapSizesPopup),
-            formRow("Grid (+3)", gridSizePopup),
-        ], width: 340))
+        tabView.addTabViewItem(tab("General", generalTab()))
+        tabView.addTabViewItem(tab("Dictation", dictationTab()))
+        tabView.addTabViewItem(tab("Windows", windowsTab()))
+        tabView.addTabViewItem(tab("AI", aiTab()))
+        tabView.addTabViewItem(tab("Dictionary", dictionaryTab()))
+        tabView.addTabViewItem(tab("Permissions", permissionsTab()))
 
-        // Cloud cleanup section (optional — used only when Cleanup is Claude/OpenAI)
+        tabView.translatesAutoresizingMaskIntoConstraints = false
+        window?.contentView = NSView()
+        if let cv = window?.contentView {
+            cv.addSubview(tabView)
+            NSLayoutConstraint.activate([
+                tabView.leadingAnchor.constraint(equalTo: cv.leadingAnchor, constant: 10),
+                tabView.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -10),
+                tabView.topAnchor.constraint(equalTo: cv.topAnchor, constant: 6),
+                tabView.bottomAnchor.constraint(equalTo: cv.bottomAnchor, constant: -10),
+            ])
+        }
+        loadConfigIntoControls()
+    }
+
+    /// For the offscreen `settings-preview` design check.
+    func selectTab(_ index: Int) {
+        guard index >= 0, index < tabView.numberOfTabViewItems else { return }
+        tabView.selectTabViewItem(at: index)
+    }
+
+    private func tab(_ label: String, _ content: NSView) -> NSTabViewItem {
+        let item = NSTabViewItem(identifier: label)
+        item.label = label
+        let container = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+        ])
+        item.view = container
+        return item
+    }
+
+    private func vstack(_ views: [NSView]) -> NSStackView {
+        let s = NSStackView(views: views)
+        s.orientation = .vertical
+        s.alignment = .leading
+        s.spacing = 14
+        return s
+    }
+
+    private func generalTab() -> NSView {
+        helpLabel.font = .systemFont(ofSize: 12)
+        helpLabel.textColor = .labelColor
+        helpLabel.preferredMaxLayoutWidth = 540
+        let chatBtn = NSButton(title: "Open AI Chat", target: self, action: #selector(openChat))
+        chatBtn.bezelStyle = .rounded
+        let dataBtn = NSButton(title: "Open Data Folder", target: self, action: #selector(openDataFolder))
+        dataBtn.bezelStyle = .rounded
+        let quitBtn = NSButton(title: "Quit Power Tools", target: NSApp, action: #selector(NSApplication.terminate(_:)))
+        quitBtn.bezelStyle = .rounded
+        let version = NSTextField(labelWithString: "Local-only · no network · v1.2.0")
+        version.font = .systemFont(ofSize: 11)
+        version.textColor = .tertiaryLabelColor
+        let buttons = NSStackView(views: [chatBtn, dataBtn, quitBtn])
+        buttons.spacing = 8
+        return vstack([
+            section("How to use it", [helpLabel], width: 590),
+            section("General", [clipboardHistoryCheck, menuCalendarCheck, launchLoginCheck, buttons, version], width: 590),
+        ])
+    }
+
+    private func dictationTab() -> NSView {
+        vstack([
+            section("Dictation", [
+                formRow("Hotkey", hotkeyPopup),
+                hotkeyNote,
+                formRow("Cleanup", cleanupPopup),
+                formRow("Bar position", positionPopup),
+                formRow("Theme", appearancePopup),
+                formRow("AI (+A)", aiModePopup),
+            ], width: 480),
+        ])
+    }
+
+    private func windowsTab() -> NSView {
+        vstack([
+            section("Window snapping", [
+                formRow("Snap sizes", snapSizesPopup),
+                formRow("Grid (+3)", gridSizePopup),
+                snapAssistCheck,
+                windowPaletteCheck,
+            ], width: 540),
+        ])
+    }
+
+    private func aiTab() -> NSView {
         let cloudNote = NSTextField(labelWithString: "Used when Cleanup is Claude or OpenAI, and for the AI chat (hold your hotkey + A). Keys are saved in a private, owner-only file in the app's data folder — they persist across reinstalls — and only text is ever sent, never your audio.")
         cloudNote.font = .systemFont(ofSize: 11)
         cloudNote.textColor = .secondaryLabelColor
         cloudNote.lineBreakMode = .byWordWrapping
-        cloudNote.preferredMaxLayoutWidth = 360
+        cloudNote.preferredMaxLayoutWidth = 500
         for f in [claudeKeyField, openaiKeyField, claudeModelField, openaiModelField] {
-            f.widthAnchor.constraint(equalToConstant: 200).isActive = true
+            f.widthAnchor.constraint(equalToConstant: 220).isActive = true
             f.target = self
         }
         claudeModelField.addItems(withObjectValues: Self.claudeModels)
@@ -183,23 +231,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         saveOpenai.bezelStyle = .rounded
         let claudeKeyRow = NSStackView(views: [claudeKeyField, saveClaude]); claudeKeyRow.spacing = 8
         let openaiKeyRow = NSStackView(views: [openaiKeyField, saveOpenai]); openaiKeyRow.spacing = 8
+        return vstack([
+            section("AI · cloud cleanup & chat", [
+                cloudNote,
+                formRow("Claude key", claudeKeyRow),
+                formRow("Claude model", claudeModelField),
+                formRow("OpenAI key", openaiKeyRow),
+                formRow("OpenAI model", openaiModelField),
+            ], width: 560),
+        ])
+    }
 
-        // Column 3 · AI API keys.
-        col3.addArrangedSubview(section("AI · cloud cleanup & chat", [
-            cloudNote,
-            formRow("Claude key", claudeKeyRow),
-            formRow("Claude model", claudeModelField),
-            formRow("OpenAI key", openaiKeyRow),
-            formRow("OpenAI model", openaiModelField),
-        ], width: 400))
-
-        // Dictionary section
+    private func dictionaryTab() -> NSView {
+        let note = NSTextField(labelWithString: "Words dictation should always get right — project names, people, jargon. Add the term plus what the recognizer mishears it as.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.lineBreakMode = .byWordWrapping
+        note.preferredMaxLayoutWidth = 500
         let termCol = NSTableColumn(identifier: .init("term"))
         termCol.title = "Term"
-        termCol.width = 110
+        termCol.width = 140
         let misheardCol = NSTableColumn(identifier: .init("misheard"))
         misheardCol.title = "Sounds like (comma-separated)"
-        misheardCol.width = 180
+        misheardCol.width = 300
         dictTable.addTableColumn(termCol)
         dictTable.addTableColumn(misheardCol)
         dictTable.dataSource = self
@@ -211,72 +265,36 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.heightAnchor.constraint(equalToConstant: 130).isActive = true
-        scroll.widthAnchor.constraint(equalToConstant: 320).isActive = true
-
+        scroll.heightAnchor.constraint(equalToConstant: 240).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 500).isActive = true
         termField.placeholderString = "KYAW"
-        termField.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        termField.widthAnchor.constraint(equalToConstant: 140).isActive = true
         misheardField.placeholderString = "K Y A W, kayak"
-        misheardField.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        misheardField.widthAnchor.constraint(equalToConstant: 240).isActive = true
         let addBtn = NSButton(title: "Add", target: self, action: #selector(addDictEntry))
         addBtn.bezelStyle = .rounded
         let removeBtn = NSButton(title: "Remove", target: self, action: #selector(removeDictEntry))
         removeBtn.bezelStyle = .rounded
-        let dictFields = NSStackView(views: [termField, misheardField]); dictFields.spacing = 8
-        let dictButtons = NSStackView(views: [addBtn, removeBtn]); dictButtons.spacing = 8
-        let dictControls = NSStackView(views: [dictFields, dictButtons])
-        dictControls.orientation = .vertical; dictControls.alignment = .leading; dictControls.spacing = 8
-        col2.addArrangedSubview(section("Personal dictionary", [scroll, dictControls], width: 360))
+        let controls = NSStackView(views: [termField, misheardField, addBtn, removeBtn])
+        controls.spacing = 8
+        return vstack([
+            section("Personal dictionary", [note, scroll, controls], width: 560),
+        ])
+    }
 
-        // General section
-        launchLoginCheck.target = self
-        launchLoginCheck.action = #selector(toggleLaunchLogin)
-        snapAssistCheck.target = self
-        snapAssistCheck.action = #selector(snapAssistToggled)
-        snapAssistCheck.lineBreakMode = .byWordWrapping
-        windowPaletteCheck.target = self
-        windowPaletteCheck.action = #selector(windowPaletteToggled)
-        windowPaletteCheck.lineBreakMode = .byWordWrapping
-        let dataBtn = NSButton(title: "Open Data Folder", target: self, action: #selector(openDataFolder))
-        dataBtn.bezelStyle = .rounded
-        let quitBtn = NSButton(title: "Quit Power Tools", target: NSApp, action: #selector(NSApplication.terminate(_:)))
-        quitBtn.bezelStyle = .rounded
-        let version = NSTextField(labelWithString: "Local-only · no network · v1.1.0")
-        version.font = .systemFont(ofSize: 11)
-        version.textColor = .tertiaryLabelColor
-        let chatBtn = NSButton(title: "Open AI Chat", target: self, action: #selector(openChat))
-        chatBtn.bezelStyle = .rounded
-        let generalButtons = NSStackView(views: [dataBtn, quitBtn])
-        generalButtons.spacing = 8
-        col3.addArrangedSubview(section("General", [chatBtn, snapAssistCheck, windowPaletteCheck, launchLoginCheck, generalButtons, version], width: 400))
-
-        let columns = NSStackView(views: [col1, col2, col3])
-        columns.orientation = .horizontal
-        columns.alignment = .top
-        columns.spacing = 18
-        root.addArrangedSubview(columns)
-
-        // Scroll container
-        let outerScroll = NSScrollView()
-        outerScroll.hasVerticalScroller = true
-        outerScroll.drawsBackground = false
-        outerScroll.translatesAutoresizingMaskIntoConstraints = false
-        let flip = FlippedClipView()
-        outerScroll.contentView = flip
-        outerScroll.documentView = root
-        window?.contentView = outerScroll
-        if let cv = window?.contentView {
-            NSLayoutConstraint.activate([
-                outerScroll.leadingAnchor.constraint(equalTo: cv.leadingAnchor),
-                outerScroll.trailingAnchor.constraint(equalTo: cv.trailingAnchor),
-                outerScroll.topAnchor.constraint(equalTo: cv.topAnchor),
-                outerScroll.bottomAnchor.constraint(equalTo: cv.bottomAnchor),
-                root.topAnchor.constraint(equalTo: flip.topAnchor),
-                root.leadingAnchor.constraint(equalTo: flip.leadingAnchor),
-                root.trailingAnchor.constraint(equalTo: flip.trailingAnchor),
-            ])
-        }
-        loadConfigIntoControls()
+    private func permissionsTab() -> NSView {
+        statusStack.orientation = .vertical
+        statusStack.alignment = .leading
+        statusStack.spacing = 6
+        let recheck = NSButton(title: "Re-check", target: self, action: #selector(recheck))
+        recheck.bezelStyle = .rounded
+        let openAX = NSButton(title: "Open Accessibility Settings", target: self, action: #selector(openAccessibility))
+        openAX.bezelStyle = .rounded
+        let statusButtons = NSStackView(views: [recheck, openAX])
+        statusButtons.spacing = 8
+        return vstack([
+            section("Permissions", [statusStack, statusButtons], width: 590),
+        ])
     }
 
     private func section(_ title: String, _ views: [NSView], width: CGFloat = 340) -> NSView {
@@ -324,6 +342,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         gridSizePopup.selectItem(withTitle: config.gridSize.displayName)
         snapAssistCheck.state = config.snapAssist ? .on : .off
         windowPaletteCheck.state = config.windowPalette ? .on : .off
+        clipboardHistoryCheck.state = config.clipboardHistory ? .on : .off
+        menuCalendarCheck.state = config.menuCalendar ? .on : .off
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
@@ -347,6 +367,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  G   screenshot → Google Lens
         •  C / X / V   copy · cut · paste files (Finder)
         •  P   Advanced Paste — plain, or AI: summarize / rewrite / translate
+        •  H   clipboard history — paste something you copied earlier
         •  M   find my mouse — spotlight the cursor
         •  W   snap palette — halves · quarters · thirds · mini-grid
         •  ← → ↑ ↓   snap window (repeat = resize · chain ← ↑ = corner)
@@ -461,6 +482,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         onConfigChange(config)
     }
 
+    @objc private func clipboardHistoryToggled() {
+        config.clipboardHistory = (clipboardHistoryCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func menuCalendarToggled() {
+        config.menuCalendar = (menuCalendarCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
     @objc private func toggleLaunchLogin() {
         do {
             if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
@@ -503,7 +536,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             let label = NSTextField(labelWithAttributedString: s)
             label.lineBreakMode = .byWordWrapping
             label.maximumNumberOfLines = 2
-            label.preferredMaxLayoutWidth = 320
+            label.preferredMaxLayoutWidth = 540
             label.cell?.wraps = true
             statusStack.addArrangedSubview(label)
         }

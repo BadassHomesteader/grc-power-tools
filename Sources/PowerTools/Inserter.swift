@@ -77,6 +77,19 @@ enum Inserter {
 
     private static func postCmdV() { postCmd(key: CGKeyCode(kVK_ANSI_V)) }
 
+    /// Paste `text` and LEAVE it on the clipboard (clipboard-history pick: the
+    /// chosen clip becomes the current clipboard, like Windows Win+V). No session
+    /// or concealed markers — this is a deliberate user copy, other clipboard
+    /// tools should see it.
+    static func pasteLeavingOnClipboard(_ text: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) {
+            postCmdV()
+        }
+    }
+
     /// Copy the current selection to a temporary pasteboard, read it, and restore
     /// the user's clipboard. Used by AI command mode to read the selected text.
     /// Returns nil if nothing was copied (no selection).
