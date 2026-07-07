@@ -10,7 +10,7 @@ Power Tools puts a suite of power-user utilities behind a single hotkey. **Hold 
 
 **The app bundle and data folder are still named `GRC Whisper` / bundle ID `com.grc.whisper`** so macOS permissions and saved keys survive the rename.
 
-**The core tools run entirely on this Mac.** Dictation never leaves the machine — speech recognition is Apple's on-device `SpeechAnalyzer` (macOS 26), text cleanup is Apple's on-device Foundation Model, and history lives in a local SQLite file. The only network calls are the *opt-in* AI features — AI chat, cloud cleanup, and Advanced Paste's smart transforms — and only when you invoke them, with your own API key. Little-Snitch-clean by design.
+**The core tools run entirely on this Mac.** Dictation is on-device by default — speech recognition is Apple's on-device `SpeechAnalyzer` (macOS 26), text cleanup is Apple's on-device Foundation Model, and history lives in a local SQLite file. The only network calls are the *opt-in* AI features — AI chat, cloud cleanup, and Advanced Paste's smart transforms — and only when you invoke them, with your own API key. Little-Snitch-clean by design.
 
 ## Screenshots
 
