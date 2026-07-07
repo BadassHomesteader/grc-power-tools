@@ -221,6 +221,20 @@ final class OverlayPanel {
         return panel.pill
     }
 
+    /// Static preview of the green Quick Capture success toast for design checks.
+    static func buildSuccessContent(dark: Bool, text: String) -> NSView {
+        let panel = OverlayPanel()
+        panel.scheme = dark ? .dark : .light
+        panel.setMode(.text)
+        panel.pill.fill = NSColor(srgbRed: 0.18, green: 0.64, blue: 0.33, alpha: 1)
+        panel.pill.stroke = nil
+        panel.iconView.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Captured")
+        panel.iconView.contentTintColor = .white
+        panel.textLabel.textColor = .white
+        panel.textLabel.stringValue = text
+        return panel.pill
+    }
+
     /// Static preview of the window-organizer state for `render-window`.
     static func buildWindowContent(dark: Bool, region: CGRect, label: String) -> NSView {
         let panel = OverlayPanel()
@@ -233,6 +247,7 @@ final class OverlayPanel {
     }
 
     private func setMode(_ mode: Mode) {
+        restoreDefaultChrome()   // clear any prior green success chrome
         iconView.isHidden = (mode == .window)
         waveform.isHidden = (mode != .waveform)
         hintLabel.isHidden = (mode != .waveform)
@@ -300,6 +315,33 @@ final class OverlayPanel {
         textLabel.stringValue = text
         present()
         hideAfter(1.4)
+    }
+
+    /// Bright-green confirmation so a successful Quick Capture is unmistakable:
+    /// green pill, white checkmark, white text. setMode() restored the default
+    /// chrome first, so the next (non-success) toast returns to the themed look.
+    func showSuccess(_ text: String) {
+        hideTimer?.invalidate()
+        setMode(.text)
+        pill.fill = NSColor(srgbRed: 0.18, green: 0.64, blue: 0.33, alpha: 1)
+        pill.stroke = nil
+        pill.needsDisplay = true
+        iconView.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Captured")
+        iconView.contentTintColor = .white
+        textLabel.textColor = .white
+        textLabel.stringValue = text
+        present()
+        hideAfter(1.8)
+    }
+
+    /// Reset the pill to the themed default (undoes showSuccess's green). Called at
+    /// the top of setMode so every subsequent toast starts from a clean look.
+    private func restoreDefaultChrome() {
+        pill.fill = pillFill
+        pill.stroke = pillStroke
+        pill.needsDisplay = true
+        iconView.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Power Tools")
+        iconView.contentTintColor = fg
     }
 
     /// Window-organizer state: a mini screen diagram + label (e.g. "Left ⅓"). Stays

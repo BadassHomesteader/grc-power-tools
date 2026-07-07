@@ -142,14 +142,30 @@ enum CloudPolish {
         return out
     }
 
+    /// Unix seconds for a "due today" date as grc-todo / Toodledo expect it: UTC
+    /// midnight of the *local* calendar day. The app formats a task's date with
+    /// toISOString() (UTC) and compares it to the local today string, so a task is
+    /// "today" only when its timestamp is UTC-midnight of the local Y/M/D.
+    static func todayDueDate() -> Int {
+        var local = Calendar(identifier: .gregorian)
+        local.timeZone = .current
+        let ymd = local.dateComponents([.year, .month, .day], from: Date())
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        let midnightUTC = utc.date(from: ymd) ?? Date()
+        return Int(midnightUTC.timeIntervalSince1970)
+    }
+
     /// Generic authenticated POST for the Quick Capture "connection" — POST a line
     /// of text to any endpoint the user configures. The request body is built from
-    /// `bodyTemplate` by replacing `%TEXT%` with the JSON-escaped text, so quotes /
-    /// newlines survive. `header` empty → no auth header sent. Any 2xx is success;
-    /// the built body is validated as JSON first so a bad template fails clearly.
+    /// `bodyTemplate` by replacing `%TEXT%` with the JSON-escaped text (so quotes /
+    /// newlines survive) and `%TODAY%` with today's due-date timestamp. `header`
+    /// empty → no auth header sent. Any 2xx is success; the built body is validated
+    /// as JSON first so a bad template fails clearly.
     static func postCapture(text: String, endpoint: String, header: String, token: String, bodyTemplate: String) async throws {
         guard let url = URL(string: endpoint), url.scheme != nil else { throw CloudError.badResponse }
-        let bodyString = bodyTemplate.replacingOccurrences(of: "%TEXT%", with: jsonEscape(text))
+        var bodyString = bodyTemplate.replacingOccurrences(of: "%TEXT%", with: jsonEscape(text))
+        bodyString = bodyString.replacingOccurrences(of: "%TODAY%", with: String(todayDueDate()))
         let bodyData = Data(bodyString.utf8)
         // Fail fast on a malformed template rather than sending garbage the server
         // would reject with an opaque 400.

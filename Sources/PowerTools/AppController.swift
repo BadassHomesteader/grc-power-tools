@@ -520,7 +520,7 @@ final class AppController {
             do {
                 try await CloudPolish.postCapture(text: text, endpoint: endpoint, header: header,
                                                   token: token, bodyTemplate: template)
-                await MainActor.run { self.overlay.showResult("Captured ✓  \(text)"); restore?.activate() }
+                await MainActor.run { self.overlay.showSuccess("Captured  \(text)"); restore?.activate() }
             } catch {
                 await MainActor.run {
                     self.overlay.showError("Quick Capture failed — check Settings ▸ Connections")

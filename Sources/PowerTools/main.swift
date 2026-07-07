@@ -360,6 +360,19 @@ case "render-overlay":
         }
     }
 
+case "render-overlay-success":
+    // Offscreen preview of the green Quick Capture confirmation.
+    let out = args.count >= 2 ? args[1] : "overlay-success.png"
+    let dark = !(args.count >= 3 && args[2] == "light")
+    MainActor.assumeIsolated {
+        let content = OverlayPanel.buildSuccessContent(dark: dark, text: "Captured  Buy potting soil")
+        guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { exit(1) }
+        content.cacheDisplay(in: content.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
 case "dict":
     let store = Store()
     switch args.count > 1 ? args[1] : "" {
