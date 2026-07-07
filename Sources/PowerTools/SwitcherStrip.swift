@@ -19,6 +19,8 @@ final class SwitcherStrip {
     private var captureTask: Task<Void, Never>?
 
     var isVisible: Bool { panel != nil }
+    /// Tiles per row of the current strip (for ↑/↓ row jumps while cycling).
+    private(set) var perRow = 8
 
     func present(tiles: [Tile], highlight: Int, dark: Bool) {
         dismiss()
@@ -28,7 +30,7 @@ final class SwitcherStrip {
         // Wrap into rows so many windows still fit (Windows-style), sized to
         // the screen the strip appears on.
         let usable = screen.visibleFrame.width * 0.94
-        let perRow = max(3, Int((usable - 28 + 10) / (SwitcherStripView.tileW + 10)))
+        perRow = max(3, Int((usable - 28 + 10) / (SwitcherStripView.tileW + 10)))
         let v = SwitcherStripView(tiles: tiles, dark: dark, perRow: perRow)
         v.highlighted = highlight
         let size = v.fittingSize

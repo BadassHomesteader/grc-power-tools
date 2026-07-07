@@ -181,6 +181,20 @@ final class WindowSwitcher {
         current = landed
     }
 
+    /// Arrows while cycling: ←/→ wrap linearly, ↑/↓ jump a strip row (clamped).
+    func cycleArrow(dx: Int, dy: Int) {
+        guard let snap = session, snap.count > 1 else { return }
+        lastCycleAt = Date()
+        if dx != 0 {
+            sessionIndex = (sessionIndex + dx + snap.count) % snap.count
+        } else if dy != 0 {
+            let target = sessionIndex + dy * strip.perRow
+            guard snap.indices.contains(target) else { return }
+            sessionIndex = target
+        }
+        strip.setHighlight(sessionIndex)
+    }
+
     /// Esc while cycling: close the strip, switch nothing, keep history as-is.
     func cancelCycle() {
         strip.dismiss()

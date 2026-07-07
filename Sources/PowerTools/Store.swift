@@ -154,6 +154,22 @@ final class Store {
         }
     }
 
+    /// Re-capture: replace a layout's windows, keep its name ("edit" = arrange
+    /// your windows, then update the snapshot).
+    func updateLayoutJSON(id: Int64, json: String) {
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "UPDATE layouts SET json = ?, ts = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, json, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, ISO8601DateFormatter().string(from: Date()), -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(stmt, 3, id)
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
     func renameLayout(id: Int64, name: String) {
         queue.sync {
             guard let db else { return }

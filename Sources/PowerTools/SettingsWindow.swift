@@ -247,15 +247,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.heightAnchor.constraint(equalToConstant: 120).isActive = true
         scroll.widthAnchor.constraint(equalToConstant: 500).isActive = true
-        layoutNameField.placeholderString = "rename selected…"
-        layoutNameField.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        layoutNameField.placeholderString = "name — used by Save Current & Rename"
+        layoutNameField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         let renameBtn = NSButton(title: "Rename", target: self, action: #selector(renameLayoutTapped))
         let saveBtn = NSButton(title: "Save Current", target: self, action: #selector(saveLayoutTapped))
+        let updateBtn = NSButton(title: "Update from Current", target: self, action: #selector(updateLayoutTapped))
         let restoreBtn = NSButton(title: "Restore", target: self, action: #selector(restoreLayoutTapped))
         let deleteBtn = NSButton(title: "Delete", target: self, action: #selector(deleteLayoutTapped))
-        for b in [renameBtn, saveBtn, restoreBtn, deleteBtn] { b.bezelStyle = .rounded }
+        for b in [renameBtn, saveBtn, updateBtn, restoreBtn, deleteBtn] { b.bezelStyle = .rounded }
         let row1 = NSStackView(views: [layoutNameField, renameBtn]); row1.spacing = 8
-        let row2 = NSStackView(views: [saveBtn, restoreBtn, deleteBtn]); row2.spacing = 8
+        let row2 = NSStackView(views: [saveBtn, updateBtn, restoreBtn, deleteBtn]); row2.spacing = 8
         layoutStatus.font = .systemFont(ofSize: 11)
         layoutStatus.textColor = .secondaryLabelColor
 
@@ -279,11 +280,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     @objc private func saveLayoutTapped() {
         let items = WindowLayouts.snapshot()
         guard !items.isEmpty else { layoutStatus.stringValue = "No windows to save"; return }
-        let f = DateFormatter()
-        f.dateFormat = "MMM d · h:mm a"
-        store.addLayout(name: f.string(from: Date()), json: WindowLayouts.encode(items))
+        var name = layoutNameField.stringValue.trimmingCharacters(in: .whitespaces)
+        if name.isEmpty {
+            let f = DateFormatter()
+            f.dateFormat = "MMM d · h:mm a"
+            name = f.string(from: Date())
+        }
+        store.addLayout(name: name, json: WindowLayouts.encode(items))
+        layoutNameField.stringValue = ""
         reloadLayouts()
-        layoutStatus.stringValue = "Saved · \(items.count) windows"
+        layoutStatus.stringValue = "Saved “\(name)” · \(items.count) windows"
+    }
+
+    @objc private func updateLayoutTapped() {
+        let row = layoutsTable.selectedRow
+        guard row >= 0, row < layoutEntries.count else { layoutStatus.stringValue = "Select a layout first"; return }
+        let items = WindowLayouts.snapshot()
+        guard !items.isEmpty else { layoutStatus.stringValue = "No windows to capture"; return }
+        store.updateLayoutJSON(id: layoutEntries[row].id, json: WindowLayouts.encode(items))
+        reloadLayouts()
+        layoutStatus.stringValue = "Updated “\(layoutEntries[row].name)” · \(items.count) windows"
     }
 
     @objc private func restoreLayoutTapped() {

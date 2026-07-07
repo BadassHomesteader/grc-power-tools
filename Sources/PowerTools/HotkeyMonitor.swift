@@ -36,6 +36,7 @@ final class HotkeyMonitor {
         case cycleWindow(back: Bool)      // ⌘Tab / ⇧⌘Tab — Alt-Tab-style window MRU
         case cycleEnd                     // ⌘ released — raise + commit the selection
         case cycleCancel                  // Esc while cycling — close, switch nothing
+        case cycleArrow(dx: Int, dy: Int) // arrows while cycling — move the highlight
     }
 
     var handler: ((Callback) -> Void)?
@@ -230,6 +231,18 @@ final class HotkeyMonitor {
             cycling = false
             swallowedKeyUps.insert(keyCode)
             dispatch(.cycleCancel)
+            return nil
+        }
+        // Arrows while cycling move the strip highlight (Windows Alt-Tab style):
+        // ←/→ step, ↑/↓ jump rows. Only inside a session — a plain ⌘←/⌘→ keeps
+        // its stock line-start/line-end meaning. Auto-repeat allowed (scrubbing).
+        if cycling, type == .keyDown,
+           keyCode == Self.kVK_LeftArrow || keyCode == Self.kVK_RightArrow
+            || keyCode == Self.kVK_UpArrow || keyCode == Self.kVK_DownArrow {
+            swallowedKeyUps.insert(keyCode)
+            let dx = keyCode == Self.kVK_LeftArrow ? -1 : (keyCode == Self.kVK_RightArrow ? 1 : 0)
+            let dy = keyCode == Self.kVK_UpArrow ? -1 : (keyCode == Self.kVK_DownArrow ? 1 : 0)
+            dispatch(.cycleArrow(dx: dx, dy: dy))
             return nil
         }
 

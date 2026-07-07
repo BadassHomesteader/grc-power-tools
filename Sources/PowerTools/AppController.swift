@@ -141,6 +141,8 @@ final class AppController {
                 self.windowSwitcher.endCycle()
             case .cycleCancel:
                 self.windowSwitcher.cancelCycle()
+            case .cycleArrow(let dx, let dy):
+                self.windowSwitcher.cycleArrow(dx: dx, dy: dy)
             case .findMouse:
                 self.interruptDictation()
                 self.findMouse.flash()
