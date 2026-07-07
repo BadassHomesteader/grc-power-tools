@@ -121,6 +121,54 @@ enum CloudPolish {
         return trimmed
     }
 
+    /// Escape a string for embedding inside a JSON string literal (the chars JSON
+    /// requires: quote, backslash, control chars). Used so arbitrary capture text
+    /// can be spliced into a `%TEXT%` placeholder without breaking the JSON body.
+    static func jsonEscape(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count + 8)
+        for scalar in s.unicodeScalars {
+            switch scalar {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            default:
+                if scalar.value < 0x20 { out += String(format: "\\u%04x", scalar.value) }
+                else { out.unicodeScalars.append(scalar) }
+            }
+        }
+        return out
+    }
+
+    /// Generic authenticated POST for the Quick Capture "connection" — POST a line
+    /// of text to any endpoint the user configures. The request body is built from
+    /// `bodyTemplate` by replacing `%TEXT%` with the JSON-escaped text, so quotes /
+    /// newlines survive. `header` empty → no auth header sent. Any 2xx is success;
+    /// the built body is validated as JSON first so a bad template fails clearly.
+    static func postCapture(text: String, endpoint: String, header: String, token: String, bodyTemplate: String) async throws {
+        guard let url = URL(string: endpoint), url.scheme != nil else { throw CloudError.badResponse }
+        let bodyString = bodyTemplate.replacingOccurrences(of: "%TEXT%", with: jsonEscape(text))
+        let bodyData = Data(bodyString.utf8)
+        // Fail fast on a malformed template rather than sending garbage the server
+        // would reject with an opaque 400.
+        guard (try? JSONSerialization.jsonObject(with: bodyData)) != nil else { throw CloudError.badResponse }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 12
+        req.setValue("application/json", forHTTPHeaderField: "content-type")
+        if !header.isEmpty, !token.isEmpty { req.setValue(token, forHTTPHeaderField: header) }
+        req.httpBody = bodyData
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw CloudError.badResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            throw CloudError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+    }
+
     /// OpenAI Chat Completions.
     static func openai(instructions: String, prompt: String, model: String, apiKey: String) async throws -> String {
         var req = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)

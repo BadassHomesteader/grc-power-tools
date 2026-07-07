@@ -31,6 +31,7 @@ final class AppController {
     private let gridOverlay = GridOverlay()
     private let snapAssist = SnapAssist()
     private let advancedPaste = AdvancedPaste()
+    private let quickCapture = QuickCapture()
     private let findMouse = FindMouse()
     private let windowPalette = WindowPalette()
     private let clipboardPalette = ClipboardPalette()
@@ -123,6 +124,8 @@ final class AppController {
                 self.openWindowPalette()
             case .advancedPaste:
                 self.openAdvancedPaste()
+            case .quickCapture:
+                self.openQuickCapture()
             case .clipboardHistory:
                 self.openClipboardHistory()
             case .cycleWindow(let back):
@@ -456,6 +459,58 @@ final class AppController {
                 await MainActor.run { self.overlay.hide(); paste(out) }
             } catch {
                 await MainActor.run { self.overlay.showError("Paste transform failed"); app.activate() }
+            }
+        }
+    }
+
+    /// hold + N: Quick Capture. Open a small input panel; the typed/dictated line
+    /// is POSTed to the user's configured connection (Config.capture*). No endpoint
+    /// set → a hint toast. The frontmost app is remembered so focus returns to it.
+    private func openQuickCapture() {
+        interruptDictation()
+        overlay.hide()
+        let endpoint = config.captureEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty else {
+            overlay.showError("Set up Quick Capture in Settings ▸ Connections")
+            return
+        }
+        let priorApp = NSWorkspace.shared.frontmostApplication
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        quickCapture.present(
+            dark: config.appearance.isDark, screen: screen,
+            onSubmit: { text in self.sendCapture(text, endpoint: endpoint, restore: priorApp) },
+            onCancel: { priorApp?.activate() }
+        )
+    }
+
+    /// POST the captured text. On success, a brief toast and focus returns to the
+    /// app you were in. On failure, re-open the panel pre-filled so the text isn't
+    /// lost — no automatic retry (the endpoint has no idempotency key).
+    private func sendCapture(_ text: String, endpoint: String, restore: NSRunningApplication?) {
+        let header = config.captureAuthHeader.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = Keychain.get("capture") ?? ""
+        let template = config.captureBodyTemplate
+        overlay.showProcessing()
+        Task {
+            do {
+                try await CloudPolish.postCapture(text: text, endpoint: endpoint, header: header,
+                                                  token: token, bodyTemplate: template)
+                await MainActor.run { self.overlay.showResult("Captured ✓"); restore?.activate() }
+            } catch {
+                await MainActor.run {
+                    self.overlay.showError("Quick Capture failed — check Settings ▸ Connections")
+                    let mouse = NSEvent.mouseLocation
+                    let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+                    if let screen {
+                        self.quickCapture.present(
+                            dark: self.config.appearance.isDark, screen: screen, prefill: text,
+                            onSubmit: { t in self.sendCapture(t, endpoint: endpoint, restore: restore) },
+                            onCancel: { restore?.activate() }
+                        )
+                    }
+                }
             }
         }
     }

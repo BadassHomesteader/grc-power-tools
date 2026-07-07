@@ -40,6 +40,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let claudeModelField = NSComboBox()
     private let openaiModelField = NSComboBox()
 
+    private let captureEndpointField = NSTextField()
+    private let captureHeaderField = NSTextField()
+    private let captureTokenField = NSSecureTextField()
+    private let captureBodyField = NSTextField()
+
     init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void, onOpenChat: @escaping () -> Void = {}) {
         self.store = store
         self.config = config
@@ -115,6 +120,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         tabView.addTabViewItem(tab("Dictation", dictationTab()))
         tabView.addTabViewItem(tab("Windows", windowsTab()))
         tabView.addTabViewItem(tab("AI", aiTab()))
+        tabView.addTabViewItem(tab("Connections", connectionsTab()))
         tabView.addTabViewItem(tab("Dictionary", dictionaryTab()))
         tabView.addTabViewItem(tab("Permissions", permissionsTab()))
 
@@ -243,6 +249,37 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         ])
     }
 
+    private func connectionsTab() -> NSView {
+        let note = NSTextField(labelWithString: "Quick Capture (hold your hotkey + N): type or dictate a line and it's POSTed to any endpoint you choose — a personal todo app, an n8n webhook, anything. %TEXT% in the body is replaced with what you typed (JSON-escaped). The token is stored in a private, owner-only file like your AI keys; leave the header blank to send no auth. Endpoint blank = off.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.lineBreakMode = .byWordWrapping
+        note.preferredMaxLayoutWidth = 500
+        for f in [captureEndpointField, captureHeaderField, captureBodyField] {
+            f.widthAnchor.constraint(equalToConstant: 320).isActive = true
+            f.target = self
+            f.action = #selector(saveCaptureSettings)
+        }
+        captureTokenField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        captureTokenField.target = self
+        captureTokenField.action = #selector(saveCaptureToken)
+        captureEndpointField.placeholderString = "https://your-app.example.com/api/tasks"
+        captureHeaderField.placeholderString = "X-Api-Key"
+        captureBodyField.placeholderString = "{\"title\":\"%TEXT%\"}"
+        let saveToken = NSButton(title: "Save", target: self, action: #selector(saveCaptureToken))
+        saveToken.bezelStyle = .rounded
+        let tokenRow = NSStackView(views: [captureTokenField, saveToken]); tokenRow.spacing = 8
+        return vstack([
+            section("Quick Capture · send a line to a connection", [
+                note,
+                formRow("Endpoint", captureEndpointField),
+                formRow("Auth header", captureHeaderField),
+                formRow("Token", tokenRow),
+                formRow("Body", captureBodyField),
+            ], width: 560),
+        ])
+    }
+
     private func dictionaryTab() -> NSView {
         let note = NSTextField(labelWithString: "Words dictation should always get right — project names, people, jargon. Add the term plus what the recognizer mishears it as.")
         note.font = .systemFont(ofSize: 11)
@@ -351,6 +388,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         openaiModelField.stringValue = config.openaiModel
         claudeKeyField.placeholderString = Keychain.has("claude") ? "•••••• saved — paste to replace" : "sk-ant-…"
         openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
+        captureEndpointField.stringValue = config.captureEndpoint
+        captureHeaderField.stringValue = config.captureAuthHeader
+        captureBodyField.stringValue = config.captureBodyTemplate
+        captureTokenField.stringValue = ""
+        captureTokenField.placeholderString = Keychain.has("capture") ? "•••••• saved — paste to replace" : "your API key / token"
         helpLabel.stringValue = helpText(for: config.hotkey)
     }
 
@@ -369,6 +411,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  C / X / V   copy · cut · paste files (Finder)
         •  P   Advanced Paste — plain, or AI: summarize / rewrite / translate
         •  H   clipboard history — paste something you copied earlier
+        •  N   quick capture — send a line to your connection (todo app, webhook)
         •  M   find my mouse — spotlight the cursor
         •  W   snap palette — halves · quarters · thirds · mini-grid
         •  ← → ↑ ↓   snap window (repeat = resize · chain ← ↑ = corner)
@@ -394,6 +437,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         Keychain.set(v, account: "openai")
         openaiKeyField.stringValue = ""
         openaiKeyField.placeholderString = "•••••• saved — paste to replace"
+    }
+
+    @objc private func saveCaptureSettings() {
+        config.captureEndpoint = captureEndpointField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let h = captureHeaderField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        config.captureAuthHeader = h  // blank is allowed — means send no auth header
+        let b = captureBodyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        config.captureBodyTemplate = b.isEmpty ? "{\"title\":\"%TEXT%\"}" : b
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func saveCaptureToken() {
+        let v = captureTokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !v.isEmpty else { return }
+        Keychain.set(v, account: "capture")
+        captureTokenField.stringValue = ""
+        captureTokenField.placeholderString = "•••••• saved — paste to replace"
     }
 
     @objc private func modelsChanged() {

@@ -204,6 +204,16 @@ struct Config: Codable {
     /// (replaces the macOS app switcher; ⇧⌘Tab walks backwards). ⌘` untouched.
     var lastWindowSwitch: Bool = true
 
+    /// Quick Capture (hold hotkey + N): POST a typed/dictated line to any HTTP
+    /// endpoint — a personal todo app, an n8n webhook, etc. Nothing app-specific
+    /// ships here; the endpoint/header/body are all user config and the token
+    /// lives in Keychain under "capture". An empty endpoint disables the feature.
+    var captureEndpoint: String = ""
+    /// Auth header name sent with the capture POST (empty = send no auth header).
+    var captureAuthHeader: String = "X-Api-Key"
+    /// JSON body template; `%TEXT%` is replaced with the JSON-escaped capture text.
+    var captureBodyTemplate: String = "{\"title\":\"%TEXT%\"}"
+
     init() {}
 
     private enum CodingKeys: String, CodingKey {
@@ -211,6 +221,7 @@ struct Config: Codable {
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
         case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
         case windowPalette, clipboardHistory, lastWindowSwitch
+        case captureEndpoint, captureAuthHeader, captureBodyTemplate
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -236,6 +247,9 @@ struct Config: Codable {
         windowPalette = try c.decodeIfPresent(Bool.self, forKey: .windowPalette) ?? true
         clipboardHistory = try c.decodeIfPresent(Bool.self, forKey: .clipboardHistory) ?? true
         lastWindowSwitch = try c.decodeIfPresent(Bool.self, forKey: .lastWindowSwitch) ?? true
+        captureEndpoint = try c.decodeIfPresent(String.self, forKey: .captureEndpoint) ?? ""
+        captureAuthHeader = try c.decodeIfPresent(String.self, forKey: .captureAuthHeader) ?? "X-Api-Key"
+        captureBodyTemplate = try c.decodeIfPresent(String.self, forKey: .captureBodyTemplate) ?? "{\"title\":\"%TEXT%\"}"
     }
 
     static var appSupportDir: URL {

@@ -196,6 +196,20 @@ case "advancedpaste-preview":
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
     }
 
+case "quickcapture-preview":
+    let out = args.count >= 2 ? args[1] : "quickcapture-preview.png"
+    let dark = !(args.count >= 3 && args[2] == "light")
+    MainActor.assumeIsolated {
+        let v = QuickCaptureView(dark: dark, prefill: "Email the Q3 vendor list to Dana")
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        v.layoutSubtreeIfNeeded()  // the input field is Auto Layout; realize it before caching
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
 case "findmouse-preview":
     let out = args.count >= 2 ? args[1] : "fm.png"
     MainActor.assumeIsolated {
