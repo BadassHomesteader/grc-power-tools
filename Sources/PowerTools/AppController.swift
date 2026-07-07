@@ -22,6 +22,7 @@ final class AppController {
             clipboardWatcher.enabled = config.clipboardHistory
             hotkey?.lastWindowSwitch = config.lastWindowSwitch
             hotkey?.setConnectionLeaders(Self.leaderMap(config.connections))
+            windowSwitcher.dark = config.appearance.isDark
         }
     }
 
@@ -138,6 +139,8 @@ final class AppController {
                 self.windowSwitcher.cycle(back: back)
             case .cycleEnd:
                 self.windowSwitcher.endCycle()
+            case .cycleCancel:
+                self.windowSwitcher.cancelCycle()
             case .findMouse:
                 self.interruptDictation()
                 self.findMouse.flash()
@@ -149,6 +152,7 @@ final class AppController {
         }
         hotkey = monitor
         clipboardWatcher.start()
+        windowSwitcher.dark = config.appearance.isDark
         windowSwitcher.start()
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
     }
@@ -639,10 +643,29 @@ final class AppController {
             return
         }
         guard let screen = WindowManager.screen(of: target) ?? NSScreen.main else { return }
+        let chips = store.layouts(3).map { entry -> (entry: LayoutEntry, label: String) in
+            let count = WindowLayouts.decode(entry.json).count
+            return (entry, "\(entry.name) · \(count)w")
+        }
         windowPalette.present(
             dark: config.appearance.isDark,
             gridCols: config.gridSize.cols, gridRows: config.gridSize.rows,
             target: target, screen: screen,
+            layouts: chips,
+            onSaveLayout: { [weak self] in
+                guard let self else { return }
+                let items = WindowLayouts.snapshot()
+                guard !items.isEmpty else { self.overlay.showError("No windows to save"); return }
+                let f = DateFormatter()
+                f.dateFormat = "MMM d · h:mm a"
+                self.store.addLayout(name: f.string(from: Date()), json: WindowLayouts.encode(items))
+                self.overlay.showResult("Layout saved · \(items.count) windows")
+                app.activate()
+            },
+            onRestoreLayout: { [weak self] entry in
+                let r = WindowLayouts.restore(WindowLayouts.decode(entry.json))
+                self?.overlay.showResult("Restored \(r.restored) of \(r.total) windows")
+            },
             done: { app.activate() }
         )
     }

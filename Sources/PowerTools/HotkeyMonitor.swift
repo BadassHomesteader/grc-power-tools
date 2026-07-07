@@ -34,7 +34,8 @@ final class HotkeyMonitor {
         case quickCapture(connectionId: String)  // send a line to a configured connection
         case findMouse                    // spotlight the cursor
         case cycleWindow(back: Bool)      // ⌘Tab / ⇧⌘Tab — Alt-Tab-style window MRU
-        case cycleEnd                     // ⌘ released — commit the cycle
+        case cycleEnd                     // ⌘ released — raise + commit the selection
+        case cycleCancel                  // Esc while cycling — close, switch nothing
     }
 
     var handler: ((Callback) -> Void)?
@@ -223,6 +224,13 @@ final class HotkeyMonitor {
         if cycling, type == .flagsChanged, !flags.contains(.maskCommand) {
             cycling = false
             dispatch(.cycleEnd)
+        }
+        // Esc while cycling → cancel (swallowed so the frontmost app never sees it).
+        if cycling, type == .keyDown, keyCode == Self.kVK_Escape {
+            cycling = false
+            swallowedKeyUps.insert(keyCode)
+            dispatch(.cycleCancel)
+            return nil
         }
 
         switch hotkey {

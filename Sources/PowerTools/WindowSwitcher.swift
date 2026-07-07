@@ -21,12 +21,15 @@ final class WindowSwitcher {
     private var history: [Entry] = []      // most recently used first, excludes current
 
     /// Hold-⌘-and-Tab cycling session: a snapshot of [current] + history taken
-    /// at the first Tab, so raising windows mid-cycle doesn't reshuffle the
-    /// list underneath the user. Committed to history when ⌘ is released.
+    /// at the first Tab. Windows-style: stepping only moves the STRIP highlight;
+    /// the chosen window raises when ⌘ is released (endCycle). Esc cancels.
     private var session: [Entry]?
     private var sessionIndex = 0
     private var suppress = false           // ignore focus events during a session
     private var lastCycleAt = Date.distantPast
+    private let strip = SwitcherStrip()
+    /// Mirrors the app theme for the strip (set by AppController on config change).
+    var dark = true
 
     private var observer: AXObserver?
     private var observedPid: pid_t = 0
@@ -123,6 +126,15 @@ final class WindowSwitcher {
                 // sentinel fills slot 0 and the first Tab lands on `current`.
                 snap.insert(Entry(pid: -1, windowID: 0), at: 0)
             }
+            // Drop dead windows from the history part.
+            snap = snap.enumerated().filter { $0.offset == 0 || liveWindow($0.element) }.map(\.element)
+            // Windows-Alt-Tab completeness: append every other on-screen window
+            // (front-to-back) that history hasn't seen yet, so apps you haven't
+            // visited since launch still show up in the strip.
+            for entry in onScreenWindows() where !snap.contains(entry) {
+                snap.append(entry)
+            }
+            if snap.count > 8 { snap = Array(snap.prefix(8)) }
             guard snap.count > 1 else {
                 log("switcher: nothing to cycle to")
                 return
@@ -130,33 +142,36 @@ final class WindowSwitcher {
             session = snap
             sessionIndex = 0
             suppress = true
+            strip.present(tiles: snap.map(tile(for:)), highlight: 0, dark: dark)
         }
-        guard var snap = session, snap.count > 1 else { return }
-        var attempts = snap.count
-        while attempts > 0 {
-            attempts -= 1
-            sessionIndex = (sessionIndex + (back ? -1 : 1) + snap.count) % snap.count
-            let target = snap[sessionIndex]
-            if raise(target) { break }
-            // Window is gone — drop it and keep walking in the same direction.
-            snap.remove(at: sessionIndex)
-            if back { sessionIndex = sessionIndex % max(snap.count, 1) }
-            else { sessionIndex = (sessionIndex - 1 + max(snap.count, 1)) % max(snap.count, 1) }
-            if snap.count < 2 { break }
-        }
-        session = snap
+        guard let snap = session, snap.count > 1 else { return }
+        sessionIndex = (sessionIndex + (back ? -1 : 1) + snap.count) % snap.count
+        strip.setHighlight(sessionIndex)
     }
 
-    /// ⌘ released: commit the landing window as most-recent and resume tracking.
+    /// ⌘ released: raise the highlighted window, commit it as most-recent.
     func endCycle() {
-        guard let snap = session, snap.indices.contains(sessionIndex) else {
+        strip.dismiss()
+        guard var snap = session, snap.indices.contains(sessionIndex) else {
             session = nil
             suppress = false
             return
         }
-        let landed = snap[sessionIndex]
+        // Raise the selection; if it died mid-session, walk forward to the next
+        // live one.
+        var landed: Entry?
+        var attempts = snap.count
+        while attempts > 0 {
+            attempts -= 1
+            let target = snap[sessionIndex]
+            if raise(target) { landed = target; break }
+            snap.remove(at: sessionIndex)
+            if snap.isEmpty { break }
+            sessionIndex = sessionIndex % snap.count
+        }
         session = nil
         suppress = false
+        guard let landed else { return }
         if let cur = current, cur != landed {
             history.removeAll { $0 == cur }
             history.insert(cur, at: 0)
@@ -164,6 +179,55 @@ final class WindowSwitcher {
         history.removeAll { $0 == landed }
         if history.count > 20 { history.removeLast() }
         current = landed
+    }
+
+    /// Esc while cycling: close the strip, switch nothing, keep history as-is.
+    func cancelCycle() {
+        strip.dismiss()
+        session = nil
+        suppress = false
+    }
+
+    /// All normal on-screen windows, front-to-back (CGWindowList z-order).
+    private func onScreenWindows() -> [Entry] {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                    kCGNullWindowID) as? [[String: Any]] else { return [] }
+        var out: [Entry] = []
+        for w in list {
+            guard let layer = w[kCGWindowLayer as String] as? Int, layer == 0,
+                  let pid = w[kCGWindowOwnerPID as String] as? pid_t,
+                  pid != ProcessInfo.processInfo.processIdentifier,
+                  let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+                  (b["Width"] ?? 0) >= 120, (b["Height"] ?? 0) >= 90,
+                  let wid = w[kCGWindowNumber as String] as? Int else { continue }
+            out.append(Entry(pid: pid, windowID: CGWindowID(wid)))
+        }
+        return out
+    }
+
+    private func liveWindow(_ entry: Entry) -> Bool {
+        guard entry.pid > 0,
+              let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated else { return false }
+        return WindowManager.axWindow(pid: entry.pid, windowID: entry.windowID) != nil
+    }
+
+    private func tile(for entry: Entry) -> SwitcherStrip.Tile {
+        if entry.pid <= 0 {
+            // Sentinel slot: the frontmost app had no trackable window.
+            let front = NSWorkspace.shared.frontmostApplication
+            return SwitcherStrip.Tile(pid: -1, windowID: 0,
+                                      title: front?.localizedName ?? "Here", icon: front?.icon)
+        }
+        let app = NSRunningApplication(processIdentifier: entry.pid)
+        var title = ""
+        if let win = WindowManager.axWindow(pid: entry.pid, windowID: entry.windowID) {
+            var t: CFTypeRef?
+            if AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &t) == .success {
+                title = (t as? String) ?? ""
+            }
+        }
+        if title.isEmpty { title = app?.localizedName ?? "" }
+        return SwitcherStrip.Tile(pid: entry.pid, windowID: entry.windowID, title: title, icon: app?.icon)
     }
 
     /// Raise a specific window and bring its app frontmost. Returns false if

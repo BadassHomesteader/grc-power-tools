@@ -18,11 +18,19 @@ final class WindowPalette {
 
     /// `target`: the AX window captured before the palette stole focus.
     /// `done`: always called (apply or cancel) so the caller can refocus the app.
+    /// `layouts`: up to 3 saved-layout chips (A/B/C restore, S saves current).
     func present(dark: Bool, gridCols: Int, gridRows: Int,
-                 target: AXUIElement, screen: NSScreen, done: @escaping () -> Void) {
+                 target: AXUIElement, screen: NSScreen,
+                 layouts: [(entry: LayoutEntry, label: String)] = [],
+                 onSaveLayout: (() -> Void)? = nil,
+                 onRestoreLayout: ((LayoutEntry) -> Void)? = nil,
+                 done: @escaping () -> Void) {
         dismiss()
         let view = WindowPaletteView(dark: dark, gridCols: gridCols, gridRows: gridRows,
                                      screens: NSScreen.screens, initialScreen: screen)
+        view.layouts = layouts
+        view.onSaveLayout = { [weak self] in self?.dismiss(); onSaveLayout?() }
+        view.onRestoreLayout = { [weak self] entry in self?.dismiss(); onRestoreLayout?(entry) }
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
 
@@ -183,6 +191,10 @@ final class WindowPaletteView: NSView {
     var onCancel: (() -> Void)?
     /// Live preview: nil hides the outline.
     var onPreview: ((NSRect?, NSScreen) -> Void)?
+    /// Saved layouts: chips A/B/C restore, S saves the current arrangement.
+    var layouts: [(entry: LayoutEntry, label: String)] = []
+    var onSaveLayout: (() -> Void)?
+    var onRestoreLayout: ((LayoutEntry) -> Void)?
 
     private var quarters = false
     private var highlighted = 0
@@ -198,6 +210,7 @@ final class WindowPaletteView: NSView {
     private static let btnGap: CGFloat = 8
     private static let gridGap: CGFloat = 10
     private static let gridAreaH: CGFloat = 185
+    private static let layoutsH: CGFloat = 36
     private static let footerH: CGFloat = 28
 
     init(dark: Bool, gridCols: Int, gridRows: Int, screens: [NSScreen], initialScreen: NSScreen) {
@@ -214,7 +227,7 @@ final class WindowPaletteView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override var fittingSize: NSSize {
         NSSize(width: Self.width,
-               height: Self.headerH + Self.btnH * 2 + Self.btnGap + Self.gridGap + Self.gridAreaH + Self.footerH)
+               height: Self.headerH + Self.btnH * 2 + Self.btnGap + Self.gridGap + Self.gridAreaH + Self.layoutsH + Self.footerH)
     }
 
     private var targetScreen: NSScreen { screens[min(screenIndex, screens.count - 1)] }
@@ -362,6 +375,14 @@ final class WindowPaletteView: NSView {
             onApply?(actions[i].region, targetScreen)
             return
         }
+        if let i = layoutChipRects.indices.first(where: { layoutChipRects[$0].contains(p) }) {
+            onRestoreLayout?(layouts[i].entry)
+            return
+        }
+        if saveChipRect.contains(p) {
+            onSaveLayout?()
+            return
+        }
         if gridRect.contains(p) {
             gridStart = gridCell(at: p)
             gridCurrent = gridStart
@@ -414,10 +435,20 @@ final class WindowPaletteView: NSView {
         case 125: nudgeHighlight(dc: 0, dr: 1); return true                  // ↓
         case 126: nudgeHighlight(dc: 0, dr: -1); return true                 // ↑
         default:
-            if let ch = event.charactersIgnoringModifiers,
-               actions.contains(where: { $0.key == ch }) {
-                applyDigit(ch)
-                return true
+            if let ch = event.charactersIgnoringModifiers {
+                if actions.contains(where: { $0.key == ch }) {
+                    applyDigit(ch)
+                    return true
+                }
+                let upper = ch.uppercased()
+                if upper == "S" {
+                    onSaveLayout?()
+                    return true
+                }
+                if let i = Self.chipKeys.firstIndex(of: upper), i < layouts.count {
+                    onRestoreLayout?(layouts[i].entry)
+                    return true
+                }
             }
             return false
         }
@@ -451,6 +482,7 @@ final class WindowPaletteView: NSView {
         }
 
         drawGrid()
+        drawLayoutChips()
 
         let tabHint = screens.count > 1 ? " · ⇥ display" : ""
         let footer = "keys or click · ⌥ quarters\(tabHint) · esc" as NSString
@@ -499,6 +531,45 @@ final class WindowPaletteView: NSView {
             .foregroundColor: highlighted ? NSColor.white.withAlphaComponent(0.85) : dim,
         ]
         (action.key as NSString).draw(at: NSPoint(x: rect.minX + 5, y: rect.minY + 4), withAttributes: badgeAttrs)
+    }
+
+    // MARK: Saved-layout chips
+
+    private static let chipKeys = ["A", "B", "C"]
+    private var layoutChipRects: [NSRect] = []
+    private var saveChipRect: NSRect = .zero
+
+    private var layoutsRowRect: NSRect {
+        NSRect(x: Self.pad,
+               y: Self.headerH + Self.btnH * 2 + Self.btnGap + Self.gridGap + Self.gridAreaH + 6,
+               width: Self.width - Self.pad * 2, height: Self.layoutsH - 12)
+    }
+
+    private func drawLayoutChips() {
+        let row = layoutsRowRect
+        layoutChipRects = []
+        var x = row.minX + 6
+        let h = row.height
+        let chipAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10.5, weight: .medium), .foregroundColor: fg]
+        let keyAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9, weight: .bold), .foregroundColor: dim]
+
+        func chip(_ key: String, _ label: String, emphasized: Bool) -> NSRect {
+            let text = label as NSString
+            let tw = text.size(withAttributes: chipAttrs).width
+            let kw = (key as NSString).size(withAttributes: keyAttrs).width
+            let rect = NSRect(x: x, y: row.minY, width: kw + tw + 26, height: h)
+            (dark ? NSColor.white : .black).withAlphaComponent(emphasized ? 0.1 : 0.06).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: h / 2, yRadius: h / 2).fill()
+            (key as NSString).draw(at: NSPoint(x: rect.minX + 9, y: rect.midY - 6), withAttributes: keyAttrs)
+            text.draw(at: NSPoint(x: rect.minX + 9 + kw + 6, y: rect.midY - 7), withAttributes: chipAttrs)
+            x = rect.maxX + 8
+            return rect
+        }
+
+        for (i, l) in layouts.prefix(3).enumerated() {
+            layoutChipRects.append(chip(Self.chipKeys[i], l.label, emphasized: true))
+        }
+        saveChipRect = chip("S", layouts.isEmpty ? "save this window layout" : "save layout", emphasized: false)
     }
 
     private func drawGrid() {

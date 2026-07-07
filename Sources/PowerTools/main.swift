@@ -402,6 +402,66 @@ case "history":
         if entry.polished != entry.raw { print("  (raw: \(entry.raw))") }
     }
 
+case "strip-preview":
+    // Live-render the ⌘Tab strip with REAL windows (exercises the SCK
+    // thumbnail path), then save an offscreen PNG of the view.
+    let out = args.count >= 2 ? args[1] : "strip-preview.png"
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+        var tiles: [SwitcherStrip.Tile] = []
+        for w in list {
+            guard tiles.count < 5,
+                  let layer = w[kCGWindowLayer as String] as? Int, layer == 0,
+                  let pid = w[kCGWindowOwnerPID as String] as? pid_t,
+                  let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+                  (b["Width"] ?? 0) >= 300, (b["Height"] ?? 0) >= 200,
+                  let wid = w[kCGWindowNumber as String] as? Int,
+                  let running = NSRunningApplication(processIdentifier: pid),
+                  running.bundleIdentifier != "com.grc.whisper" else { continue }
+            let title = (w[kCGWindowName as String] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                ?? running.localizedName ?? ""
+            tiles.append(SwitcherStrip.Tile(pid: pid, windowID: CGWindowID(wid), title: title, icon: running.icon))
+        }
+        guard tiles.count >= 2 else { print("NOT ENOUGH WINDOWS (\(tiles.count))"); exit(1) }
+        let strip = SwitcherStrip()
+        strip.present(tiles: tiles, highlight: 1, dark: false)
+        RunLoop.main.run(until: Date().addingTimeInterval(2.0))  // let SCK captures land
+        // Render the strip's content view offscreen.
+        guard let panel = NSApp.windows.first(where: { $0.contentView is SwitcherStripView }),
+              let v = panel.contentView,
+              let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { print("NO STRIP VIEW"); exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+        strip.dismiss()
+        print("wrote \(out) (\(tiles.count) tiles)")
+    }
+
+case "layout":
+    // grc-whisper layout save|list|restore [id]  — test/admin for saved layouts.
+    let store = Store()
+    switch args.count > 1 ? args[1] : "" {
+    case "save":
+        let items = WindowLayouts.snapshot()
+        let f = DateFormatter()
+        f.dateFormat = "MMM d · h:mm a"
+        store.addLayout(name: args.count > 2 ? args[2] : f.string(from: Date()), json: WindowLayouts.encode(items))
+        print("saved \(items.count) windows")
+    case "list":
+        for l in store.layouts() {
+            print("\(l.id)  \(l.name)  \(WindowLayouts.decode(l.json).count) windows  [\(l.timestamp)]")
+        }
+    case "restore":
+        let all = store.layouts()
+        let target = args.count > 2 ? all.first(where: { String($0.id) == args[2] }) : all.first
+        guard let target else { print("no such layout"); exit(1) }
+        let r = WindowLayouts.restore(WindowLayouts.decode(target.json))
+        print("restored \(r.restored) of \(r.total)")
+    default:
+        print("usage: layout save [name] | list | restore [id]"); exit(1)
+    }
+
 default:
     usage()
 }
