@@ -200,6 +200,9 @@ struct Config: Codable {
     var windowPalette: Bool = true
     /// Record text/image copies; hold + H opens the recent-clips palette (Win+V).
     var clipboardHistory: Bool = true
+    /// ⌘` jumps to the last window you used across apps (replaces macOS's
+    /// same-app-only window cycling). ⇧⌘` is never touched.
+    var lastWindowSwitch: Bool = true
 
     init() {}
 
@@ -207,7 +210,7 @@ struct Config: Codable {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
         case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
-        case windowPalette, clipboardHistory
+        case windowPalette, clipboardHistory, lastWindowSwitch
     }
 
     // Lenient decode: any missing key falls back to its default, so adding new
@@ -232,6 +235,7 @@ struct Config: Codable {
         gridSize = try c.decodeIfPresent(GridSize.self, forKey: .gridSize) ?? .c12x8
         windowPalette = try c.decodeIfPresent(Bool.self, forKey: .windowPalette) ?? true
         clipboardHistory = try c.decodeIfPresent(Bool.self, forKey: .clipboardHistory) ?? true
+        lastWindowSwitch = try c.decodeIfPresent(Bool.self, forKey: .lastWindowSwitch) ?? true
     }
 
     static var appSupportDir: URL {

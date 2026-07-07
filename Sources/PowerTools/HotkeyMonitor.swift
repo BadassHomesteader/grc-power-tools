@@ -32,9 +32,14 @@ final class HotkeyMonitor {
         case advancedPaste                // paste-as palette
         case clipboardHistory             // recent-copies palette (Win+V)
         case findMouse                    // spotlight the cursor
+        case lastWindow                   // ⌘` — last window across apps
     }
 
     var handler: ((Callback) -> Void)?
+    /// Live-toggleable: when true, exact ⌘` is intercepted for the cross-app
+    /// last-window switch. Plain Bool (same discipline as `held` — set on main,
+    /// read on the tap thread; a torn read is impossible for a Bool here).
+    var lastWindowSwitch = true
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -74,6 +79,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_W: Int64 = 13
     private static let kVK_ANSI_H: Int64 = 4
     private static let kVK_ANSI_3: Int64 = 20
+    private static let kVK_ANSI_Grave: Int64 = 50
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
     private static let kVK_RightArrow: Int64 = 124
@@ -170,6 +176,21 @@ final class HotkeyMonitor {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+
+        // ⌘` → last window across apps (when enabled). Exact-match only: ⇧⌘`,
+        // ⌥⌘` etc. pass through to the system untouched. Auto-repeat swallowed
+        // but not dispatched, so holding the key doesn't ping-pong windows.
+        if lastWindowSwitch, keyCode == Self.kVK_ANSI_Grave,
+           flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]) == .maskCommand {
+            if type == .keyDown {
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                    swallowedKeyUps.insert(keyCode)
+                    dispatch(.lastWindow)
+                }
+                return nil
+            }
+            // keyUp handled by the swallowedKeyUps path below.
+        }
 
         switch hotkey {
         case .fn:

@@ -133,6 +133,7 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 - **Chain two arrows for a corner** — ← then ↑ lands the **top-left quarter** (Moom-style); the sizes you've cycled on each axis carry into the corner.
 - **hold + W** → **snap palette**: a compact panel of targets drawn as mini window diagrams — a halves row (Fill · left/center/right ½ · top/bottom ½; hold **⌥** for corner quarters + center) and a thirds row (Fill · ⅓s · ⅔s), plus a **mini-grid** you drag across to sketch any rectangle. Keys `1–0 - =` or click apply; arrows move the highlight with a **live preview outline** on the screen; **Tab** retargets another display; Esc closes.
 - **hold + Return** → maximize.
+- **⌘` (no hotkey needed)** → jump to the **last window you used, across apps** — tap again to bounce back. macOS's own ⌘` only cycles windows of the current app; this makes it the Alt-Tab-style quick toggle it should have been. ⇧⌘` and ⌘Tab are untouched. Toggle in Settings ▸ Windows.
 - Right after a snap, **Snap Assist** offers the other windows — click one to fill the empty space (Windows-style).
 - **hold + 3** → **grid draw mode**: drag across an on-screen grid to place the window (Moom-style). Grid dimensions are configurable.
 

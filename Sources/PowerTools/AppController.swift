@@ -20,6 +20,7 @@ final class AppController {
             overlay.scheme = config.appearance
             chat?.updateConfig(config)
             clipboardWatcher.enabled = config.clipboardHistory
+            hotkey?.lastWindowSwitch = config.lastWindowSwitch
         }
     }
 
@@ -33,6 +34,7 @@ final class AppController {
     private let findMouse = FindMouse()
     private let windowPalette = WindowPalette()
     private let clipboardPalette = ClipboardPalette()
+    private let windowSwitcher = WindowSwitcher()
     private lazy var clipboardWatcher = ClipboardHistory(store: store, enabled: config.clipboardHistory)
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
@@ -79,6 +81,7 @@ final class AppController {
         }
 
         let monitor = HotkeyMonitor(hotkey: config.hotkey)
+        monitor.lastWindowSwitch = config.lastWindowSwitch
         monitor.handler = { [weak self] event in
             guard let self else { return }
             switch event {
@@ -122,6 +125,8 @@ final class AppController {
                 self.openAdvancedPaste()
             case .clipboardHistory:
                 self.openClipboardHistory()
+            case .lastWindow:
+                _ = self.windowSwitcher.switchToPrevious()
             case .findMouse:
                 self.interruptDictation()
                 self.findMouse.flash()
@@ -133,6 +138,7 @@ final class AppController {
         }
         hotkey = monitor
         clipboardWatcher.start()
+        windowSwitcher.start()
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
     }
 
