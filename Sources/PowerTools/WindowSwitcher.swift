@@ -134,7 +134,7 @@ final class WindowSwitcher {
             for entry in onScreenWindows() where !snap.contains(entry) {
                 snap.append(entry)
             }
-            if snap.count > 8 { snap = Array(snap.prefix(8)) }
+            if snap.count > 24 { snap = Array(snap.prefix(24)) }  // strip wraps to ≤3 rows
             guard snap.count > 1 else {
                 log("switcher: nothing to cycle to")
                 return

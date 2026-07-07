@@ -22,12 +22,16 @@ final class SwitcherStrip {
 
     func present(tiles: [Tile], highlight: Int, dark: Bool) {
         dismiss()
-        let v = SwitcherStripView(tiles: tiles, dark: dark)
-        v.highlighted = highlight
-        let size = v.fittingSize
         let mouse = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main
         else { return }
+        // Wrap into rows so many windows still fit (Windows-style), sized to
+        // the screen the strip appears on.
+        let usable = screen.visibleFrame.width * 0.94
+        let perRow = max(3, Int((usable - 28 + 10) / (SwitcherStripView.tileW + 10)))
+        let v = SwitcherStripView(tiles: tiles, dark: dark, perRow: perRow)
+        v.highlighted = highlight
+        let size = v.fittingSize
         let vf = screen.visibleFrame
         let origin = NSPoint(x: vf.midX - size.width / 2, y: vf.midY - size.height / 2)
         let win = NSPanel(contentRect: NSRect(origin: origin, size: size),
@@ -88,28 +92,31 @@ final class SwitcherStrip {
 final class SwitcherStripView: NSView {
     static let thumbW: CGFloat = 168
     static let thumbH: CGFloat = 108
-    private static let tileW: CGFloat = thumbW + 12
+    static let tileW: CGFloat = thumbW + 12
     private static let tileH: CGFloat = thumbH + 34
     private static let gap: CGFloat = 10
     private static let pad: CGFloat = 14
 
     private let tiles: [SwitcherStrip.Tile]
     private let dark: Bool
+    private let perRow: Int
     private var thumbnails: [Int: NSImage] = [:]
     var highlighted = 0
 
-    init(tiles: [SwitcherStrip.Tile], dark: Bool) {
+    init(tiles: [SwitcherStrip.Tile], dark: Bool, perRow: Int = 8) {
         self.tiles = tiles
         self.dark = dark
+        self.perRow = max(perRow, 1)
         super.init(frame: .zero)
     }
     required init?(coder: NSCoder) { fatalError() }
 
     override var isFlipped: Bool { true }
     override var fittingSize: NSSize {
-        let n = CGFloat(max(tiles.count, 1))
-        return NSSize(width: Self.pad * 2 + n * Self.tileW + (n - 1) * Self.gap,
-                      height: Self.pad * 2 + Self.tileH)
+        let cols = CGFloat(min(max(tiles.count, 1), perRow))
+        let rows = CGFloat((max(tiles.count, 1) + perRow - 1) / perRow)
+        return NSSize(width: Self.pad * 2 + cols * Self.tileW + (cols - 1) * Self.gap,
+                      height: Self.pad * 2 + rows * Self.tileH + (rows - 1) * Self.gap)
     }
 
     func setThumbnail(_ image: NSImage, at index: Int) {
@@ -123,8 +130,10 @@ final class SwitcherStripView: NSView {
     private var accent: NSColor { NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1) }
 
     private func tileRect(_ i: Int) -> NSRect {
-        NSRect(x: Self.pad + CGFloat(i) * (Self.tileW + Self.gap), y: Self.pad,
-               width: Self.tileW, height: Self.tileH)
+        let row = i / perRow, col = i % perRow
+        return NSRect(x: Self.pad + CGFloat(col) * (Self.tileW + Self.gap),
+                      y: Self.pad + CGFloat(row) * (Self.tileH + Self.gap),
+                      width: Self.tileW, height: Self.tileH)
     }
 
     override func draw(_ dirtyRect: NSRect) {

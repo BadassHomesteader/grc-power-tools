@@ -412,11 +412,11 @@ case "strip-preview":
         let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
         var tiles: [SwitcherStrip.Tile] = []
         for w in list {
-            guard tiles.count < 5,
+            guard tiles.count < 24,
                   let layer = w[kCGWindowLayer as String] as? Int, layer == 0,
                   let pid = w[kCGWindowOwnerPID as String] as? pid_t,
                   let b = w[kCGWindowBounds as String] as? [String: CGFloat],
-                  (b["Width"] ?? 0) >= 300, (b["Height"] ?? 0) >= 200,
+                  (b["Width"] ?? 0) >= 120, (b["Height"] ?? 0) >= 90,
                   let wid = w[kCGWindowNumber as String] as? Int,
                   let running = NSRunningApplication(processIdentifier: pid),
                   running.bundleIdentifier != "com.grc.whisper" else { continue }
@@ -425,6 +425,10 @@ case "strip-preview":
             tiles.append(SwitcherStrip.Tile(pid: pid, windowID: CGWindowID(wid), title: title, icon: running.icon))
         }
         guard tiles.count >= 2 else { print("NOT ENOUGH WINDOWS (\(tiles.count))"); exit(1) }
+        if args.contains("repeat") {  // exercise multi-row wrapping in the preview
+            while tiles.count < 18 { tiles += tiles }
+            tiles = Array(tiles.prefix(18))
+        }
         let strip = SwitcherStrip()
         strip.present(tiles: tiles, highlight: 1, dark: false)
         RunLoop.main.run(until: Date().addingTimeInterval(2.0))  // let SCK captures land
