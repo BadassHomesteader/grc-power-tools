@@ -50,6 +50,22 @@ final class QuickCapture {
         window?.orderOut(nil)
         window = nil
     }
+
+    /// True while the input panel is on screen — lets the dictation flow route a
+    /// transcript here instead of refusing (Power Tools is frontmost when open).
+    var isVisible: Bool { window != nil }
+
+    /// Append dictated text into the field (smart-spaced) and keep it focused so
+    /// the user can review and press Return. Called when dictation runs with the
+    /// panel open, so voice fills the box instead of pasting into another app.
+    func insertTranscript(_ text: String) {
+        guard let view = window?.contentView as? QuickCaptureView else { return }
+        let existing = view.field.stringValue
+        let sep = (existing.isEmpty || existing.hasSuffix(" ")) ? "" : " "
+        view.field.stringValue = existing + sep + text
+        window?.makeFirstResponder(view.field)
+        view.field.currentEditor()?.selectedRange = NSRange(location: view.field.stringValue.count, length: 0)
+    }
 }
 
 final class QuickCaptureView: NSView, NSTextFieldDelegate {

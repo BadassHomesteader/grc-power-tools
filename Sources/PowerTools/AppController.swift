@@ -60,6 +60,9 @@ final class AppController {
     private var context: ContextSnapshot?
     private var recordingStarted: Date?
     private var maxUtteranceTimer: Timer?
+    /// True when this dictation cycle should fill the open Quick Capture panel
+    /// instead of pasting into another app.
+    private var dictatingIntoCapture = false
 
     init(config: Config, store: Store) {
         self.config = config
@@ -160,8 +163,15 @@ final class AppController {
             return
         }
         if ctx.bundleID == "com.grc.whisper" {
-            overlay.showError("Click into another app first, then hold to dictate")
-            return
+            // Exception: dictate INTO the Quick Capture panel when it's open,
+            // rather than refusing (normal dictation pastes into another app).
+            guard quickCapture.isVisible else {
+                overlay.showError("Click into another app first, then hold to dictate")
+                return
+            }
+            dictatingIntoCapture = true
+        } else {
+            dictatingIntoCapture = false
         }
         cycle += 1
         let gen = cycle
@@ -299,6 +309,19 @@ final class AppController {
     private func deliver(raw: String, polished: String, durationMs: Int, ctx: ContextSnapshot?) {
         lastTranscript = polished
         store.addHistory(app: ctx?.bundleID ?? "", raw: raw, polished: polished, durationMs: durationMs)
+        if dictatingIntoCapture {
+            if quickCapture.isVisible {
+                quickCapture.insertTranscript(polished)
+                overlay.hide()   // the text is now visible in the panel; no paste toast
+            } else {
+                // Panel closed mid-dictation — don't paste into a random app; keep the text.
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(polished, forType: .string)
+                overlay.showError("Quick Capture closed — dictation copied to clipboard")
+            }
+            finishCycle()
+            return
+        }
         do {
             try Inserter.insert(polished, restoreDelayMs: config.clipboardRestoreDelayMs)
             overlay.showResult(polished)
@@ -497,7 +520,7 @@ final class AppController {
             do {
                 try await CloudPolish.postCapture(text: text, endpoint: endpoint, header: header,
                                                   token: token, bodyTemplate: template)
-                await MainActor.run { self.overlay.showResult("Captured ✓"); restore?.activate() }
+                await MainActor.run { self.overlay.showResult("Captured ✓  \(text)"); restore?.activate() }
             } catch {
                 await MainActor.run {
                     self.overlay.showError("Quick Capture failed — check Settings ▸ Connections")
@@ -794,6 +817,7 @@ final class AppController {
         context = nil
         recordingStarted = nil
         startTask = nil
+        dictatingIntoCapture = false
         onStateChange?(.idle)
     }
 }
