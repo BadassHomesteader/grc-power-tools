@@ -509,8 +509,27 @@ final class AppController {
             return
         }
         let steps = config.snapSizes.steps
-        if move == winLastMove { winStep = (winStep + 1) % steps.count }
-        else { winStep = 0; winLastMove = move }
+        if move == winLastMove {
+            let next = (winStep + 1) % steps.count
+            // Chained-corner unwind: cycling the same arrow past its last size
+            // clears that axis and returns to the other axis's plain snap
+            // (← ↑↑↑… goes ¼ → ⅓ → ⅔ → … → full-height Left ½ → ¼ …), so a
+            // chain always cycles back out instead of trapping the window.
+            let isVertical = (move == .up || move == .down)
+            if next == 0, isVertical, chainV != nil, let h = chainH {
+                chainV = nil
+                winLastMove = nil
+                applyEdgeSnap(edge: h.edge, f: h.f, fracLabel: h.label)
+                return
+            }
+            if next == 0, !isVertical, chainH != nil, let v = chainV {
+                chainH = nil
+                winLastMove = nil
+                applyEdgeSnap(edge: v.edge, f: v.f, fracLabel: v.label)
+                return
+            }
+            winStep = next
+        } else { winStep = 0; winLastMove = move }
         let (f, fracLabel) = steps[winStep]
 
         // Chain bookkeeping: remember this axis's constraint. If the OTHER axis
@@ -540,14 +559,26 @@ final class AppController {
         }
 
         let edge: WindowManager.Edge
+        switch move {
+        case .left:  edge = .left
+        case .right: edge = .right
+        case .up:    edge = .top
+        case .down:  edge = .bottom
+        case .maximize: return
+        }
+        applyEdgeSnap(edge: edge, f: f, fracLabel: fracLabel)
+    }
+
+    /// Plain single-edge snap + Snap Assist bookkeeping + HUD (shared by the
+    /// normal arrow path and the chained-corner unwind).
+    private func applyEdgeSnap(edge: WindowManager.Edge, f: CGFloat, fracLabel: String) {
         let region: CGRect
         let name: String
-        switch move {
-        case .left:  edge = .left;   region = CGRect(x: 0, y: 0, width: f, height: 1);     name = "Left"
-        case .right: edge = .right;  region = CGRect(x: 1 - f, y: 0, width: f, height: 1); name = "Right"
-        case .up:    edge = .top;    region = CGRect(x: 0, y: 0, width: 1, height: f);     name = "Top"
-        case .down:  edge = .bottom; region = CGRect(x: 0, y: 1 - f, width: 1, height: f); name = "Bottom"
-        case .maximize: return
+        switch edge {
+        case .left:   region = CGRect(x: 0, y: 0, width: f, height: 1);     name = "Left"
+        case .right:  region = CGRect(x: 1 - f, y: 0, width: f, height: 1); name = "Right"
+        case .top:    region = CGRect(x: 0, y: 0, width: 1, height: f);     name = "Top"
+        case .bottom: region = CGRect(x: 0, y: 1 - f, width: 1, height: f); name = "Bottom"
         }
         guard let result = WindowManager.snap(edge: edge, fraction: f) else {
             overlay.showError("No window to move"); return
