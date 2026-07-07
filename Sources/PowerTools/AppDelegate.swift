@@ -110,7 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setIcon(recording: Bool) {
-        let symbol = recording ? "mic.fill" : "mic"
+        let symbol = "command"   // ⌘ — the Power Tools mark; red tint below signals recording
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Power Tools")
         image?.isTemplate = !recording
         statusItem.button?.image = image
