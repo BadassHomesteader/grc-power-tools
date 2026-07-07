@@ -20,7 +20,8 @@ struct DictEntry {
 struct ClipEntry {
     let id: Int64
     let timestamp: String
-    let content: String
+    let content: String   // text clip: the text; image clip: a label ("Image · 1234×789")
+    let image: Data?      // PNG data for image clips, nil for text
 }
 
 /// SQLite-backed history + personal dictionary. Single-connection, serialized via a queue.
@@ -51,9 +52,12 @@ final class Store {
         CREATE TABLE IF NOT EXISTS clips(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
-            content TEXT NOT NULL
+            content TEXT NOT NULL,
+            image BLOB
         );
         """)
+        // Migration for clips tables created before image support.
+        addColumnIfMissing(table: "clips", column: "image", ddl: "ALTER TABLE clips ADD COLUMN image BLOB")
     }
 
     deinit { if let db { sqlite3_close(db) } }
@@ -65,6 +69,18 @@ final class Store {
             log("store: exec error: \(err.map { String(cString: $0) } ?? "?")")
             sqlite3_free(err)
         }
+    }
+
+    private func addColumnIfMissing(table: String, column: String, ddl: String) {
+        guard let db else { return }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else { return }
+        var found = false
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if String(cString: sqlite3_column_text(stmt, 1)) == column { found = true; break }
+        }
+        sqlite3_finalize(stmt)
+        if !found { exec(ddl) }
     }
 
     // MARK: History
@@ -110,13 +126,13 @@ final class Store {
 
     // MARK: Clipboard history
 
-    /// Add (or bump) a clip: an identical existing clip moves to the top instead
-    /// of duplicating. The table is trimmed to the newest 200 entries.
+    /// Add (or bump) a text clip: an identical existing clip moves to the top
+    /// instead of duplicating. Text clips are trimmed to the newest 200.
     func addClip(_ content: String) {
         queue.sync {
             guard let db else { return }
             var del: OpaquePointer?
-            if sqlite3_prepare_v2(db, "DELETE FROM clips WHERE content = ?", -1, &del, nil) == SQLITE_OK {
+            if sqlite3_prepare_v2(db, "DELETE FROM clips WHERE content = ? AND image IS NULL", -1, &del, nil) == SQLITE_OK {
                 sqlite3_bind_text(del, 1, content, -1, SQLITE_TRANSIENT)
                 sqlite3_step(del)
             }
@@ -128,7 +144,30 @@ final class Store {
                 sqlite3_step(ins)
             }
             sqlite3_finalize(ins)
-            exec("DELETE FROM clips WHERE id NOT IN (SELECT id FROM clips ORDER BY id DESC LIMIT 200)")
+            exec("DELETE FROM clips WHERE image IS NULL AND id NOT IN (SELECT id FROM clips WHERE image IS NULL ORDER BY id DESC LIMIT 200)")
+        }
+    }
+
+    /// Add (or bump) an image clip (PNG). Identical bytes move to the top;
+    /// images are trimmed harder than text (newest 25) since they're megabytes.
+    func addImageClip(_ png: Data, label: String) {
+        queue.sync {
+            guard let db else { return }
+            var del: OpaquePointer?
+            if sqlite3_prepare_v2(db, "DELETE FROM clips WHERE image = ?", -1, &del, nil) == SQLITE_OK {
+                png.withUnsafeBytes { _ = sqlite3_bind_blob(del, 1, $0.baseAddress, Int32(png.count), SQLITE_TRANSIENT) }
+                sqlite3_step(del)
+            }
+            sqlite3_finalize(del)
+            var ins: OpaquePointer?
+            if sqlite3_prepare_v2(db, "INSERT INTO clips(ts, content, image) VALUES(?,?,?)", -1, &ins, nil) == SQLITE_OK {
+                sqlite3_bind_text(ins, 1, ISO8601DateFormatter().string(from: Date()), -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(ins, 2, label, -1, SQLITE_TRANSIENT)
+                png.withUnsafeBytes { _ = sqlite3_bind_blob(ins, 3, $0.baseAddress, Int32(png.count), SQLITE_TRANSIENT) }
+                sqlite3_step(ins)
+            }
+            sqlite3_finalize(ins)
+            exec("DELETE FROM clips WHERE image IS NOT NULL AND id NOT IN (SELECT id FROM clips WHERE image IS NOT NULL ORDER BY id DESC LIMIT 25)")
         }
     }
 
@@ -136,15 +175,20 @@ final class Store {
         queue.sync {
             guard let db else { return [] }
             var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, "SELECT id, ts, content FROM clips ORDER BY id DESC LIMIT ?", -1, &stmt, nil) == SQLITE_OK else { return [] }
+            guard sqlite3_prepare_v2(db, "SELECT id, ts, content, image FROM clips ORDER BY id DESC LIMIT ?", -1, &stmt, nil) == SQLITE_OK else { return [] }
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int(stmt, 1, Int32(limit))
             var out: [ClipEntry] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
+                var image: Data?
+                if sqlite3_column_type(stmt, 3) == SQLITE_BLOB, let bytes = sqlite3_column_blob(stmt, 3) {
+                    image = Data(bytes: bytes, count: Int(sqlite3_column_bytes(stmt, 3)))
+                }
                 out.append(ClipEntry(
                     id: sqlite3_column_int64(stmt, 0),
                     timestamp: String(cString: sqlite3_column_text(stmt, 1)),
-                    content: String(cString: sqlite3_column_text(stmt, 2))
+                    content: String(cString: sqlite3_column_text(stmt, 2)),
+                    image: image
                 ))
             }
             return out

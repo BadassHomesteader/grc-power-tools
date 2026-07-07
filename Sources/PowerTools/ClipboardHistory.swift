@@ -12,6 +12,7 @@ final class ClipboardHistory {
     private static let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
     private static let transient = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
     private static let maxChars = 100_000
+    private static let maxImageBytes = 5_000_000
 
     private let store: Store
     private var timer: Timer?
@@ -41,10 +42,33 @@ final class ClipboardHistory {
         guard let items = pb.pasteboardItems,
               !items.contains(where: { $0.types.contains(Self.concealed) || $0.types.contains(Self.transient) })
         else { return }
+        // Image data present means the user copied an image (screenshot, browser
+        // image, …) — record that; otherwise record the text representation.
+        if let png = Self.pngFromPasteboard(pb) {
+            guard png.count <= Self.maxImageBytes else { return }
+            let label: String
+            if let rep = NSBitmapImageRep(data: png) {
+                label = "Image · \(rep.pixelsWide)×\(rep.pixelsHigh)"
+            } else {
+                label = "Image"
+            }
+            store.addImageClip(png, label: label)
+            return
+        }
         guard let text = pb.string(forType: .string) else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, text.count <= Self.maxChars else { return }
         store.addClip(text)
+    }
+
+    /// Image off the pasteboard, normalized to PNG (so storage and re-paste are
+    /// format-stable regardless of what the source app provided).
+    static func pngFromPasteboard(_ pb: NSPasteboard) -> Data? {
+        if let png = pb.data(forType: .png) { return png }
+        if let tiff = pb.data(forType: .tiff), let rep = NSBitmapImageRep(data: tiff) {
+            return rep.representation(using: .png, properties: [:])
+        }
+        return nil
     }
 }
 
@@ -57,7 +81,7 @@ final class ClipboardPalette {
     var isVisible: Bool { window != nil }
 
     func present(clips: [ClipEntry], dark: Bool, screen: NSScreen,
-                 onPick: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+                 onPick: @escaping (ClipEntry) -> Void, onCancel: @escaping () -> Void) {
         dismiss()
         let view = ClipboardPaletteView(clips: clips, dark: dark)
         let size = view.fittingSize
@@ -72,7 +96,7 @@ final class ClipboardPalette {
         win.ignoresMouseEvents = false
         win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         view.frame = NSRect(origin: .zero, size: size)
-        view.onPick = { [weak self] text in self?.dismiss(); onPick(text) }
+        view.onPick = { [weak self] clip in self?.dismiss(); onPick(clip) }
         view.onCancel = { [weak self] in self?.dismiss(); onCancel() }
         win.contentView = view
         window = win
@@ -97,7 +121,7 @@ final class ClipboardPalette {
 final class ClipboardPaletteView: NSView {
     private let clips: [ClipEntry]
     private let dark: Bool
-    var onPick: ((String) -> Void)?
+    var onPick: ((ClipEntry) -> Void)?
     var onCancel: (() -> Void)?
 
     private var highlighted = 0
@@ -162,15 +186,33 @@ final class ClipboardPaletteView: NSView {
             ("\(i + 1)" as NSString).draw(at: NSPoint(x: badge.minX + 6, y: badge.minY + 3),
                 withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .bold), .foregroundColor: titleColor])
 
+            var textX = r.minX + 44
+            if let data = clip.image, let img = NSImage(data: data) {
+                // Thumbnail, aspect-fit into a fixed slot.
+                let slot = NSRect(x: textX, y: r.minY + 5, width: 52, height: 34)
+                let scale = min(slot.width / max(img.size.width, 1), slot.height / max(img.size.height, 1))
+                let w = img.size.width * scale, h = img.size.height * scale
+                let dest = NSRect(x: slot.midX - w / 2, y: slot.midY - h / 2, width: w, height: h)
+                img.draw(in: dest, from: .zero, operation: .sourceOver, fraction: 1,
+                         respectFlipped: true, hints: [.interpolation: NSImageInterpolation.medium.rawValue])
+                (dark ? NSColor.white : .black).withAlphaComponent(0.25).setStroke()
+                let frame = NSBezierPath(roundedRect: dest, xRadius: 3, yRadius: 3)
+                frame.lineWidth = 1
+                frame.stroke()
+                textX += 62
+            }
             let firstLine = clip.content
                 .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
                 .first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
-            (firstLine as NSString).draw(in: NSRect(x: r.minX + 44, y: r.minY + 6, width: r.width - 56, height: 18),
+            (firstLine as NSString).draw(in: NSRect(x: textX, y: r.minY + 6, width: r.maxX - textX - 12, height: 18),
                 withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: titleColor,
                                  .paragraphStyle: { let p = NSMutableParagraphStyle(); p.lineBreakMode = .byTruncatingTail; return p }()])
             let lines = clip.content.filter { $0 == "\n" }.count + 1
-            let meta = lines > 1 ? "\(age(clip.timestamp)) · \(lines) lines" : "\(age(clip.timestamp)) · \(clip.content.count) chars"
-            (meta as NSString).draw(at: NSPoint(x: r.minX + 44, y: r.minY + 24),
+            let meta: String
+            if clip.image != nil { meta = age(clip.timestamp) }
+            else if lines > 1 { meta = "\(age(clip.timestamp)) · \(lines) lines" }
+            else { meta = "\(age(clip.timestamp)) · \(clip.content.count) chars" }
+            (meta as NSString).draw(at: NSPoint(x: textX, y: r.minY + 24),
                 withAttributes: [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: subColor])
         }
 
@@ -189,7 +231,7 @@ final class ClipboardPaletteView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if let i = clips.indices.first(where: { rowRect($0).contains(p) }) { onPick?(clips[i].content) }
+        if let i = clips.indices.first(where: { rowRect($0).contains(p) }) { onPick?(clips[i]) }
         else { onCancel?() }
     }
 
@@ -201,12 +243,12 @@ final class ClipboardPaletteView: NSView {
     func handleKey(_ event: NSEvent) -> Bool {
         switch event.keyCode {
         case 53: onCancel?(); return true
-        case 36, 76: onPick?(clips[highlighted].content); return true
+        case 36, 76: onPick?(clips[highlighted]); return true
         case 125: highlighted = min(highlighted + 1, clips.count - 1); needsDisplay = true; return true
         case 126: highlighted = max(highlighted - 1, 0); needsDisplay = true; return true
         default:
             if let ch = event.charactersIgnoringModifiers, let n = Int(ch), n >= 1, n <= clips.count {
-                onPick?(clips[n - 1].content)
+                onPick?(clips[n - 1])
                 return true
             }
             return false

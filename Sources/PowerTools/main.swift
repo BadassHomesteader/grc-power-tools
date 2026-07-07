@@ -234,28 +234,24 @@ case "cliphistory-preview":
     MainActor.assumeIsolated {
         let now = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-180))
         let older = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7200))
+        // A small generated image so the thumbnail row renders in the preview.
+        let img = NSImage(size: NSSize(width: 320, height: 180))
+        img.lockFocus()
+        NSColor(srgbRed: 0.3, green: 0.6, blue: 0.9, alpha: 1).setFill()
+        NSRect(x: 0, y: 0, width: 320, height: 180).fill()
+        NSColor.white.setFill()
+        NSRect(x: 40, y: 40, width: 240, height: 100).fill()
+        img.unlockFocus()
+        let png = NSBitmapImageRep(data: img.tiffRepresentation!)!.representation(using: .png, properties: [:])!
         let clips = [
-            ClipEntry(id: 5, timestamp: now, content: "az staticwebapp secrets list -n kaw-survey-swa -g rg-gridops"),
-            ClipEntry(id: 4, timestamp: now, content: "The crew completed 14 surveys today; 3 premises had no access.\nSecond visits are scheduled for Thursday."),
-            ClipEntry(id: 3, timestamp: older, content: "juergs@gmail.com"),
-            ClipEntry(id: 2, timestamp: older, content: "https://github.com/BadassHomesteader/grc-power-tools"),
-            ClipEntry(id: 1, timestamp: older, content: "#4a73ff"),
+            ClipEntry(id: 5, timestamp: now, content: "az staticwebapp secrets list -n kaw-survey-swa -g rg-gridops", image: nil),
+            ClipEntry(id: 4, timestamp: now, content: "Image · 320×180", image: png),
+            ClipEntry(id: 3, timestamp: older, content: "The crew completed 14 surveys today; 3 premises had no access.\nSecond visits are scheduled for Thursday.", image: nil),
+            ClipEntry(id: 2, timestamp: older, content: "https://github.com/BadassHomesteader/grc-power-tools", image: nil),
+            ClipEntry(id: 1, timestamp: older, content: "#4a73ff", image: nil),
         ]
         let v = ClipboardPaletteView(clips: clips, dark: dark)
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
-        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
-        v.cacheDisplay(in: v.bounds, to: rep)
-        if let data = rep.representation(using: .png, properties: [:]) {
-            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
-        }
-    }
-
-case "calendar-preview":
-    // Offscreen render of the menu-bar calendar popover content.
-    let out = args.count >= 2 ? args[1] : "calendar-preview.png"
-    MainActor.assumeIsolated {
-        let v = MonthGridView(frame: NSRect(x: 0, y: 0, width: 264, height: 268))
-        v.appearance = NSAppearance(named: args.contains("dark") ? .darkAqua : .aqua)
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
         v.cacheDisplay(in: v.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {

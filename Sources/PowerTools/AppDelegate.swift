@@ -8,7 +8,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var config = Config.load()
     private let store = Store()
     private var settings: SettingsWindowController?
-    private let calendar = MenuCalendar()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Regular app: Dock icon + standard menus, so it's findable and quittable
@@ -19,7 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         setIcon(recording: false)
         statusItem.menu = buildStatusMenu()
-        calendar.setVisible(config.menuCalendar)
 
         // Nudge the Accessibility prompt early — the hotkey tap needs it.
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
@@ -60,7 +58,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings = SettingsWindowController(store: store, config: config, onConfigChange: { [weak self] newConfig in
                 self?.config = newConfig
                 self?.controller?.config = newConfig  // cleanup mode + theme apply live
-                self?.calendar.setVisible(newConfig.menuCalendar)
                 self?.statusItem.menu = self?.buildStatusMenu()
             }, onOpenChat: { [weak self] in
                 self?.controller?.openChat()

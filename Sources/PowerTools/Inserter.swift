@@ -90,6 +90,20 @@ enum Inserter {
         }
     }
 
+    /// Image variant: PNG + TIFF go on the clipboard (max app compatibility),
+    /// then ⌘V. The image stays on the clipboard afterwards.
+    static func pasteImageLeavingOnClipboard(_ png: Data) {
+        let pb = NSPasteboard.general
+        let item = NSPasteboardItem()
+        item.setData(png, forType: .png)
+        if let tiff = NSImage(data: png)?.tiffRepresentation { item.setData(tiff, forType: .tiff) }
+        pb.clearContents()
+        pb.writeObjects([item])
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) {
+            postCmdV()
+        }
+    }
+
     /// Copy the current selection to a temporary pasteboard, read it, and restore
     /// the user's clipboard. Used by AI command mode to read the selected text.
     /// Returns nil if nothing was copied (no selection).

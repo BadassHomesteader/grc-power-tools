@@ -476,12 +476,17 @@ final class AppController {
         guard let screen else { return }
         clipboardPalette.present(
             clips: clips, dark: config.appearance.isDark, screen: screen,
-            onPick: { text in
+            onPick: { clip in
                 app.activate()
                 // let focus land back in the target field before the synthetic ⌘V
                 DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(220)) {
-                    Inserter.pasteLeavingOnClipboard(text)
-                    self.store.addClip(text)  // picked clip moves to the top
+                    if let png = clip.image {
+                        Inserter.pasteImageLeavingOnClipboard(png)
+                        self.store.addImageClip(png, label: clip.content)  // moves to the top
+                    } else {
+                        Inserter.pasteLeavingOnClipboard(clip.content)
+                        self.store.addClip(clip.content)
+                    }
                 }
             },
             onCancel: { app.activate() }
