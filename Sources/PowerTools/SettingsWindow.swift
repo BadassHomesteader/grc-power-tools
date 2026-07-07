@@ -32,6 +32,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
 
     private let dictTable = NSTableView()
+    private let layoutsTable = NSTableView()
+    private var layoutEntries: [LayoutEntry] = []
+    private let layoutNameField = NSTextField()
+    private let layoutStatus = NSTextField(labelWithString: " ")
     private var dictEntries: [DictEntry] = []
     private let termField = NSTextField()
     private let misheardField = NSTextField()
@@ -74,6 +78,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         buildUI()
         connEntries = config.connections   // so the table has rows before show() runs (also used by previews)
         reloadDictionary()
+        reloadLayouts()
         Task { await refreshStatus() }
     }
 
@@ -84,6 +89,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         NSApp.activate(ignoringOtherApps: true)
         Task { await refreshStatus() }
         loadConfigIntoControls()
+        reloadLayouts()
     }
 
     // MARK: Build
@@ -215,7 +221,45 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     private func windowsTab() -> NSView {
-        vstack([
+        // Saved layouts manager (the palette's S/A/B/C chips are the fast path;
+        // this is where you see, rename, restore, and delete them).
+        let note = NSTextField(labelWithString: "Snapshots of every window's position (hold hotkey + W, then S). Restore repositions windows of running apps.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.lineBreakMode = .byWordWrapping
+        note.preferredMaxLayoutWidth = 500
+        let nameCol = NSTableColumn(identifier: .init("layName"))
+        nameCol.title = "Layout"
+        nameCol.width = 220
+        let infoCol = NSTableColumn(identifier: .init("layInfo"))
+        infoCol.title = "Windows · saved"
+        infoCol.width = 240
+        layoutsTable.addTableColumn(nameCol)
+        layoutsTable.addTableColumn(infoCol)
+        layoutsTable.dataSource = self
+        layoutsTable.delegate = self
+        layoutsTable.usesAlternatingRowBackgroundColors = true
+        layoutsTable.rowHeight = 22
+        let scroll = NSScrollView()
+        scroll.documentView = layoutsTable
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(equalToConstant: 120).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 500).isActive = true
+        layoutNameField.placeholderString = "rename selected…"
+        layoutNameField.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        let renameBtn = NSButton(title: "Rename", target: self, action: #selector(renameLayoutTapped))
+        let saveBtn = NSButton(title: "Save Current", target: self, action: #selector(saveLayoutTapped))
+        let restoreBtn = NSButton(title: "Restore", target: self, action: #selector(restoreLayoutTapped))
+        let deleteBtn = NSButton(title: "Delete", target: self, action: #selector(deleteLayoutTapped))
+        for b in [renameBtn, saveBtn, restoreBtn, deleteBtn] { b.bezelStyle = .rounded }
+        let row1 = NSStackView(views: [layoutNameField, renameBtn]); row1.spacing = 8
+        let row2 = NSStackView(views: [saveBtn, restoreBtn, deleteBtn]); row2.spacing = 8
+        layoutStatus.font = .systemFont(ofSize: 11)
+        layoutStatus.textColor = .secondaryLabelColor
+
+        return vstack([
             section("Window snapping", [
                 formRow("Snap sizes", snapSizesPopup),
                 formRow("Grid (+3)", gridSizePopup),
@@ -223,7 +267,49 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                 windowPaletteCheck,
                 lastWindowCheck,
             ], width: 540),
+            section("Saved layouts", [note, scroll, row1, row2, layoutStatus], width: 540),
         ])
+    }
+
+    private func reloadLayouts() {
+        layoutEntries = store.layouts()
+        layoutsTable.reloadData()
+    }
+
+    @objc private func saveLayoutTapped() {
+        let items = WindowLayouts.snapshot()
+        guard !items.isEmpty else { layoutStatus.stringValue = "No windows to save"; return }
+        let f = DateFormatter()
+        f.dateFormat = "MMM d · h:mm a"
+        store.addLayout(name: f.string(from: Date()), json: WindowLayouts.encode(items))
+        reloadLayouts()
+        layoutStatus.stringValue = "Saved · \(items.count) windows"
+    }
+
+    @objc private func restoreLayoutTapped() {
+        let row = layoutsTable.selectedRow
+        guard row >= 0, row < layoutEntries.count else { layoutStatus.stringValue = "Select a layout first"; return }
+        let r = WindowLayouts.restore(WindowLayouts.decode(layoutEntries[row].json))
+        layoutStatus.stringValue = "Restored \(r.restored) of \(r.total) windows"
+    }
+
+    @objc private func deleteLayoutTapped() {
+        let row = layoutsTable.selectedRow
+        guard row >= 0, row < layoutEntries.count else { layoutStatus.stringValue = "Select a layout first"; return }
+        store.removeLayout(id: layoutEntries[row].id)
+        reloadLayouts()
+        layoutStatus.stringValue = "Deleted"
+    }
+
+    @objc private func renameLayoutTapped() {
+        let row = layoutsTable.selectedRow
+        let name = layoutNameField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard row >= 0, row < layoutEntries.count else { layoutStatus.stringValue = "Select a layout first"; return }
+        guard !name.isEmpty else { layoutStatus.stringValue = "Type a new name first"; return }
+        store.renameLayout(id: layoutEntries[row].id, name: name)
+        layoutNameField.stringValue = ""
+        reloadLayouts()
+        layoutStatus.stringValue = "Renamed"
     }
 
     private func aiTab() -> NSView {
@@ -718,7 +804,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        tableView === connTable ? connEntries.count : dictEntries.count
+        if tableView === connTable { return connEntries.count }
+        if tableView === layoutsTable { return layoutEntries.count }
+        return dictEntries.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -730,6 +818,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             case "connName": text = c.name
             case "connKey": text = c.leaderKey
             default: text = c.endpoint
+            }
+        } else if tableView === layoutsTable {
+            guard row < layoutEntries.count else { return nil }
+            let l = layoutEntries[row]
+            if tableColumn?.identifier.rawValue == "layName" {
+                text = l.name
+            } else {
+                let count = WindowLayouts.decode(l.json).count
+                let when = String(l.timestamp.prefix(16)).replacingOccurrences(of: "T", with: " ")
+                text = "\(count) windows · \(when)"
             }
         } else {
             let entry = dictEntries[row]

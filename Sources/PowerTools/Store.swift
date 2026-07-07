@@ -150,11 +150,24 @@ final class Store {
                 sqlite3_step(ins)
             }
             sqlite3_finalize(ins)
-            exec("DELETE FROM layouts WHERE id NOT IN (SELECT id FROM layouts ORDER BY id DESC LIMIT 6)")
+            exec("DELETE FROM layouts WHERE id NOT IN (SELECT id FROM layouts ORDER BY id DESC LIMIT 12)")
         }
     }
 
-    func layouts(_ limit: Int = 6) -> [LayoutEntry] {
+    func renameLayout(id: Int64, name: String) {
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "UPDATE layouts SET name = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, name, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int64(stmt, 2, id)
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
+    func layouts(_ limit: Int = 12) -> [LayoutEntry] {
         queue.sync {
             guard let db else { return [] }
             var stmt: OpaquePointer?
