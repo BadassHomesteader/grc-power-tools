@@ -6,7 +6,7 @@
 
 Power Tools puts a suite of power-user utilities behind a single hotkey. **Hold Option + Shift**, then speak or tap a letter/arrow: dictate into any app, open a Claude chat, snap and tile windows, OCR the screen, grab a screenshot, cut & paste files, transform your clipboard, or spotlight your cursor. If you've missed Windows PowerToys on the Mac, this is that — FancyZones-style snapping, Advanced Paste, Text Extractor, and Find My Mouse — plus on-device dictation and AI chat.
 
-**In the box:** 🎙 Dictation · 💬 AI chat · 🪟 Window snapping + Snap Assist · 🎛 Snap palette (Moom-style) · ▦ Grid placement · 📋 Clipboard history (Win+V-style, text + images) · 🔤 OCR (Text Extractor) · 📸 Screenshots · 🔎 Google Lens · 🗂 File cut/paste · 📝 Advanced Paste · 🖱 Find My Mouse
+**In the box:** 🎙 Dictation · 💬 AI chat · 🔀 ⌘Tab like Windows Alt-Tab · 🪟 Window snapping + Snap Assist · 🎛 Snap palette (Moom-style) · 🗔 Saved layouts · ▦ Grid placement · 📋 Clipboard history (Win+V-style, text + images) · ⚡ Quick Capture → your own endpoints · 🔤 OCR (Text Extractor) · 📸 Screenshots · 🔎 Google Lens · 🗂 File cut/paste · 📝 Advanced Paste · 🖱 Find My Mouse · 🔇 Call-safe dictation
 
 **The app bundle and data folder are still named `GRC Whisper` / bundle ID `com.grc.whisper`** so macOS permissions and saved keys survive the rename.
 
@@ -135,14 +135,20 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 - **hold + W** → **snap palette**: a compact panel of targets drawn as mini window diagrams — a halves row (Fill · left/center/right ½ · top/bottom ½; hold **⌥** for corner quarters + center) and a thirds row (Fill · ⅓s · ⅔s), plus a **mini-grid** you drag across to sketch any rectangle. Keys `1–0 - =` or click apply; arrows move the highlight with a **live preview outline** on the screen; **Tab** retargets another display; Esc closes.
 - **Saved layouts** (in the palette): press **S** to snapshot every window's position; chips **A/B/C** restore the three most recent — "meeting mode" / "deep-work mode" in one keystroke. Restore repositions windows of running apps (matched by app + title); it never launches anything.
 - **hold + Return** → maximize.
-- **⌘Tab, fixed (no hotkey needed)** → works like **Windows Alt-Tab**: window-level most-recently-used switching with a **visual strip** — hold ⌘ and a row of live window thumbnails appears (most recent first, then every other open window), Tab moves the highlight, ⇧⌘Tab moves backwards, release ⌘ to switch, Esc to cancel. Two Excel windows are two entries, unlike macOS's app-level switcher. Replaces the macOS app switcher while enabled — toggle in Settings ▸ Windows. ⌘` keeps its stock same-app cycling.
+- **⌘Tab, fixed (no hotkey needed)** → works like **Windows Alt-Tab**: window-level most-recently-used switching with a **visual strip** — hold ⌘ and rows of live window thumbnails appear (most recent first, then every other open window, up to 24), Tab **or arrow keys** move the highlight (←/→ step, ↑/↓ jump rows), ⇧⌘Tab moves backwards, release ⌘ to switch, Esc to cancel. Two Excel windows are two entries, unlike macOS's app-level switcher. Replaces the macOS app switcher while enabled — toggle in Settings ▸ Windows. ⌘` keeps its stock same-app cycling.
 - Right after a snap, **Snap Assist** offers the other windows — click one to fill the empty space (Windows-style).
 - **hold + 3** → **grid draw mode**: drag across an on-screen grid to place the window (Moom-style). Grid dimensions are configurable.
 
 **Clipboard & cursor**
 - **hold + P** → **Advanced Paste**: a palette to paste the clipboard as plain text or transform it — summarize, rewrite, bullets, markdown, or translate (AI transforms use your configured cloud model).
 - **hold + H** → **Clipboard history** (the Windows Win+V gap): a palette of your recent copies — text AND images (screenshots included), with thumbnails. Digits/arrows pick one, it pastes into the app you came from and becomes the current clipboard. Recording is local (SQLite; last 200 text clips + 25 images, images capped at 5MB each), and anything marked concealed/transient by password managers is never recorded. Toggle in Settings ▸ General.
-- **hold + M** → **Find My Mouse**: dims the screen and spotlights the cursor.
+- **hold + M** → **Find My Mouse**: dims every screen and sweeps a ring onto the cursor.
+
+**Quick Capture & Connections**
+- **hold + N** (or any letter you assign) → **Quick Capture**: a small input box pops up — type or *dictate* a line, press ⏎, and it's POSTed to a **connection** you configure: a todo app, an n8n webhook, any HTTP endpoint. Add as many connections as you like in Settings ▸ Connections, each on its own leader letter, each with its own endpoint, auth header + token (stored in a private owner-only file), and JSON body template.
+- **Inline fields, parsed as you type**: `call Rhett tomorrow p1 @calls` → title "call Rhett" with priority 1, tomorrow's due date, and context "calls" — the panel shows what it parsed before you send. Natural-language dates ("friday", "july 12") via Apple's on-device date detector.
+- **Template placeholders**: `%TEXT%` (the captured line, JSON-escaped), `%TODAY%` (today as a Unix-seconds due date), `%PRIORITY%` (p0–p3, defaults 0), `%DUE%` (yyyy-mm-dd), `%DUE_TS%` (parsed due date in Unix seconds, today when absent), `%CONTEXT%` (@word). Example: `{"title":"%TEXT%","priority":%PRIORITY%,"duedate":%DUE_TS%,"context":"%CONTEXT%"}`.
+- If a POST fails, the panel re-opens pre-filled so the text is never lost.
 
 T / S / G need Screen Recording permission the first time (System Settings ▸ Privacy & Security ▸ Screen Recording, then quit & reopen). OCR is also on the menu-bar mic ▸ Capture Text from Screen.
 
