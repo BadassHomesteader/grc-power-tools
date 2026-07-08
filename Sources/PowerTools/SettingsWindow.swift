@@ -366,7 +366,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     private func connectionsTab() -> NSView {
-        let note = NSTextField(labelWithString: "Quick Capture: hold your hotkey + a connection's letter to pop up an input box, then type or dictate a line and it's POSTed to that connection — a todo app, an n8n webhook, anything. Add as many as you like, each on its own key. %TEXT% in the body becomes what you typed (JSON-escaped); %TODAY% becomes today's date. Tokens are stored in a private, owner-only file like your AI keys; leave the header blank for no auth.")
+        let note = NSTextField(labelWithString: "Quick Capture: hold your hotkey + a connection's letter to pop up an input box, then type or dictate a line and it's POSTed to that connection — a todo app, an n8n webhook, anything. Add as many as you like, each on its own key. %TEXT% in the body becomes what you typed (JSON-escaped); %TODAY% becomes today's date. Inline fields are parsed and stripped from the text — p0–p3 → %PRIORITY%, a natural date (“tomorrow”, “friday”) → %DUE% (yyyy-mm-dd), @word → %CONTEXT%. Tokens are stored in a private, owner-only file like your AI keys; leave the header blank for no auth.")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         note.lineBreakMode = .byWordWrapping

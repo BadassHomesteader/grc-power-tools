@@ -162,10 +162,17 @@ enum CloudPolish {
     /// newlines survive) and `%TODAY%` with today's due-date timestamp. `header`
     /// empty → no auth header sent. Any 2xx is success; the built body is validated
     /// as JSON first so a bad template fails clearly.
-    static func postCapture(text: String, endpoint: String, header: String, token: String, bodyTemplate: String) async throws {
+    static func postCapture(text: String, endpoint: String, header: String, token: String, bodyTemplate: String,
+                            priority: String = "", due: String = "", context: String = "") async throws {
         guard let url = URL(string: endpoint), url.scheme != nil else { throw CloudError.badResponse }
         var bodyString = bodyTemplate.replacingOccurrences(of: "%TEXT%", with: jsonEscape(text))
         bodyString = bodyString.replacingOccurrences(of: "%TODAY%", with: String(todayDueDate()))
+        // Parsed-field placeholders (all optional in templates). %PRIORITY%
+        // defaults to "0" so numeric JSON fields stay valid without a token;
+        // %DUE% / %CONTEXT% become empty strings when absent.
+        bodyString = bodyString.replacingOccurrences(of: "%PRIORITY%", with: priority.isEmpty ? "0" : jsonEscape(priority))
+        bodyString = bodyString.replacingOccurrences(of: "%DUE%", with: jsonEscape(due))
+        bodyString = bodyString.replacingOccurrences(of: "%CONTEXT%", with: jsonEscape(context))
         let bodyData = Data(bodyString.utf8)
         // Fail fast on a malformed template rather than sending garbage the server
         // would reject with an opaque 400.

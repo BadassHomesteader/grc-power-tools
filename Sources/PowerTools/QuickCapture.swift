@@ -74,9 +74,10 @@ final class QuickCaptureView: NSView, NSTextFieldDelegate {
     var onCancel: (() -> Void)?
     private let dark: Bool
     private let title: String
+    private var parseHint = ""
 
     private static let width: CGFloat = 460
-    private static let height: CGFloat = 118
+    private static let height: CGFloat = 134
 
     init(dark: Bool, title: String, prefill: String) {
         self.dark = dark
@@ -120,8 +121,19 @@ final class QuickCaptureView: NSView, NSTextFieldDelegate {
         let heading = title.isEmpty ? "Quick Capture" : "Quick Capture · \(title)"
         (heading as NSString).draw(at: NSPoint(x: 20, y: 15),
             withAttributes: [.font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: fg])
-        ("↵ to send  ·  esc to cancel" as NSString).draw(at: NSPoint(x: 20, y: Self.height - 25),
+        // Live parse feedback: what p1 / @context / "tomorrow" resolved to.
+        if !parseHint.isEmpty {
+            let accent = NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1)
+            (parseHint as NSString).draw(at: NSPoint(x: 20, y: Self.height - 44),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: accent])
+        }
+        ("↵ to send  ·  esc  ·  p1 · tomorrow · @context" as NSString).draw(at: NSPoint(x: 20, y: Self.height - 25),
             withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: dim])
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        parseHint = CaptureParse.summary(CaptureParse.parse(field.stringValue))
+        needsDisplay = true
     }
 
     @objc private func submit() {

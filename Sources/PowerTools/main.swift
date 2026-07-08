@@ -442,6 +442,15 @@ case "strip-preview":
         print("wrote \(out) (\(tiles.count) tiles)")
     }
 
+case "capture-parse":
+    // grc-whisper capture-parse "<text>" — test the inline field parser.
+    guard args.count >= 2 else { print("usage: capture-parse \"text\""); exit(1) }
+    let p = CaptureParse.parse(args.dropFirst().joined(separator: " "))
+    print("title:    \(p.title)")
+    print("priority: \(p.priority.isEmpty ? "(none)" : p.priority)")
+    print("due:      \(p.due.isEmpty ? "(none)" : p.due)")
+    print("context:  \(p.context.isEmpty ? "(none)" : p.context)")
+
 case "layout":
     // grc-whisper layout save|list|restore [id]  — test/admin for saved layouts.
     let store = Store()

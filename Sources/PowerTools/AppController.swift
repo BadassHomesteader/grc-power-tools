@@ -539,12 +539,19 @@ final class AppController {
     private func sendCapture(_ text: String, connection conn: Config.Connection, restore: NSRunningApplication?) {
         let header = conn.authHeader.trimmingCharacters(in: .whitespacesAndNewlines)
         let token = Keychain.get(conn.tokenAccount) ?? ""
+        // Inline fields: "call Rhett tomorrow p1 @calls" → title/priority/due/context.
+        let parsed = CaptureParse.parse(text)
         overlay.showProcessing()
         Task {
             do {
-                try await CloudPolish.postCapture(text: text, endpoint: conn.endpoint, header: header,
-                                                  token: token, bodyTemplate: conn.bodyTemplate)
-                await MainActor.run { self.overlay.showSuccess("Captured  \(text)"); restore?.activate() }
+                try await CloudPolish.postCapture(text: parsed.title, endpoint: conn.endpoint, header: header,
+                                                  token: token, bodyTemplate: conn.bodyTemplate,
+                                                  priority: parsed.priority, due: parsed.due, context: parsed.context)
+                await MainActor.run {
+                    let extras = CaptureParse.summary(parsed)
+                    self.overlay.showSuccess("Captured  \(parsed.title)\(extras.isEmpty ? "" : "  ·  \(extras)")")
+                    restore?.activate()
+                }
             } catch {
                 await MainActor.run {
                     self.overlay.showError("\(conn.name) capture failed — check Settings ▸ Connections")
