@@ -546,7 +546,8 @@ final class AppController {
             do {
                 try await CloudPolish.postCapture(text: parsed.title, endpoint: conn.endpoint, header: header,
                                                   token: token, bodyTemplate: conn.bodyTemplate,
-                                                  priority: parsed.priority, due: parsed.due, context: parsed.context)
+                                                  priority: parsed.priority, due: parsed.due,
+                                                  dueTS: parsed.dueTS, context: parsed.context)
                 await MainActor.run {
                     let extras = CaptureParse.summary(parsed)
                     self.overlay.showSuccess("Captured  \(parsed.title)\(extras.isEmpty ? "" : "  ·  \(extras)")")

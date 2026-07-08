@@ -163,7 +163,7 @@ enum CloudPolish {
     /// empty → no auth header sent. Any 2xx is success; the built body is validated
     /// as JSON first so a bad template fails clearly.
     static func postCapture(text: String, endpoint: String, header: String, token: String, bodyTemplate: String,
-                            priority: String = "", due: String = "", context: String = "") async throws {
+                            priority: String = "", due: String = "", dueTS: Int = 0, context: String = "") async throws {
         guard let url = URL(string: endpoint), url.scheme != nil else { throw CloudError.badResponse }
         var bodyString = bodyTemplate.replacingOccurrences(of: "%TEXT%", with: jsonEscape(text))
         bodyString = bodyString.replacingOccurrences(of: "%TODAY%", with: String(todayDueDate()))
@@ -172,6 +172,9 @@ enum CloudPolish {
         // %DUE% / %CONTEXT% become empty strings when absent.
         bodyString = bodyString.replacingOccurrences(of: "%PRIORITY%", with: priority.isEmpty ? "0" : jsonEscape(priority))
         bodyString = bodyString.replacingOccurrences(of: "%DUE%", with: jsonEscape(due))
+        // Numeric due (Toodledo/grc-todo convention): the parsed day's timestamp,
+        // or today's when no date was said — same default as %TODAY%.
+        bodyString = bodyString.replacingOccurrences(of: "%DUE_TS%", with: String(dueTS > 0 ? dueTS : todayDueDate()))
         bodyString = bodyString.replacingOccurrences(of: "%CONTEXT%", with: jsonEscape(context))
         let bodyData = Data(bodyString.utf8)
         // Fail fast on a malformed template rather than sending garbage the server

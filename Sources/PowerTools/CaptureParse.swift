@@ -14,6 +14,7 @@ enum CaptureParse {
         var title: String
         var priority: String   // "" when absent
         var due: String        // yyyy-MM-dd or ""
+        var dueTS: Int         // midnight-UTC-of-local-day seconds (grc-todo/Toodledo format), 0 when absent
         var context: String    // "" when absent
     }
 
@@ -38,6 +39,7 @@ enum CaptureParse {
         // word boundary and only strip the matched phrase (plus an immediately
         // preceding "due"/"by"/"on" connector, which reads as part of it).
         var due = ""
+        var dueTS = 0
         if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) {
             let ns = working as NSString
             if let match = detector.firstMatch(in: working, range: NSRange(location: 0, length: ns.length)),
@@ -45,6 +47,7 @@ enum CaptureParse {
                 let f = DateFormatter()
                 f.dateFormat = "yyyy-MM-dd"
                 due = f.string(from: date)
+                dueTS = timestamp(for: date)
                 var strip = match.range
                 let before = ns.substring(to: strip.location)
                 for connector in ["due ", "by ", "on "] {
@@ -61,7 +64,18 @@ enum CaptureParse {
         let title = working
             .replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return Parsed(title: title.isEmpty ? text : title, priority: priority, due: due, context: context)
+        return Parsed(title: title.isEmpty ? text : title, priority: priority, due: due, dueTS: dueTS, context: context)
+    }
+
+    /// Same convention as CloudPolish.todayDueDate(): midnight UTC of the LOCAL
+    /// calendar day, in seconds — the Toodledo/grc-todo due-date format.
+    private static func timestamp(for date: Date) -> Int {
+        var local = Calendar(identifier: .gregorian)
+        local.timeZone = .current
+        let ymd = local.dateComponents([.year, .month, .day], from: date)
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        return Int((utc.date(from: ymd) ?? date).timeIntervalSince1970)
     }
 
     /// One-line human summary for the capture panel's hint ("" when nothing parsed).
