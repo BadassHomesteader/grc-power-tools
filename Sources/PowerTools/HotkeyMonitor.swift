@@ -37,6 +37,7 @@ final class HotkeyMonitor {
         case cycleEnd                     // ⌘ released — raise + commit the selection
         case cycleCancel                  // Esc while cycling — close, switch nothing
         case cycleArrow(dx: Int, dy: Int) // arrows while cycling — move the highlight
+        case finderOpen                   // plain ⏎ in Finder — open, don't rename
     }
 
     var handler: ((Callback) -> Void)?
@@ -45,6 +46,11 @@ final class HotkeyMonitor {
     /// Plain Bool (same discipline as `held` — set on main, read on the tap
     /// thread; a torn read is impossible for a Bool here).
     var lastWindowSwitch = true
+    /// When true and Finder is frontmost, plain ⏎ opens the selection instead
+    /// of renaming (Windows-style). Both flags set from main, read on the tap
+    /// thread (same discipline as `held`).
+    var finderEnterOpens = true
+    var finderFrontmost = false
 
     /// Quick Capture leaders: keyCode → connection id, user-assigned per connection.
     /// A dictionary isn't safe to read on the tap thread while main writes it, so it
@@ -221,6 +227,23 @@ final class HotkeyMonitor {
                 return nil
             }
         }
+        // Plain ⏎ in Finder → open the selection (Windows-style) instead of
+        // renaming. Exact-match: any modifier passes through; leader-held Return
+        // stays the maximize chord. The AX focus check keeps Return working in
+        // rename fields / search boxes (text focus → pass through untouched) —
+        // it must run BEFORE swallowing, synchronously (~ms, 50ms cap).
+        if finderEnterOpens, finderFrontmost, !held, type == .keyDown, keyCode == Self.kVK_Return,
+           flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).isEmpty {
+            if ContextSnapshot.focusIsTextEditing() {
+                return Unmanaged.passUnretained(event)
+            }
+            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                swallowedKeyUps.insert(keyCode)
+                dispatch(.finderOpen)
+            }
+            return nil
+        }
+
         // ⌘ released while a cycle session is open → commit it. Not consumed.
         if cycling, type == .flagsChanged, !flags.contains(.maskCommand) {
             cycling = false

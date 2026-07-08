@@ -128,6 +128,7 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 
 **Files** (with the Finder frontmost)
 - **hold + C** copy the selected files · **hold + X** cut · **hold + V** paste — cut files are *moved* into the front Finder window. A keyboard cut/paste for files, like Windows Explorer.
+- **⏎ opens the selection** (Windows-style) instead of starting a rename — works for files and folders; Return still types normally in rename and search fields. Rename via right-click ▸ Rename or a slow double-click. Toggle in Settings ▸ General.
 
 **Windows**
 - **hold + ← / → / ↑ / ↓** → snap the focused window to that side/edge. Tap the same arrow again to **cycle sizes** (½ · ⅓ · ⅔ by default; ¼/¾ or ⅕/⅘ selectable in Settings — each set includes the larger complement from the other side).

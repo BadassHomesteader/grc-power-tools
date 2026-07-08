@@ -21,6 +21,7 @@ final class AppController {
             chat?.updateConfig(config)
             clipboardWatcher.enabled = config.clipboardHistory
             hotkey?.lastWindowSwitch = config.lastWindowSwitch
+            hotkey?.finderEnterOpens = config.finderEnterOpens
             hotkey?.setConnectionLeaders(Self.leaderMap(config.connections))
             windowSwitcher.dark = config.appearance.isDark
         }
@@ -150,6 +151,9 @@ final class AppController {
                 self.windowSwitcher.cancelCycle()
             case .cycleArrow(let dx, let dy):
                 self.windowSwitcher.cycleArrow(dx: dx, dy: dy)
+            case .finderOpen:
+                // ⌘O = Finder's own Open — works for files and folders alike.
+                Inserter.postKey(CGKeyCode(31 /* kVK_ANSI_O */), flags: .maskCommand)
             case .findMouse:
                 self.interruptDictation()
                 self.findMouse.flash()
@@ -160,6 +164,17 @@ final class AppController {
                 NSLocalizedDescriptionKey: "Couldn't install the global hotkey — grant Accessibility permission and relaunch"])
         }
         hotkey = monitor
+        // Keep the tap's Finder-frontmost flag current (read on the tap thread
+        // for the ⏎-opens interception; never query NSWorkspace from the tap).
+        monitor.finderEnterOpens = config.finderEnterOpens
+        monitor.finderFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let isFinder = app?.bundleIdentifier == "com.apple.finder"
+            Task { @MainActor in self?.hotkey?.finderFrontmost = isFinder }
+        }
         clipboardWatcher.start()
         windowSwitcher.dark = config.appearance.isDark
         windowSwitcher.start()

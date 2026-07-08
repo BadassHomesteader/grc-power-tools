@@ -242,6 +242,9 @@ struct Config: Codable {
     /// Mute the speakers while the dictation key is held, so a call or music
     /// playing through them can't bleed into the transcript. Restored on release.
     var muteWhileDictating: Bool = true
+    /// Plain ⏎ in Finder opens the selection (Windows-style) instead of
+    /// renaming. Return still types normally in rename/search fields.
+    var finderEnterOpens: Bool = true
 
     /// Quick Capture (hold hotkey + N): POST a typed/dictated line to any HTTP
     /// endpoint — a personal todo app, an n8n webhook, etc. Nothing app-specific
@@ -259,7 +262,7 @@ struct Config: Codable {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
         case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
-        case windowPalette, clipboardHistory, lastWindowSwitch, muteWhileDictating
+        case windowPalette, clipboardHistory, lastWindowSwitch, muteWhileDictating, finderEnterOpens
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
     }
@@ -288,6 +291,7 @@ struct Config: Codable {
         clipboardHistory = try c.decodeIfPresent(Bool.self, forKey: .clipboardHistory) ?? true
         lastWindowSwitch = try c.decodeIfPresent(Bool.self, forKey: .lastWindowSwitch) ?? true
         muteWhileDictating = try c.decodeIfPresent(Bool.self, forKey: .muteWhileDictating) ?? true
+        finderEnterOpens = try c.decodeIfPresent(Bool.self, forKey: .finderEnterOpens) ?? true
         captureEndpoint = try c.decodeIfPresent(String.self, forKey: .captureEndpoint) ?? ""
         captureAuthHeader = try c.decodeIfPresent(String.self, forKey: .captureAuthHeader) ?? "X-Api-Key"
         captureBodyTemplate = try c.decodeIfPresent(String.self, forKey: .captureBodyTemplate) ?? "{\"title\":\"%TEXT%\"}"

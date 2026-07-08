@@ -27,6 +27,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let clipboardHistoryCheck = NSButton(checkboxWithTitle: "Clipboard history — hold hotkey + H to paste a recent copy or image", target: nil, action: nil)
     private let lastWindowCheck = NSButton(checkboxWithTitle: "⌘⇥ works like Windows Alt-Tab — last window first, per window not app", target: nil, action: nil)
     private let muteDictationCheck = NSButton(checkboxWithTitle: "Mute speakers while dictating — keeps calls & music out of the transcript", target: nil, action: nil)
+    private let finderEnterCheck = NSButton(checkboxWithTitle: "⏎ in Finder opens the selection (Windows-style) — rename via right-click", target: nil, action: nil)
     private let tabView = NSTabView()
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
@@ -134,6 +135,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         lastWindowCheck.action = #selector(lastWindowToggled)
         muteDictationCheck.target = self
         muteDictationCheck.action = #selector(muteDictationToggled)
+        finderEnterCheck.target = self
+        finderEnterCheck.action = #selector(finderEnterToggled)
 
         tabView.addTabViewItem(tab("General", generalTab()))
         tabView.addTabViewItem(tab("Dictation", dictationTab()))
@@ -202,7 +205,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         buttons.spacing = 8
         return vstack([
             section("How to use it", [helpLabel], width: 590),
-            section("General", [clipboardHistoryCheck, launchLoginCheck, buttons, version], width: 590),
+            section("General", [clipboardHistoryCheck, finderEnterCheck, launchLoginCheck, buttons, version], width: 590),
         ])
     }
 
@@ -525,6 +528,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         clipboardHistoryCheck.state = config.clipboardHistory ? .on : .off
         lastWindowCheck.state = config.lastWindowSwitch ? .on : .off
         muteDictationCheck.state = config.muteWhileDictating ? .on : .off
+        finderEnterCheck.state = config.finderEnterOpens ? .on : .off
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
@@ -564,7 +568,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         Release with no key to dictate normally.
 
-        Anytime: ⌘⇥ = last WINDOW first (Alt-Tab style) — keep ⌘ held and tap ⇥ to walk deeper, ⇧⌘⇥ backwards.
+        Anytime: ⌘⇥ = last WINDOW first (Alt-Tab style) — walk with ⇥ or arrows, ⇧⌘⇥ backwards. In Finder, ⏎ opens the selection.
         """
     }
 
@@ -748,6 +752,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func clipboardHistoryToggled() {
         config.clipboardHistory = (clipboardHistoryCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func finderEnterToggled() {
+        config.finderEnterOpens = (finderEnterCheck.state == .on)
         config.save()
         onConfigChange(config)
     }

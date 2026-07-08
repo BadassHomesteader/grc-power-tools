@@ -32,4 +32,33 @@ struct ContextSnapshot {
         }
         return ContextSnapshot(appName: appName, bundleID: bundleID, isSecureField: secure)
     }
+
+    /// True when the system-wide focused element is a text-editing control —
+    /// a rename field, search box, combo box, or any secure field. Used by key
+    /// interceptions (Finder ⏎-opens) that must NEVER eat a keystroke meant
+    /// for text. Fail-safe: AX errors/timeouts report `true` (treat as text →
+    /// pass the key through untouched). Bounded so a busy app can't stall the
+    /// event tap: worst case ~50ms, typical well under 5ms.
+    static func focusIsTextEditing() -> Bool {
+        let systemWide = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(systemWide, 0.05)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let element = focused, CFGetTypeID(element) == AXUIElementGetTypeID() else { return true }
+        let ax = unsafeDowncast(element, to: AXUIElement.self)
+        var roleRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(ax, kAXRoleAttribute as CFString, &roleRef) == .success,
+              let role = roleRef as? String else { return true }
+        if role == kAXTextFieldRole as String || role == kAXTextAreaRole as String
+            || role == kAXComboBoxRole as String {
+            return true
+        }
+        var subroleRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(ax, kAXSubroleAttribute as CFString, &subroleRef) == .success,
+           let sub = subroleRef as? String,
+           sub == kAXSecureTextFieldSubrole as String || sub == "AXSearchField" {
+            return true
+        }
+        return false
+    }
 }
