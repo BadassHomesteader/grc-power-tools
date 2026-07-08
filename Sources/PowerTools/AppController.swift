@@ -62,6 +62,8 @@ final class AppController {
     private var startTask: Task<Void, Error>?
     private var context: ContextSnapshot?
     private var recordingStarted: Date?
+    /// Diagnostic: loudest level seen this utterance (waveform swaps at 0.22).
+    private var utterancePeak: Float = 0
     private var maxUtteranceTimer: Timer?
     /// True when this dictation cycle should fill the open Quick Capture panel
     /// instead of pasting into another app.
@@ -84,7 +86,12 @@ final class AppController {
         try await AppleSpeechUtterance.ensureAssets(locale: Locale(identifier: config.localeIdentifier))
         try audio.start()
         audio.onLevels = { [weak self] levels in
-            Task { @MainActor in self?.overlay.setLevels(levels) }
+            let peak = levels.max() ?? 0
+            Task { @MainActor in
+                guard let self else { return }
+                if peak > self.utterancePeak { self.utterancePeak = peak }
+                self.overlay.setLevels(levels)
+            }
         }
 
         let monitor = HotkeyMonitor(hotkey: config.hotkey)
@@ -165,6 +172,7 @@ final class AppController {
         guard state == .idle else { return }
         winLastMove = nil; winStep = 0   // fresh window-cycle each hold
         chainH = nil; chainV = nil       // fresh chain each hold
+        utterancePeak = 0
         snapAssistRegion = nil; snapAssistExcludeWID = nil
         let ctx = ContextSnapshot.capture()
         if ctx.isSecureField {
@@ -224,10 +232,15 @@ final class AppController {
             }
         }
 
+        let analyzerStarted = Date()
         Task { @MainActor in
             do {
                 try await st.value
                 guard self.cycle == gen, self.state == .recording else { return } // keyUp path takes over
+                // Diagnostic: until streaming begins, the overlay can't show the
+                // waveform (levels only flow while streaming) — a slow analyzer
+                // start looks like "hints never swap" to the user.
+                log("controller: analyzer ready in \(Int(Date().timeIntervalSince(analyzerStarted) * 1000))ms, streaming begins")
                 self.audio.beginRecording { buffer in utt.feed(buffer) }
             } catch {
                 guard self.cycle == gen else { return }
@@ -239,6 +252,7 @@ final class AppController {
     private func keyUp(ai: Bool = false) {
         guard state == .recording, let utt = utterance else { return }
         ducker.restore()  // speakers back the instant the key lifts
+        log(String(format: "controller: utterance peak level %.2f (waveform swap threshold 0.22)", utterancePeak))
         maxUtteranceTimer?.invalidate()
         let gen = cycle
         let heldMs = Int((Date().timeIntervalSince(recordingStarted ?? Date())) * 1000)
@@ -361,6 +375,7 @@ final class AppController {
     private func cancel() {
         guard state == .recording else { return }
         ducker.restore()
+        log(String(format: "controller: utterance peak level %.2f (canceled; waveform swap threshold 0.22)", utterancePeak))
         maxUtteranceTimer?.invalidate()
         audio.endRecording()
         let utt = utterance

@@ -85,17 +85,25 @@ final class AudioCapture {
         // short slice tracks each syllable so the scrolling bars vary like a real
         // voice waveform. Gain 20 is tuned for real mic input, which runs far
         // quieter than a full-scale file — a lower gain flatlines live speech.
-        if streaming, let data = copy.floatChannelData?[0], copy.frameLength > 0 {
+        if streaming, let data = copy.floatChannelData, copy.frameLength > 0 {
             let n = Int(copy.frameLength)
+            // Loudest channel per slice, not channel 0: multi-channel input
+            // devices (docks, interfaces, aggregates) don't always put the live
+            // mic on channel 0 — reading only ch0 flatlined the waveform there.
+            let channels = Int(copy.format.channelCount)
             let sliceFrames = max(256, Int(copy.format.sampleRate * 0.012))
             var levels: [Float] = []
             var i = 0
             while i < n {
                 let end = min(i + sliceFrames, n)
-                var sumSq: Float = 0
-                for j in i..<end { sumSq += data[j] * data[j] }
-                let rms = sqrtf(sumSq / Float(max(end - i, 1)))
-                levels.append(min(1, max(0.05, rms * 20)))
+                var best: Float = 0
+                for c in 0..<channels {
+                    let p = data[c]
+                    var sumSq: Float = 0
+                    for j in i..<end { sumSq += p[j] * p[j] }
+                    best = max(best, sqrtf(sumSq / Float(max(end - i, 1))))
+                }
+                levels.append(min(1, max(0.05, best * 20)))
                 i = end
             }
             if !levels.isEmpty { onLevels?(levels) }
