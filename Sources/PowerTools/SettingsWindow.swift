@@ -27,9 +27,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let clipboardHistoryCheck = NSButton(checkboxWithTitle: "Clipboard history — hold hotkey + H to paste a recent copy or image", target: nil, action: nil)
     private let lastWindowCheck = NSButton(checkboxWithTitle: "⌘⇥ works like Windows Alt-Tab — last window first, per window not app", target: nil, action: nil)
     private let muteDictationCheck = NSButton(checkboxWithTitle: "Mute speakers while dictating — keeps calls & music out of the transcript", target: nil, action: nil)
-    private let finderEnterCheck = NSButton(checkboxWithTitle: "⏎ in Finder opens the selection (Windows-style) — rename via right-click", target: nil, action: nil)
-    private let windowsKeysCheck = NSButton(checkboxWithTitle: "Windows-style keys — Home/End in text · Finder ⌫ = Back, ⌦ = Trash · ⌃⇧⎋ = Activity Monitor", target: nil, action: nil)
-    private let newDocStatus = NSTextField(labelWithString: " ")
+    private let finderEnterCheck = NSButton(checkboxWithTitle: "⏎ opens the selected file or folder (rename via right-click)", target: nil, action: nil)
+    private let homeEndCheck = NSButton(checkboxWithTitle: "Home / End jump to line start / end in text fields", target: nil, action: nil)
+    private let backspaceUpCheck = NSButton(checkboxWithTitle: "Backspace goes up to the enclosing folder", target: nil, action: nil)
+    private let deleteTrashCheck = NSButton(checkboxWithTitle: "Delete (⌦) moves the selection to Trash", target: nil, action: nil)
+    private let taskMgrCheck = NSButton(checkboxWithTitle: "⌃⇧⎋ opens Activity Monitor (Task Manager)", target: nil, action: nil)
     private let tabView = NSTabView()
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
@@ -139,9 +141,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         muteDictationCheck.action = #selector(muteDictationToggled)
         finderEnterCheck.target = self
         finderEnterCheck.action = #selector(finderEnterToggled)
-        windowsKeysCheck.target = self
-        windowsKeysCheck.action = #selector(windowsKeysToggled)
-        windowsKeysCheck.lineBreakMode = .byWordWrapping
+        for (box, sel) in [(homeEndCheck, #selector(homeEndToggled)),
+                           (backspaceUpCheck, #selector(backspaceUpToggled)),
+                           (deleteTrashCheck, #selector(deleteTrashToggled)),
+                           (taskMgrCheck, #selector(taskMgrToggled))] {
+            box.target = self
+            box.action = sel
+        }
 
         tabView.addTabViewItem(tab("General", generalTab()))
         tabView.addTabViewItem(tab("Dictation", dictationTab()))
@@ -174,14 +180,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private func tab(_ label: String, _ content: NSView) -> NSTabViewItem {
         let item = NSTabViewItem(identifier: label)
         item.label = label
-        let container = NSView()
+        // Scroll so a tall tab (e.g. the how-to + toggles) never clips as
+        // settings accumulate. Flipped clip view pins content to the top.
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.autohidesScrollers = true
+        let flip = FlippedClipView()
+        scroll.contentView = flip
         content.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(content)
+        scroll.documentView = content
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            content.topAnchor.constraint(equalTo: flip.topAnchor, constant: 12),
+            content.leadingAnchor.constraint(equalTo: flip.leadingAnchor, constant: 14),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: flip.trailingAnchor, constant: -14),
         ])
-        item.view = container
+        item.view = scroll
         return item
     }
 
@@ -209,39 +223,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let buttons = NSStackView(views: [chatBtn, dataBtn, quitBtn])
         buttons.spacing = 8
 
-        // New Document in Finder: seed the native templates folder.
-        let newDocNote = NSTextField(labelWithString: "Adds Word / Excel / Text / RTF / Markdown to Finder's right-click ‘New Document’ menu (the Windows ‘New ▸’ gap).")
-        newDocNote.font = .systemFont(ofSize: 11)
-        newDocNote.textColor = .secondaryLabelColor
-        newDocNote.lineBreakMode = .byWordWrapping
-        newDocNote.preferredMaxLayoutWidth = 540
-        newDocStatus.font = .systemFont(ofSize: 11)
-        newDocStatus.textColor = .secondaryLabelColor
-        let newDocBtn = NSButton(title: "Set up ‘New Document’ in Finder", target: self, action: #selector(setupNewDocs))
-        newDocBtn.bezelStyle = .rounded
+        for c in [finderEnterCheck, homeEndCheck, backspaceUpCheck, deleteTrashCheck, taskMgrCheck] {
+            c.lineBreakMode = .byTruncatingTail
+        }
 
         return vstack([
             section("How to use it", [helpLabel], width: 590),
-            section("General", [clipboardHistoryCheck, finderEnterCheck, windowsKeysCheck, launchLoginCheck, buttons, version], width: 590),
-            section("New Document in Finder", [newDocNote, newDocBtn, newDocStatus], width: 590),
+            section("General", [clipboardHistoryCheck, launchLoginCheck, buttons, version], width: 590),
+            section("Windows-style keys", [finderEnterCheck, homeEndCheck, backspaceUpCheck, deleteTrashCheck, taskMgrCheck], width: 590),
         ])
     }
 
-    @objc private func windowsKeysToggled() {
-        config.windowsKeys = (windowsKeysCheck.state == .on)
-        config.save()
-        onConfigChange(config)
-    }
-
-    @objc private func setupNewDocs() {
-        do {
-            let names = try NewDocTemplates.install()
-            NewDocTemplates.relaunchFinder()
-            newDocStatus.stringValue = "Installed \(names.count) templates — right-click any folder ▸ New Document."
-        } catch {
-            newDocStatus.stringValue = "Couldn't install templates: \(error.localizedDescription)"
-        }
-    }
+    @objc private func homeEndToggled() { config.keyHomeEnd = (homeEndCheck.state == .on); config.save(); onConfigChange(config) }
+    @objc private func backspaceUpToggled() { config.finderBackspaceUp = (backspaceUpCheck.state == .on); config.save(); onConfigChange(config) }
+    @objc private func deleteTrashToggled() { config.finderDeleteTrash = (deleteTrashCheck.state == .on); config.save(); onConfigChange(config) }
+    @objc private func taskMgrToggled() { config.taskManagerShortcut = (taskMgrCheck.state == .on); config.save(); onConfigChange(config) }
 
     private func dictationTab() -> NSView {
         vstack([
@@ -563,7 +559,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         lastWindowCheck.state = config.lastWindowSwitch ? .on : .off
         muteDictationCheck.state = config.muteWhileDictating ? .on : .off
         finderEnterCheck.state = config.finderEnterOpens ? .on : .off
-        windowsKeysCheck.state = config.windowsKeys ? .on : .off
+        homeEndCheck.state = config.keyHomeEnd ? .on : .off
+        backspaceUpCheck.state = config.finderBackspaceUp ? .on : .off
+        deleteTrashCheck.state = config.finderDeleteTrash ? .on : .off
+        taskMgrCheck.state = config.taskManagerShortcut ? .on : .off
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel

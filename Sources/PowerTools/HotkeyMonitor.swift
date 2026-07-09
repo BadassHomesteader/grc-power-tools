@@ -43,9 +43,11 @@ final class HotkeyMonitor {
     }
 
     var handler: ((Callback) -> Void)?
-    /// Windows-style key remaps (opt-in): Home/End line nav in text fields,
-    /// Finder Backspace = Back / Delete = Move to Trash, ⌃⇧⎋ = Activity Monitor.
-    var windowsKeys = true
+    /// Windows-style key remaps, each independently toggleable.
+    var keyHomeEnd = true          // Home/End line nav in text fields
+    var finderBackspaceUp = true   // Finder Backspace = up a folder
+    var finderDeleteTrash = true   // Finder Delete (⌦) = Move to Trash
+    var taskManagerShortcut = true // ⌃⇧⎋ = Activity Monitor
     /// Live-toggleable: when true, ⌘Tab / ⇧⌘Tab are intercepted for the
     /// Alt-Tab-style window switcher (replacing the macOS app switcher).
     /// Plain Bool (same discipline as `held` — set on main, read on the tap
@@ -254,13 +256,14 @@ final class HotkeyMonitor {
             return nil
         }
 
-        // Windows-style key remaps (opt-in). Exact-match, guarded so text editing
-        // and modified variants pass through. Never touches the leader (!held).
-        if windowsKeys, !held, type == .keyDown {
+        // Windows-style key remaps — each independently toggleable. Exact-match,
+        // guarded so text editing and modified variants pass through. Never
+        // touches the leader (!held).
+        if !held, type == .keyDown {
             let mods = flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate])
 
             // ⌃⇧⎋ → Activity Monitor (macOS's Task Manager). Global.
-            if keyCode == Self.kVK_Escape, mods == [.maskControl, .maskShift] {
+            if taskManagerShortcut, keyCode == Self.kVK_Escape, mods == [.maskControl, .maskShift] {
                 swallowedKeyUps.insert(keyCode)
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.activityMonitor) }
                 return nil
@@ -270,7 +273,7 @@ final class HotkeyMonitor {
             // (⌘↑/⌘↓); ⇧ preserved for selection. Only while editing text — in a
             // Finder list / desktop, native Home/End (select-first/last) is left
             // alone. AX check is bounded (~ms, 50ms cap) and fails safe to "text".
-            if keyCode == Self.kVK_Home || keyCode == Self.kVK_End {
+            if keyHomeEnd, keyCode == Self.kVK_Home || keyCode == Self.kVK_End {
                 let extra = mods.subtracting([.maskControl, .maskShift])
                 if extra.isEmpty, ContextSnapshot.focusIsTextEditing() {
                     let isHome = keyCode == Self.kVK_Home
@@ -289,15 +292,15 @@ final class HotkeyMonitor {
             // Finder file list: plain Backspace → Up to enclosing folder (⌘↑,
             // like Windows Explorer); plain Delete → Move to Trash (⌘⌫). Skipped
             // in rename/search text so those keys still edit text. Finder-
-            // frontmost + no modifiers only.
-            if finderFrontmost, mods.isEmpty,
-               keyCode == Self.kVK_Backspace || keyCode == Self.kVK_ForwardDelete {
-                if !ContextSnapshot.focusIsTextEditing() {
-                    let up = keyCode == Self.kVK_Backspace
-                    swallowedKeyUps.insert(keyCode)
-                    dispatch(.synthKey(CGKeyCode(up ? Self.kVK_UpArrow : Self.kVK_Backspace), .maskCommand))
-                    return nil
-                }
+            // frontmost + no modifiers only. AX check runs only for these two
+            // keys (never on ordinary typing).
+            let isBack = finderBackspaceUp && keyCode == Self.kVK_Backspace
+            let isDel = finderDeleteTrash && keyCode == Self.kVK_ForwardDelete
+            if finderFrontmost, mods.isEmpty, isBack || isDel,
+               !ContextSnapshot.focusIsTextEditing() {
+                swallowedKeyUps.insert(keyCode)
+                dispatch(.synthKey(CGKeyCode(isBack ? Self.kVK_UpArrow : Self.kVK_Backspace), .maskCommand))
+                return nil
             }
         }
 

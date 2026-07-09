@@ -22,7 +22,10 @@ final class AppController {
             clipboardWatcher.enabled = config.clipboardHistory
             hotkey?.lastWindowSwitch = config.lastWindowSwitch
             hotkey?.finderEnterOpens = config.finderEnterOpens
-            hotkey?.windowsKeys = config.windowsKeys
+            hotkey?.keyHomeEnd = config.keyHomeEnd
+            hotkey?.finderBackspaceUp = config.finderBackspaceUp
+            hotkey?.finderDeleteTrash = config.finderDeleteTrash
+            hotkey?.taskManagerShortcut = config.taskManagerShortcut
             hotkey?.setConnectionLeaders(Self.leaderMap(config.connections))
             windowSwitcher.dark = config.appearance.isDark
         }
@@ -172,7 +175,10 @@ final class AppController {
         // Keep the tap's Finder-frontmost flag current (read on the tap thread
         // for the ⏎-opens interception; never query NSWorkspace from the tap).
         monitor.finderEnterOpens = config.finderEnterOpens
-        monitor.windowsKeys = config.windowsKeys
+        monitor.keyHomeEnd = config.keyHomeEnd
+        monitor.finderBackspaceUp = config.finderBackspaceUp
+        monitor.finderDeleteTrash = config.finderDeleteTrash
+        monitor.taskManagerShortcut = config.taskManagerShortcut
         monitor.finderFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main

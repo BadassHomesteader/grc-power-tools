@@ -245,9 +245,11 @@ struct Config: Codable {
     /// Plain ⏎ in Finder opens the selection (Windows-style) instead of
     /// renaming. Return still types normally in rename/search fields.
     var finderEnterOpens: Bool = true
-    /// Windows-style keys: Home/End = line start/end in text, Finder Backspace
-    /// = Back, Finder Delete = Move to Trash, ⌃⇧⎋ = Activity Monitor.
-    var windowsKeys: Bool = true
+    /// Windows-style keys — each independently toggleable.
+    var keyHomeEnd: Bool = true          // Home/End = line start/end in text fields
+    var finderBackspaceUp: Bool = true   // Finder Backspace = up a folder
+    var finderDeleteTrash: Bool = true   // Finder Delete (⌦) = Move to Trash
+    var taskManagerShortcut: Bool = true // ⌃⇧⎋ = Activity Monitor
 
     /// Quick Capture (hold hotkey + N): POST a typed/dictated line to any HTTP
     /// endpoint — a personal todo app, an n8n webhook, etc. Nothing app-specific
@@ -265,7 +267,8 @@ struct Config: Codable {
         case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
         case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
-        case windowPalette, clipboardHistory, lastWindowSwitch, muteWhileDictating, finderEnterOpens, windowsKeys
+        case windowPalette, clipboardHistory, lastWindowSwitch, muteWhileDictating, finderEnterOpens
+        case keyHomeEnd, finderBackspaceUp, finderDeleteTrash, taskManagerShortcut
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
     }
@@ -295,7 +298,16 @@ struct Config: Codable {
         lastWindowSwitch = try c.decodeIfPresent(Bool.self, forKey: .lastWindowSwitch) ?? true
         muteWhileDictating = try c.decodeIfPresent(Bool.self, forKey: .muteWhileDictating) ?? true
         finderEnterOpens = try c.decodeIfPresent(Bool.self, forKey: .finderEnterOpens) ?? true
-        windowsKeys = try c.decodeIfPresent(Bool.self, forKey: .windowsKeys) ?? true
+        // Migration: the old combined `windowsKeys` flag (read from a separate
+        // container so it needn't be a CodingKey the synthesized encoder must
+        // satisfy) seeds all four if the granular keys aren't present yet.
+        enum LegacyKeys: String, CodingKey { case windowsKeys }
+        let legacyWinKeys = try decoder.container(keyedBy: LegacyKeys.self)
+            .decodeIfPresent(Bool.self, forKey: .windowsKeys)
+        keyHomeEnd = try c.decodeIfPresent(Bool.self, forKey: .keyHomeEnd) ?? legacyWinKeys ?? true
+        finderBackspaceUp = try c.decodeIfPresent(Bool.self, forKey: .finderBackspaceUp) ?? legacyWinKeys ?? true
+        finderDeleteTrash = try c.decodeIfPresent(Bool.self, forKey: .finderDeleteTrash) ?? legacyWinKeys ?? true
+        taskManagerShortcut = try c.decodeIfPresent(Bool.self, forKey: .taskManagerShortcut) ?? legacyWinKeys ?? true
         captureEndpoint = try c.decodeIfPresent(String.self, forKey: .captureEndpoint) ?? ""
         captureAuthHeader = try c.decodeIfPresent(String.self, forKey: .captureAuthHeader) ?? "X-Api-Key"
         captureBodyTemplate = try c.decodeIfPresent(String.self, forKey: .captureBodyTemplate) ?? "{\"title\":\"%TEXT%\"}"
