@@ -2,7 +2,8 @@ import Cocoa
 import ApplicationServices
 
 /// Moom-style snap palette: hold hotkey + W → a compact panel of window targets.
-/// Row 1: Fill + four halves (hold ⌥: Center + four quarters). Row 2: thirds.
+/// Row 1: Fill + halves (hold ⌥: Center + corner quarters). Row 2: thirds.
+/// Row 3: quarter-width columns (left … center … right).
 /// Below: a mini-grid — drag across it to sketch any rectangle without leaving
 /// the palette. Highlighting a button previews the landing rect on the real
 /// screen; digits/click/Return apply; Tab retargets another display.
@@ -227,7 +228,7 @@ final class WindowPaletteView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override var fittingSize: NSSize {
         NSSize(width: Self.width,
-               height: Self.headerH + Self.btnH * 2 + Self.btnGap + Self.gridGap + Self.gridAreaH + Self.layoutsH + Self.footerH)
+               height: Self.headerH + Self.btnH * 3 + Self.btnGap * 2 + Self.gridGap + Self.gridAreaH + Self.layoutsH + Self.footerH)
     }
 
     private var targetScreen: NSScreen { screens[min(screenIndex, screens.count - 1)] }
@@ -266,7 +267,20 @@ final class WindowPaletteView: NSView {
                 Action(key: "=", title: "Right ⅔", region: NSRect(x: t, y: 0, width: 2 * t, height: 1))]
     }
 
-    private var actions: [Action] { row1 + row2 }
+    // Quarter-width full-height columns at five evenly-spaced positions (left
+    // edges 0 · 3⁄16 · 6⁄16 · 9⁄16 · 12⁄16 — the middle one lands dead-center).
+    private var row3: [Action] {
+        let w: CGFloat = 0.25
+        let step = (1 - w) / 4   // 0.1875
+        return [Action(key: "q", title: "Fill", region: NSRect(x: 0, y: 0, width: 1, height: 1)),
+                Action(key: "w", title: "Left ¼", region: NSRect(x: 0, y: 0, width: w, height: 1)),
+                Action(key: "e", title: "Mid-L ¼", region: NSRect(x: step, y: 0, width: w, height: 1)),
+                Action(key: "r", title: "Center ¼", region: NSRect(x: 2 * step, y: 0, width: w, height: 1)),
+                Action(key: "t", title: "Mid-R ¼", region: NSRect(x: 3 * step, y: 0, width: w, height: 1)),
+                Action(key: "y", title: "Right ¼", region: NSRect(x: 4 * step, y: 0, width: w, height: 1))]
+    }
+
+    private var actions: [Action] { row1 + row2 + row3 }
 
     // MARK: Layout
 
@@ -279,7 +293,7 @@ final class WindowPaletteView: NSView {
 
     private var gridAreaRect: NSRect {
         NSRect(x: Self.pad,
-               y: Self.headerH + Self.btnH * 2 + Self.btnGap + Self.gridGap,
+               y: Self.headerH + Self.btnH * 3 + Self.btnGap * 2 + Self.gridGap,
                width: Self.width - Self.pad * 2, height: Self.gridAreaH)
     }
 
@@ -335,9 +349,10 @@ final class WindowPaletteView: NSView {
     }
 
     func nudgeHighlight(dc: Int, dr: Int) {
+        let rowCount = (actions.count + Self.perRow - 1) / Self.perRow
         var row = highlighted / Self.perRow, col = highlighted % Self.perRow
         col = min(max(col + dc, 0), Self.perRow - 1)
-        row = min(max(row + dr, 0), 1)
+        row = min(max(row + dr, 0), rowCount - 1)
         setHighlight(row * Self.perRow + col)
     }
 
@@ -541,7 +556,7 @@ final class WindowPaletteView: NSView {
 
     private var layoutsRowRect: NSRect {
         NSRect(x: Self.pad,
-               y: Self.headerH + Self.btnH * 2 + Self.btnGap + Self.gridGap + Self.gridAreaH + 6,
+               y: Self.headerH + Self.btnH * 3 + Self.btnGap * 2 + Self.gridGap + Self.gridAreaH + 6,
                width: Self.width - Self.pad * 2, height: Self.layoutsH - 12)
     }
 
