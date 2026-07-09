@@ -27,11 +27,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let clipboardHistoryCheck = NSButton(checkboxWithTitle: "Clipboard history — hold hotkey + H to paste a recent copy or image", target: nil, action: nil)
     private let lastWindowCheck = NSButton(checkboxWithTitle: "⌘⇥ works like Windows Alt-Tab — last window first, per window not app", target: nil, action: nil)
     private let muteDictationCheck = NSButton(checkboxWithTitle: "Mute speakers while dictating — keeps calls & music out of the transcript", target: nil, action: nil)
-    private let finderEnterCheck = NSButton(checkboxWithTitle: "⏎ opens the selected file or folder (rename via right-click)", target: nil, action: nil)
+    private let finderEnterCheck = NSButton(checkboxWithTitle: "Return (⏎) opens the selected file or folder — rename via right-click", target: nil, action: nil)
     private let homeEndCheck = NSButton(checkboxWithTitle: "Home / End jump to line start / end in text fields", target: nil, action: nil)
-    private let backspaceUpCheck = NSButton(checkboxWithTitle: "Backspace goes up to the enclosing folder", target: nil, action: nil)
-    private let deleteTrashCheck = NSButton(checkboxWithTitle: "Delete (⌦) moves the selection to Trash", target: nil, action: nil)
-    private let taskMgrCheck = NSButton(checkboxWithTitle: "⌃⇧⎋ opens Activity Monitor (Task Manager)", target: nil, action: nil)
+    private let backspaceUpCheck = NSButton(checkboxWithTitle: "Backspace (Delete ⌫) goes up to the enclosing folder", target: nil, action: nil)
+    private let deleteTrashCheck = NSButton(checkboxWithTitle: "Forward Delete (⌦) moves the selection to Trash", target: nil, action: nil)
+    private let taskMgrCheck = NSButton(checkboxWithTitle: "Control + Shift + Escape (⌃⇧⎋) opens Activity Monitor (Task Manager)", target: nil, action: nil)
     private var sidebarRows: [SidebarRow] = []
     private var sectionViews: [NSView] = []
     private var contentHost: NSView?
@@ -158,11 +158,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let sections: [(String, String, () -> NSView)] = [
             ("General", "gearshape", generalTab),
             ("Dictation", "mic", dictationTab),
-            ("Windows", "macwindow", windowsTab),
             ("Keys", "keyboard", keysTab),
+            ("Windows", "macwindow", windowsTab),
             ("AI", "sparkles", aiTab),
-            ("Connections", "link", connectionsTab),
             ("Dictionary", "character.book.closed", dictionaryTab),
+            ("Connections", "link", connectionsTab),
             ("Permissions", "checkmark.shield", permissionsTab),
         ]
 
