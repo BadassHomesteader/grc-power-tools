@@ -3,6 +3,8 @@
 # Power Tools
 
 > **The PowerToys of macOS.** One hotkey, a whole toolbox — and the core tools never leave your Mac.
+>
+> **Website: [powertools.geeksare.cool](https://powertools.geeksare.cool)** · [Download the latest DMG](https://github.com/BadassHomesteader/grc-power-tools/releases/latest/download/Power-Tools.dmg)
 
 Power Tools puts a suite of power-user utilities behind a single hotkey. **Hold Option + Shift**, then speak or tap a letter/arrow: dictate into any app, open a Claude chat, snap and tile windows, OCR the screen, grab a screenshot, cut & paste files, transform your clipboard, or spotlight your cursor. If you've missed Windows PowerToys on the Mac, this is that — FancyZones-style snapping, Advanced Paste, Text Extractor, and Find My Mouse — plus on-device dictation and AI chat.
 
