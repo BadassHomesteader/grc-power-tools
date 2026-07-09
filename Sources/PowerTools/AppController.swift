@@ -165,6 +165,9 @@ final class AppController {
             case .findMouse:
                 self.interruptDictation()
                 self.findMouse.flash()
+            case .newDoc:
+                self.interruptDictation()
+                self.openNewDocMenu()
             }
         }
         guard monitor.start() else {
@@ -551,6 +554,44 @@ final class AppController {
             if let kc = HotkeyMonitor.keyCode(forLetter: c.leaderKey) { m[kc] = c.id }
         }
         return m
+    }
+
+    /// hold + D: a small menu of document types at the cursor. The chosen blank
+    /// doc is created in the frontmost Finder window's folder, then revealed and
+    /// selected so it can be renamed. Reading the Finder folder uses Apple Events
+    /// (an Automation prompt the first time).
+    private func openNewDocMenu() {
+        let folder = NewDocTemplates.currentFinderFolder()
+        guard let folder else {
+            overlay.showError("Open a Finder window first (or allow Automation for Finder)")
+            return
+        }
+        let menu = NSMenu()
+        menu.addItem(withTitle: "New Document in \(folder.lastPathComponent)", action: nil, keyEquivalent: "")
+            .isEnabled = false
+        menu.addItem(.separator())
+        for (i, type) in NewDocTemplates.DocType.allCases.enumerated() {
+            let item = NSMenuItem(title: type.menuTitle, action: #selector(createNewDoc(_:)),
+                                  keyEquivalent: "\(i + 1)")
+            item.keyEquivalentModifierMask = []
+            item.target = self
+            item.representedObject = ["type": type.rawValue, "folder": folder.path]
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func createNewDoc(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: String],
+              let raw = info["type"], let type = NewDocTemplates.DocType(rawValue: raw),
+              let path = info["folder"] else { return }
+        do {
+            let url = try NewDocTemplates.create(type, in: URL(fileURLWithPath: path, isDirectory: true))
+            NSWorkspace.shared.activateFileViewerSelecting([url])   // reveal + select in Finder
+            overlay.showSuccess("Created \(url.lastPathComponent)")
+        } catch {
+            overlay.showError("Couldn't create the document: \(error.localizedDescription)")
+        }
     }
 
     /// hold + <leader>: Quick Capture for a specific connection. Open a small input

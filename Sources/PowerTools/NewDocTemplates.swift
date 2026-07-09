@@ -1,86 +1,108 @@
 import Foundation
 import AppKit
 
-/// "New Document" in Finder — the Windows right-click gap. macOS has a native
-/// (undocumented) mechanism: any file dropped in
-///   ~/Library/Application Support/com.apple.finder/New Document Templates/
-/// appears in Finder's right-click "New Document" submenu, creating a copy in
-/// the current folder. We seed it with blank Word / Excel / Text / RTF /
-/// Markdown templates so the switcher gets their familiar "New ▸ Word Document".
+/// New Document — the Windows "New ▸ Word Document" gap. macOS has no native
+/// right-click "New Document" menu, so Power Tools does it with a hotkey:
+/// hold + D pops a small type picker, and the chosen blank document is created
+/// in the CURRENT Finder folder, then revealed and selected so you can rename it.
 ///
 /// The Office files are minimal-but-valid OOXML packages (a .docx / .xlsx is a
 /// zip of XML parts); we build the part tree and zip it with /usr/bin/zip.
 enum NewDocTemplates {
-    static var folder: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/com.apple.finder/New Document Templates", isDirectory: true)
+    enum DocType: String, CaseIterable {
+        case word = "Word Document"
+        case excel = "Excel Workbook"
+        case text = "Text Document"
+        case rtf = "Rich Text"
+        case markdown = "Markdown"
+
+        var ext: String {
+            switch self {
+            case .word: return "docx"
+            case .excel: return "xlsx"
+            case .text: return "txt"
+            case .rtf: return "rtf"
+            case .markdown: return "md"
+            }
+        }
+        var menuTitle: String { "\(rawValue).\(ext)" }
     }
 
-    /// Seed the templates (overwriting ours) and relaunch Finder so the menu
-    /// picks them up. Returns the installed file names.
-    @discardableResult
-    static func install() throws -> [String] {
+    /// The folder of the frontmost Finder window (Desktop if none). Uses Apple
+    /// Events — the one place Power Tools talks to another app — so the OS shows
+    /// an Automation prompt for Finder the first time. nil if denied/failed.
+    static func currentFinderFolder() -> URL? {
+        let script = """
+        tell application "Finder"
+            if (count of Finder windows) > 0 then
+                return POSIX path of (target of front Finder window as alias)
+            else
+                return POSIX path of (path to desktop)
+            end if
+        end tell
+        """
+        var err: NSDictionary?
+        guard let out = NSAppleScript(source: script)?.executeAndReturnError(&err),
+              let path = out.stringValue, err == nil else {
+            log("newdoc: Finder folder lookup failed: \(err ?? [:])")
+            return nil
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    /// Create a blank document of `type` in `folder`, returning its URL. Names
+    /// "Untitled.<ext>", then "Untitled 2.<ext>"… to avoid clobbering.
+    static func create(_ type: DocType, in folder: URL) throws -> URL {
+        let dest = uniqueURL(base: "Untitled", ext: type.ext, in: folder)
+        switch type {
+        case .text, .markdown:
+            try Data().write(to: dest)
+        case .rtf:
+            try #"{\rtf1\ansi\ansicpg1252\cocoartf2639{\fonttbl\f0\fswiss Helvetica;}\f0\fs24 \cf0 }"#
+                .data(using: .utf8)!.write(to: dest)
+        case .word:
+            try zipOOXML(to: dest, parts: docxParts)
+        case .excel:
+            try zipOOXML(to: dest, parts: xlsxParts)
+        }
+        return dest
+    }
+
+    private static func uniqueURL(base: String, ext: String, in folder: URL) -> URL {
         let fm = FileManager.default
-        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-
-        var installed: [String] = []
-        // Plain-text kinds: a byte or two of valid content each.
-        try write("Text Document.txt", "")
-        try write("Markdown Document.md", "")
-        try write("Rich Text Document.rtf", #"{\rtf1\ansi\ansicpg1252\cocoartf2639 {\fonttbl\f0\fswiss Helvetica;}\f0\fs24 \cf0 }"#)
-        installed += ["Text Document.txt", "Markdown Document.md", "Rich Text Document.rtf"]
-
-        try zipOOXML(named: "Word Document.docx", parts: docxParts)
-        try zipOOXML(named: "Excel Workbook.xlsx", parts: xlsxParts)
-        installed += ["Word Document.docx", "Excel Workbook.xlsx"]
-
-        return installed
+        var url = folder.appendingPathComponent("\(base).\(ext)")
+        var n = 2
+        while fm.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(base) \(n).\(ext)")
+            n += 1
+        }
+        return url
     }
 
-    /// Relaunch Finder so a freshly-seeded folder shows up in the menu.
-    static func relaunchFinder() {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        p.arguments = ["Finder"]
-        try? p.run()
-        p.waitUntilExit()
-    }
+    // MARK: Minimal OOXML → zip
 
-    // MARK: Writing
-
-    private static func write(_ name: String, _ contents: String) throws {
-        try contents.data(using: .utf8)?.write(to: folder.appendingPathComponent(name))
-    }
-
-    /// Build the OOXML part tree in a temp dir, then zip it into `named`.
-    private static func zipOOXML(named: String, parts: [String: String]) throws {
+    private static func zipOOXML(to dest: URL, parts: [String: String]) throws {
         let fm = FileManager.default
-        let tmp = fm.temporaryDirectory.appendingPathComponent("ptooxml-\(named)")
-        try? fm.removeItem(at: tmp)
+        let tmp = fm.temporaryDirectory.appendingPathComponent("ptooxml-\(UUID().uuidString)")
         try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tmp) }
-
         for (path, xml) in parts {
-            let dest = tmp.appendingPathComponent(path)
-            try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try xml.data(using: .utf8)!.write(to: dest)
+            let p = tmp.appendingPathComponent(path)
+            try fm.createDirectory(at: p.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try xml.data(using: .utf8)!.write(to: p)
         }
-
-        let out = folder.appendingPathComponent(named)
-        try? fm.removeItem(at: out)
+        try? fm.removeItem(at: dest)
         let zip = Process()
         zip.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
         zip.currentDirectoryURL = tmp
-        zip.arguments = ["-q", "-r", "-X", out.path, "."]
+        zip.arguments = ["-q", "-r", "-X", dest.path, "."]
         try zip.run()
         zip.waitUntilExit()
         guard zip.terminationStatus == 0 else {
             throw NSError(domain: "NewDocTemplates", code: Int(zip.terminationStatus),
-                          userInfo: [NSLocalizedDescriptionKey: "zip failed for \(named)"])
+                          userInfo: [NSLocalizedDescriptionKey: "zip failed"])
         }
     }
-
-    // MARK: Minimal OOXML
 
     private static let docxParts: [String: String] = [
         "[Content_Types].xml": """

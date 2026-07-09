@@ -147,6 +147,7 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 **Clipboard & cursor**
 - **hold + P** → **Advanced Paste**: a palette to paste the clipboard as plain text or transform it — summarize, rewrite, bullets, markdown, or translate (AI transforms use your configured cloud model).
 - **hold + H** → **Clipboard history** (the Windows Win+V gap): a palette of your recent copies — text AND images (screenshots included), with thumbnails. Digits/arrows pick one, it pastes into the app you came from and becomes the current clipboard. Recording is local (SQLite; last 200 text clips + 25 images, images capped at 5MB each), and anything marked concealed/transient by password managers is never recorded. Toggle in Settings ▸ General.
+- **hold + D** → **New Document** (the Windows "New ▸" gap): a small menu of document types — Word, Excel, Text, RTF, Markdown — creates the chosen blank file in the *current Finder folder* and selects it for renaming. Needs a one-time Automation permission for Finder (to read which folder is open); the Office files are valid minimal OOXML.
 - **hold + M** → **Find My Mouse**: dims every screen and sweeps a ring onto the cursor.
 
 **Quick Capture & Connections**

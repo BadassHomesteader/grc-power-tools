@@ -451,13 +451,14 @@ case "capture-parse":
     print("due:      \(p.due.isEmpty ? "(none)" : p.due)")
     print("context:  \(p.context.isEmpty ? "(none)" : p.context)")
 
-case "newdocs":
-    // grc-whisper newdocs — seed Finder's New Document templates folder.
+case "newdoc":
+    // grc-whisper newdoc <word|excel|text|rtf|markdown> <folder> — test doc creation.
+    guard args.count >= 3, let type = NewDocTemplates.DocType.allCases.first(where: { $0.ext == args[1] || $0.rawValue.lowercased().hasPrefix(args[1].lowercased()) }) else {
+        print("usage: newdoc <word|excel|text|rtf|markdown> <folder>"); exit(1)
+    }
     do {
-        let names = try NewDocTemplates.install()
-        print("installed to \(NewDocTemplates.folder.path):")
-        names.forEach { print("  \($0)") }
-        if args.contains("relaunch") { NewDocTemplates.relaunchFinder(); print("Finder relaunched") }
+        let url = try NewDocTemplates.create(type, in: URL(fileURLWithPath: args[2], isDirectory: true))
+        print("created \(url.path)")
     } catch {
         print("failed: \(error)"); exit(1)
     }

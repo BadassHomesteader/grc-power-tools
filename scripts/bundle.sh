@@ -51,6 +51,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Power Tools records while you hold the dictation hotkey and transcribes entirely on this Mac.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Power Tools asks Finder which folder is open so hold + D can create a new document there.</string>
     <key>NSHumanReadableCopyright</key><string>Local-only dictation. No network. No cloud.</string>
 </dict>
 </plist>

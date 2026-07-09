@@ -33,6 +33,7 @@ final class HotkeyMonitor {
         case clipboardHistory             // recent-copies palette (Win+V)
         case quickCapture(connectionId: String)  // send a line to a configured connection
         case findMouse                    // spotlight the cursor
+        case newDoc                       // hold + D — new document in current Finder folder
         case cycleWindow(back: Bool)      // ⌘Tab / ⇧⌘Tab — Alt-Tab-style window MRU
         case cycleEnd                     // ⌘ released — raise + commit the selection
         case cycleCancel                  // Esc while cycling — close, switch nothing
@@ -100,7 +101,7 @@ final class HotkeyMonitor {
     /// keys (e.g. two arrows) are each tracked, not just the last one.
     private var swallowedKeyUps: Set<Int64> = []
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, clipboardHistory, findMouse, quickCapture(String) }
+    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, clipboardHistory, findMouse, newDoc, quickCapture(String) }
     private var pending: Pending = .none
     /// Set once an arrow/Return moves a window this hold, so release ends the
     /// window session instead of dispatching a dictation.
@@ -121,6 +122,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_M: Int64 = 46
     private static let kVK_ANSI_W: Int64 = 13
     private static let kVK_ANSI_H: Int64 = 4
+    private static let kVK_ANSI_D: Int64 = 2
     private static let kVK_ANSI_3: Int64 = 20
     private static let kVK_Tab: Int64 = 48
     private static let kVK_Return: Int64 = 36
@@ -416,6 +418,10 @@ final class HotkeyMonitor {
                 log("hotkey: +M leader armed (find mouse)")
                 pending = .findMouse; swallowedKeyUps.insert(keyCode)
                 return nil
+            case Self.kVK_ANSI_D:
+                log("hotkey: +D leader armed (new document)")
+                pending = .newDoc; swallowedKeyUps.insert(keyCode)
+                return nil
             case Self.kVK_ANSI_3:
                 // Grid draw mode. Enter windowMode so release ends the session (no
                 // dictation); the grid overlay itself takes over via the mouse.
@@ -504,6 +510,7 @@ final class HotkeyMonitor {
                 case .advancedPaste: dispatch(.advancedPaste)
                 case .clipboardHistory: dispatch(.clipboardHistory)
                 case .findMouse: dispatch(.findMouse)
+                case .newDoc: dispatch(.newDoc)
                 case .quickCapture(let id): dispatch(.quickCapture(connectionId: id))
                 }
             }

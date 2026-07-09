@@ -32,7 +32,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let backspaceUpCheck = NSButton(checkboxWithTitle: "Backspace goes up to the enclosing folder", target: nil, action: nil)
     private let deleteTrashCheck = NSButton(checkboxWithTitle: "Delete (⌦) moves the selection to Trash", target: nil, action: nil)
     private let taskMgrCheck = NSButton(checkboxWithTitle: "⌃⇧⎋ opens Activity Monitor (Task Manager)", target: nil, action: nil)
-    private let tabView = NSTabView()
+    private var sidebarRows: [SidebarRow] = []
+    private var sectionViews: [NSView] = []
+    private var contentHost: NSView?
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
 
@@ -62,7 +64,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let captureBodyField = NSTextField()
     // Leader letters offered for connections — excludes ones already used by other
     // tools (A T S G C X V P M W H) and non-letters (3, arrows, ⏎, ⇥).
-    private static let connLeaderLetters = ["N","E","B","D","F","I","J","K","L","O","Q","R","U","Y","Z"]
+    private static let connLeaderLetters = ["N","E","B","F","I","J","K","L","O","Q","R","U","Y","Z"]
 
     init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void, onOpenChat: @escaping () -> Void = {}) {
         self.store = store
@@ -71,13 +73,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         self.onOpenChat = onOpenChat
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 660, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: 860, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
         window.title = "Power Tools"
+        window.minSize = NSSize(width: 780, height: 480)
         window.center()
-        window.setFrameAutosaveName("GRCWhisperSettingsTabs")
+        window.setFrameAutosaveName("GRCWhisperSettingsRail")
         super.init(window: window)
         window.delegate = self
         buildUI()
@@ -99,8 +102,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     // MARK: Build
 
-    /// Tabbed layout (one tab per concern) so the window stays small as tools
-    /// accumulate: General · Dictation · Windows · AI · Dictionary · Permissions.
+    /// Left-rail layout: a sidebar of sections (General · Dictation · Windows ·
+    /// AI · Connections · Dictionary · Permissions) with the selected section's
+    /// scrollable content on the right.
     private func buildUI() {
         // Control wiring (shared by whichever tab hosts the control).
         for mode in Config.PolishMode.allCases { cleanupPopup.addItem(withTitle: mode.displayName) }
@@ -149,39 +153,111 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             box.action = sel
         }
 
-        tabView.addTabViewItem(tab("General", generalTab()))
-        tabView.addTabViewItem(tab("Dictation", dictationTab()))
-        tabView.addTabViewItem(tab("Windows", windowsTab()))
-        tabView.addTabViewItem(tab("AI", aiTab()))
-        tabView.addTabViewItem(tab("Connections", connectionsTab()))
-        tabView.addTabViewItem(tab("Dictionary", dictionaryTab()))
-        tabView.addTabViewItem(tab("Permissions", permissionsTab()))
+        // Left-rail layout (Wispr-Flow style): a sidebar of sections on the left,
+        // the selected section's scrollable content on the right.
+        let sections: [(String, String, () -> NSView)] = [
+            ("General", "gearshape", generalTab),
+            ("Dictation", "mic", dictationTab),
+            ("Windows", "macwindow", windowsTab),
+            ("AI", "sparkles", aiTab),
+            ("Connections", "link", connectionsTab),
+            ("Dictionary", "character.book.closed", dictionaryTab),
+            ("Permissions", "checkmark.shield", permissionsTab),
+        ]
 
-        tabView.translatesAutoresizingMaskIntoConstraints = false
-        window?.contentView = NSView()
-        if let cv = window?.contentView {
-            cv.addSubview(tabView)
-            NSLayoutConstraint.activate([
-                tabView.leadingAnchor.constraint(equalTo: cv.leadingAnchor, constant: 10),
-                tabView.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -10),
-                tabView.topAnchor.constraint(equalTo: cv.topAnchor, constant: 6),
-                tabView.bottomAnchor.constraint(equalTo: cv.bottomAnchor, constant: -10),
-            ])
+        // Sidebar header: app mark + name.
+        let mark = NSImageView()
+        mark.image = NSImage(systemSymbolName: "command", accessibilityDescription: nil)
+        mark.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+        mark.contentTintColor = .labelColor
+        let name = NSTextField(labelWithString: "Power Tools")
+        name.font = .systemFont(ofSize: 15, weight: .bold)
+        let header = NSStackView(views: [mark, name])
+        header.spacing = 9
+        header.alignment = .centerY
+        header.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 8, right: 10)
+
+        let rows = NSStackView()
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 2
+        rows.translatesAutoresizingMaskIntoConstraints = false
+        for (i, s) in sections.enumerated() {
+            let row = SidebarRow(icon: s.1, title: s.0) { [weak self] in self?.showSection(i) }
+            sidebarRows.append(row)
+            rows.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
         }
+        let sidebar = NSStackView(views: [header, rows])
+        sidebar.orientation = .vertical
+        sidebar.alignment = .leading
+        sidebar.spacing = 10
+        sidebar.edgeInsets = NSEdgeInsets(top: 18, left: 12, bottom: 16, right: 12)
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        rows.widthAnchor.constraint(equalTo: sidebar.widthAnchor, constant: -24).isActive = true
+
+        // Prebuild each section's scrollable view once (they hold shared controls,
+        // so each lives in exactly one place — we show/hide rather than rebuild).
+        for s in sections { sectionViews.append(scrollWrap(s.2())) }
+
+        let contentHost = NSView()
+        contentHost.translatesAutoresizingMaskIntoConstraints = false
+        self.contentHost = contentHost
+        let divider = NSBox(); divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+
+        let root = NSView()
+        window?.contentView = root
+        let sidebarBG = SidebarBackground()
+        sidebarBG.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(sidebarBG)
+        root.addSubview(sidebar)
+        root.addSubview(divider)
+        root.addSubview(contentHost)
+        NSLayoutConstraint.activate([
+            sidebarBG.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sidebarBG.topAnchor.constraint(equalTo: root.topAnchor),
+            sidebarBG.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            sidebarBG.widthAnchor.constraint(equalToConstant: 196),
+            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sidebar.topAnchor.constraint(equalTo: root.topAnchor),
+            sidebar.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: 196),
+            divider.leadingAnchor.constraint(equalTo: sidebarBG.trailingAnchor),
+            divider.topAnchor.constraint(equalTo: root.topAnchor),
+            divider.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+            contentHost.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
+            contentHost.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            contentHost.topAnchor.constraint(equalTo: root.topAnchor),
+            contentHost.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
+
         loadConfigIntoControls()
+        showSection(0)
     }
 
-    /// For the offscreen `settings-preview` design check.
-    func selectTab(_ index: Int) {
-        guard index >= 0, index < tabView.numberOfTabViewItems else { return }
-        tabView.selectTabViewItem(at: index)
+    /// Show a section by index (also used by the settings-preview CLI).
+    func showSection(_ index: Int) {
+        guard index >= 0, index < sectionViews.count, let host = contentHost else { return }
+        host.subviews.forEach { $0.removeFromSuperview() }
+        let v = sectionViews[index]
+        v.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            v.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            v.topAnchor.constraint(equalTo: host.topAnchor),
+            v.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        for (i, row) in sidebarRows.enumerated() { row.isSelected = (i == index) }
     }
 
-    private func tab(_ label: String, _ content: NSView) -> NSTabViewItem {
-        let item = NSTabViewItem(identifier: label)
-        item.label = label
-        // Scroll so a tall tab (e.g. the how-to + toggles) never clips as
-        // settings accumulate. Flipped clip view pins content to the top.
+    /// Backward-compatible alias for the preview CLI.
+    func selectTab(_ index: Int) { showSection(index) }
+
+    /// Wrap a section's content in a top-pinned scroll view.
+    private func scrollWrap(_ content: NSView) -> NSView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
@@ -191,12 +267,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         content.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = content
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: flip.topAnchor, constant: 12),
-            content.leadingAnchor.constraint(equalTo: flip.leadingAnchor, constant: 14),
-            content.trailingAnchor.constraint(lessThanOrEqualTo: flip.trailingAnchor, constant: -14),
+            content.topAnchor.constraint(equalTo: flip.topAnchor, constant: 20),
+            content.leadingAnchor.constraint(equalTo: flip.leadingAnchor, constant: 22),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: flip.trailingAnchor, constant: -18),
         ])
-        item.view = scroll
-        return item
+        return scroll
     }
 
     private func vstack(_ views: [NSView]) -> NSStackView {
@@ -594,6 +669,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  C / X / V   copy · cut · paste files (Finder)
         •  P   Advanced Paste — plain, or AI: summarize / rewrite / translate
         •  H   clipboard history — paste something you copied earlier
+        •  D   new document — Word / Excel / … in the current Finder folder
         •  N   quick capture — send a line to your connection (todo app, webhook)
         •  M   find my mouse — spotlight the cursor
         •  W   snap palette — halves · quarters · thirds · mini-grid
@@ -939,6 +1015,64 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 /// Flipped clip view so the scroll document pins to the top, not the bottom.
 final class FlippedClipView: NSClipView {
     override var isFlipped: Bool { true }
+}
+
+/// A left-rail nav row: SF-symbol icon + label, with a rounded accent highlight
+/// when selected. Click runs `onClick`.
+final class SidebarRow: NSView {
+    private let iconView = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private let onClick: () -> Void
+    var isSelected = false { didSet { needsDisplay = true; applyColors() } }
+
+    init(icon: String, title: String, onClick: @escaping () -> Void) {
+        self.onClick = onClick
+        super.init(frame: .zero)
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+        iconView.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        label.stringValue = title
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iconView); addSubview(label)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 30),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 11),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 17),
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 9),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        applyColors()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func applyColors() {
+        iconView.contentTintColor = isSelected ? .controlAccentColor : .secondaryLabelColor
+        label.textColor = isSelected ? .labelColor : .secondaryLabelColor
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if isSelected {
+            NSColor.controlAccentColor.withAlphaComponent(0.14).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 1), xRadius: 7, yRadius: 7).fill()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) { onClick() }
+}
+
+/// The sidebar's tinted background panel, re-resolving on theme change.
+final class SidebarBackground: NSView {
+    override var wantsUpdateLayer: Bool { true }
+    override init(frame: NSRect) { super.init(frame: frame); wantsLayer = true }
+    required init?(coder: NSCoder) { fatalError() }
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.windowBackgroundColor.blended(withFraction: 0.5, of: .controlBackgroundColor)?.cgColor
+    }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
 }
 
 /// Rounded section card whose fill re-resolves on light/dark theme changes.
