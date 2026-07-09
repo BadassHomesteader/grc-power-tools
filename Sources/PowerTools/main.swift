@@ -451,6 +451,17 @@ case "capture-parse":
     print("due:      \(p.due.isEmpty ? "(none)" : p.due)")
     print("context:  \(p.context.isEmpty ? "(none)" : p.context)")
 
+case "newdocs":
+    // grc-whisper newdocs — seed Finder's New Document templates folder.
+    do {
+        let names = try NewDocTemplates.install()
+        print("installed to \(NewDocTemplates.folder.path):")
+        names.forEach { print("  \($0)") }
+        if args.contains("relaunch") { NewDocTemplates.relaunchFinder(); print("Finder relaunched") }
+    } catch {
+        print("failed: \(error)"); exit(1)
+    }
+
 case "layout":
     // grc-whisper layout save|list|restore [id]  — test/admin for saved layouts.
     let store = Store()

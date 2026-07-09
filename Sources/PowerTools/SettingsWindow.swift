@@ -28,6 +28,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let lastWindowCheck = NSButton(checkboxWithTitle: "⌘⇥ works like Windows Alt-Tab — last window first, per window not app", target: nil, action: nil)
     private let muteDictationCheck = NSButton(checkboxWithTitle: "Mute speakers while dictating — keeps calls & music out of the transcript", target: nil, action: nil)
     private let finderEnterCheck = NSButton(checkboxWithTitle: "⏎ in Finder opens the selection (Windows-style) — rename via right-click", target: nil, action: nil)
+    private let windowsKeysCheck = NSButton(checkboxWithTitle: "Windows-style keys — Home/End in text · Finder ⌫ = Back, ⌦ = Trash · ⌃⇧⎋ = Activity Monitor", target: nil, action: nil)
+    private let newDocStatus = NSTextField(labelWithString: " ")
     private let tabView = NSTabView()
     private let hotkeyNote = NSTextField(labelWithString: "")
     private let helpLabel = NSTextField(wrappingLabelWithString: "")
@@ -137,6 +139,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         muteDictationCheck.action = #selector(muteDictationToggled)
         finderEnterCheck.target = self
         finderEnterCheck.action = #selector(finderEnterToggled)
+        windowsKeysCheck.target = self
+        windowsKeysCheck.action = #selector(windowsKeysToggled)
+        windowsKeysCheck.lineBreakMode = .byWordWrapping
 
         tabView.addTabViewItem(tab("General", generalTab()))
         tabView.addTabViewItem(tab("Dictation", dictationTab()))
@@ -203,10 +208,39 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         version.textColor = .tertiaryLabelColor
         let buttons = NSStackView(views: [chatBtn, dataBtn, quitBtn])
         buttons.spacing = 8
+
+        // New Document in Finder: seed the native templates folder.
+        let newDocNote = NSTextField(labelWithString: "Adds Word / Excel / Text / RTF / Markdown to Finder's right-click ‘New Document’ menu (the Windows ‘New ▸’ gap).")
+        newDocNote.font = .systemFont(ofSize: 11)
+        newDocNote.textColor = .secondaryLabelColor
+        newDocNote.lineBreakMode = .byWordWrapping
+        newDocNote.preferredMaxLayoutWidth = 540
+        newDocStatus.font = .systemFont(ofSize: 11)
+        newDocStatus.textColor = .secondaryLabelColor
+        let newDocBtn = NSButton(title: "Set up ‘New Document’ in Finder", target: self, action: #selector(setupNewDocs))
+        newDocBtn.bezelStyle = .rounded
+
         return vstack([
             section("How to use it", [helpLabel], width: 590),
-            section("General", [clipboardHistoryCheck, finderEnterCheck, launchLoginCheck, buttons, version], width: 590),
+            section("General", [clipboardHistoryCheck, finderEnterCheck, windowsKeysCheck, launchLoginCheck, buttons, version], width: 590),
+            section("New Document in Finder", [newDocNote, newDocBtn, newDocStatus], width: 590),
         ])
+    }
+
+    @objc private func windowsKeysToggled() {
+        config.windowsKeys = (windowsKeysCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func setupNewDocs() {
+        do {
+            let names = try NewDocTemplates.install()
+            NewDocTemplates.relaunchFinder()
+            newDocStatus.stringValue = "Installed \(names.count) templates — right-click any folder ▸ New Document."
+        } catch {
+            newDocStatus.stringValue = "Couldn't install templates: \(error.localizedDescription)"
+        }
     }
 
     private func dictationTab() -> NSView {
@@ -529,6 +563,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         lastWindowCheck.state = config.lastWindowSwitch ? .on : .off
         muteDictationCheck.state = config.muteWhileDictating ? .on : .off
         finderEnterCheck.state = config.finderEnterOpens ? .on : .off
+        windowsKeysCheck.state = config.windowsKeys ? .on : .off
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         claudeModelField.stringValue = config.claudeModel
@@ -568,7 +603,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         Release with no key to dictate normally.
 
-        Anytime: ⌘⇥ = last WINDOW first (Alt-Tab style) — walk with ⇥ or arrows, ⇧⌘⇥ backwards. In Finder, ⏎ opens the selection.
+        Anytime: ⌘⇥ = last WINDOW first (Alt-Tab style) — walk with ⇥ or arrows, ⇧⌘⇥ backwards. In Finder: ⏎ opens · ⌫ up a folder · ⌦ to Trash. Home/End = line start/end.
         """
     }
 

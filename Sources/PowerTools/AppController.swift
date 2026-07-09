@@ -22,6 +22,7 @@ final class AppController {
             clipboardWatcher.enabled = config.clipboardHistory
             hotkey?.lastWindowSwitch = config.lastWindowSwitch
             hotkey?.finderEnterOpens = config.finderEnterOpens
+            hotkey?.windowsKeys = config.windowsKeys
             hotkey?.setConnectionLeaders(Self.leaderMap(config.connections))
             windowSwitcher.dark = config.appearance.isDark
         }
@@ -154,6 +155,10 @@ final class AppController {
             case .finderOpen:
                 // ⌘O = Finder's own Open — works for files and folders alike.
                 Inserter.postKey(CGKeyCode(31 /* kVK_ANSI_O */), flags: .maskCommand)
+            case .synthKey(let key, let flags):
+                Inserter.postKey(key, flags: flags)
+            case .activityMonitor:
+                NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app"))
             case .findMouse:
                 self.interruptDictation()
                 self.findMouse.flash()
@@ -167,6 +172,7 @@ final class AppController {
         // Keep the tap's Finder-frontmost flag current (read on the tap thread
         // for the ⏎-opens interception; never query NSWorkspace from the tap).
         monitor.finderEnterOpens = config.finderEnterOpens
+        monitor.windowsKeys = config.windowsKeys
         monitor.finderFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main

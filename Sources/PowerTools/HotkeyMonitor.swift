@@ -38,9 +38,14 @@ final class HotkeyMonitor {
         case cycleCancel                  // Esc while cycling — close, switch nothing
         case cycleArrow(dx: Int, dy: Int) // arrows while cycling — move the highlight
         case finderOpen                   // plain ⏎ in Finder — open, don't rename
+        case synthKey(CGKeyCode, CGEventFlags) // remap: synthesize this keystroke
+        case activityMonitor              // ⌃⇧⎋ — open Activity Monitor (Task Manager)
     }
 
     var handler: ((Callback) -> Void)?
+    /// Windows-style key remaps (opt-in): Home/End line nav in text fields,
+    /// Finder Backspace = Back / Delete = Move to Trash, ⌃⇧⎋ = Activity Monitor.
+    var windowsKeys = true
     /// Live-toggleable: when true, ⌘Tab / ⇧⌘Tab are intercepted for the
     /// Alt-Tab-style window switcher (replacing the macOS app switcher).
     /// Plain Bool (same discipline as `held` — set on main, read on the tap
@@ -121,6 +126,11 @@ final class HotkeyMonitor {
     private static let kVK_RightArrow: Int64 = 124
     private static let kVK_DownArrow: Int64 = 125
     private static let kVK_UpArrow: Int64 = 126
+    private static let kVK_Home: Int64 = 115
+    private static let kVK_End: Int64 = 119
+    private static let kVK_ForwardDelete: Int64 = 117
+    private static let kVK_Backspace: Int64 = 51
+    private static let kVK_LeftBracket: Int64 = 33   // [ — for ⌘[ (Finder Back)
 
     init(hotkey: Config.Hotkey) {
         self.hotkey = hotkey
@@ -242,6 +252,53 @@ final class HotkeyMonitor {
                 dispatch(.finderOpen)
             }
             return nil
+        }
+
+        // Windows-style key remaps (opt-in). Exact-match, guarded so text editing
+        // and modified variants pass through. Never touches the leader (!held).
+        if windowsKeys, !held, type == .keyDown {
+            let mods = flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate])
+
+            // ⌃⇧⎋ → Activity Monitor (macOS's Task Manager). Global.
+            if keyCode == Self.kVK_Escape, mods == [.maskControl, .maskShift] {
+                swallowedKeyUps.insert(keyCode)
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.activityMonitor) }
+                return nil
+            }
+
+            // Home / End → line start/end (⌘←/⌘→); with ⌃ → document top/bottom
+            // (⌘↑/⌘↓); ⇧ preserved for selection. Only while editing text — in a
+            // Finder list / desktop, native Home/End (select-first/last) is left
+            // alone. AX check is bounded (~ms, 50ms cap) and fails safe to "text".
+            if keyCode == Self.kVK_Home || keyCode == Self.kVK_End {
+                let extra = mods.subtracting([.maskControl, .maskShift])
+                if extra.isEmpty, ContextSnapshot.focusIsTextEditing() {
+                    let isHome = keyCode == Self.kVK_Home
+                    let ctrl = mods.contains(.maskControl)
+                    var out: CGEventFlags = .maskCommand
+                    if mods.contains(.maskShift) { out.insert(.maskShift) }
+                    let target: CGKeyCode = ctrl
+                        ? CGKeyCode(isHome ? Self.kVK_UpArrow : Self.kVK_DownArrow)
+                        : CGKeyCode(isHome ? Self.kVK_LeftArrow : Self.kVK_RightArrow)
+                    swallowedKeyUps.insert(keyCode)
+                    dispatch(.synthKey(target, out))
+                    return nil
+                }
+            }
+
+            // Finder file list: plain Backspace → Up to enclosing folder (⌘↑,
+            // like Windows Explorer); plain Delete → Move to Trash (⌘⌫). Skipped
+            // in rename/search text so those keys still edit text. Finder-
+            // frontmost + no modifiers only.
+            if finderFrontmost, mods.isEmpty,
+               keyCode == Self.kVK_Backspace || keyCode == Self.kVK_ForwardDelete {
+                if !ContextSnapshot.focusIsTextEditing() {
+                    let up = keyCode == Self.kVK_Backspace
+                    swallowedKeyUps.insert(keyCode)
+                    dispatch(.synthKey(CGKeyCode(up ? Self.kVK_UpArrow : Self.kVK_Backspace), .maskCommand))
+                    return nil
+                }
+            }
         }
 
         // ⌘ released while a cycle session is open → commit it. Not consumed.
