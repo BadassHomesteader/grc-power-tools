@@ -159,6 +159,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             ("General", "gearshape", generalTab),
             ("Dictation", "mic", dictationTab),
             ("Windows", "macwindow", windowsTab),
+            ("Keys", "keyboard", keysTab),
             ("AI", "sparkles", aiTab),
             ("Connections", "link", connectionsTab),
             ("Dictionary", "character.book.closed", dictionaryTab),
@@ -298,14 +299,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let buttons = NSStackView(views: [chatBtn, dataBtn, quitBtn])
         buttons.spacing = 8
 
-        for c in [finderEnterCheck, homeEndCheck, backspaceUpCheck, deleteTrashCheck, taskMgrCheck] {
-            c.lineBreakMode = .byTruncatingTail
-        }
-
         return vstack([
             section("How to use it", [helpLabel], width: 590),
             section("General", [clipboardHistoryCheck, launchLoginCheck, buttons, version], width: 590),
-            section("Windows-style keys", [finderEnterCheck, homeEndCheck, backspaceUpCheck, deleteTrashCheck, taskMgrCheck], width: 590),
+        ])
+    }
+
+    private func keysTab() -> NSView {
+        let note = NSTextField(labelWithString: "Make Finder and text editing behave like Windows. Each key still does its normal job in rename / search fields.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.lineBreakMode = .byWordWrapping
+        note.preferredMaxLayoutWidth = 540
+        for c in [finderEnterCheck, homeEndCheck, backspaceUpCheck, deleteTrashCheck, taskMgrCheck] {
+            c.lineBreakMode = .byTruncatingTail
+        }
+        return vstack([
+            section("Windows-style keys", [note, finderEnterCheck, homeEndCheck, backspaceUpCheck, deleteTrashCheck, taskMgrCheck], width: 590),
         ])
     }
 
