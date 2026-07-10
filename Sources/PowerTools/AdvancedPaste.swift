@@ -14,19 +14,32 @@ final class AdvancedPaste {
         let subtitle: String
         let ai: Bool
         let instruction: String?  // Claude system prompt for AI transforms
+        var localTransform: ((String) -> String)? = nil  // instant, offline case/text transforms
     }
 
     static let transforms: [Transform] = [
         Transform(digit: 1, title: "Plain text", subtitle: "strip all formatting", ai: false, instruction: nil),
-        Transform(digit: 2, title: "Summarize", subtitle: "AI · the key points", ai: true,
+        Transform(digit: 2, title: "Clean text", subtitle: "trim, collapse spaces, straighten quotes", ai: false, instruction: nil,
+                  localTransform: { TextOps.clean($0) }),
+        Transform(digit: 3, title: "Single line", subtitle: "flatten line breaks into one line", ai: false, instruction: nil,
+                  localTransform: { TextOps.singleLine($0) }),
+        Transform(digit: 4, title: "Proper Case", subtitle: "Capitalize Each Word", ai: false, instruction: nil,
+                  localTransform: { $0.capitalized }),
+        Transform(digit: 5, title: "Sentence case", subtitle: "Capitalize each sentence", ai: false, instruction: nil,
+                  localTransform: { TextOps.sentenceCase($0) }),
+        Transform(digit: 6, title: "lowercase", subtitle: "all lower", ai: false, instruction: nil,
+                  localTransform: { $0.lowercased() }),
+        Transform(digit: 7, title: "UPPERCASE", subtitle: "all caps", ai: false, instruction: nil,
+                  localTransform: { $0.uppercased() }),
+        Transform(digit: 8, title: "Summarize", subtitle: "AI · the key points", ai: true,
                   instruction: "Summarize the following text concisely. Output only the summary."),
-        Transform(digit: 3, title: "Rewrite", subtitle: "AI · fix grammar, tighten", ai: true,
+        Transform(digit: 9, title: "Rewrite", subtitle: "AI · fix grammar, tighten", ai: true,
                   instruction: "Rewrite the following to fix grammar and make it clear and concise, keeping the meaning and tone. Output only the rewrite."),
-        Transform(digit: 4, title: "Bullet points", subtitle: "AI · as a list", ai: true,
+        Transform(digit: 10, title: "Bullet points", subtitle: "AI · as a list", ai: true,
                   instruction: "Rewrite the following as a concise bulleted list using '- '. Output only the list."),
-        Transform(digit: 5, title: "Markdown", subtitle: "AI · clean markdown", ai: true,
+        Transform(digit: 11, title: "Markdown", subtitle: "AI · clean markdown", ai: true,
                   instruction: "Reformat the following as clean, well-structured Markdown. Output only the Markdown."),
-        Transform(digit: 6, title: "Translate → English", subtitle: "AI", ai: true,
+        Transform(digit: 12, title: "Translate → English", subtitle: "AI", ai: true,
                   instruction: "Translate the following into natural English. If it's already English, correct it lightly. Output only the translation."),
     ]
 
@@ -67,6 +80,53 @@ final class AdvancedPaste {
         keyMonitor = nil
         window?.orderOut(nil)
         window = nil
+    }
+}
+
+/// Instant, offline text transforms for the Advanced Paste palette. No network,
+/// no AI — pure string work applied to whatever's on the clipboard.
+enum TextOps {
+    /// "Paste values" for text: straighten smart quotes/dashes, collapse runs of
+    /// spaces/tabs within each line, trim each line, and drop blank lines.
+    static func clean(_ s: String) -> String {
+        let straightened = s
+            .replacingOccurrences(of: "\u{201C}", with: "\"")   // “
+            .replacingOccurrences(of: "\u{201D}", with: "\"")   // ”
+            .replacingOccurrences(of: "\u{2018}", with: "'")    // ‘
+            .replacingOccurrences(of: "\u{2019}", with: "'")    // ’
+            .replacingOccurrences(of: "\u{2013}", with: "-")    // en dash
+            .replacingOccurrences(of: "\u{2014}", with: "-")    // em dash
+        return straightened
+            .components(separatedBy: .newlines)
+            .map { (line: String) in line.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ") }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    /// Flatten every line break into a single line — for search boxes, URL bars,
+    /// spreadsheet cells. Trims each line and drops empties so it reads clean.
+    static func singleLine(_ s: String) -> String {
+        s.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// Lowercase everything, then capitalize the first letter of the text and of
+    /// each sentence (after . ! ?). Fixes ALL-CAPS or shouty notes.
+    static func sentenceCase(_ s: String) -> String {
+        var result = ""
+        var capitalizeNext = true
+        for ch in s.lowercased() {
+            if capitalizeNext, ch.isLetter {
+                result += ch.uppercased()
+                capitalizeNext = false
+            } else {
+                result.append(ch)
+                if ch == "." || ch == "!" || ch == "?" { capitalizeNext = true }
+            }
+        }
+        return result
     }
 }
 
@@ -140,7 +200,7 @@ final class AdvancedPasteView: NSView {
                 withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: subColor])
         }
 
-        let footer = "1–6 or click  ·  ↵ to use  ·  esc" as NSString
+        let footer = "1–\(min(rows.count, 9)) or click  ·  ↑↓ ↵  ·  esc" as NSString
         footer.draw(at: NSPoint(x: 20, y: bounds.height - 22),
             withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: dim])
     }

@@ -530,7 +530,7 @@ final class AppController {
                 try? Inserter.insert(text, restoreDelayMs: self.config.clipboardRestoreDelayMs)
             }
         }
-        guard t.ai, let instruction = t.instruction else { paste(clip); return }  // plain text
+        guard t.ai, let instruction = t.instruction else { paste(t.localTransform?(clip) ?? clip); return }  // plain text / case
         guard let key = Keychain.get("claude"), !key.isEmpty else {
             overlay.showError("Add a Claude key in Settings ▸ AI to use AI paste"); app.activate(); return
         }

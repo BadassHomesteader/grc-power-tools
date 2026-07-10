@@ -293,7 +293,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         dataBtn.bezelStyle = .rounded
         let quitBtn = NSButton(title: "Quit Power Tools", target: NSApp, action: #selector(NSApplication.terminate(_:)))
         quitBtn.bezelStyle = .rounded
-        let version = NSTextField(labelWithString: "Local-only · no network · v1.9.0")
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+        let version = NSTextField(labelWithString: "Local-only · no network · v\(appVersion)")
         version.font = .systemFont(ofSize: 11)
         version.textColor = .tertiaryLabelColor
         let buttons = NSStackView(views: [chatBtn, dataBtn, quitBtn])
