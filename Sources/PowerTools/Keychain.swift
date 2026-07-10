@@ -11,8 +11,14 @@ enum Keychain {
     }
 
     private static func load() -> [String: String] {
-        guard let data = try? Data(contentsOf: file),
-              let dict = try? JSONDecoder().decode([String: String].self, from: data) else {
+        guard let data = try? Data(contentsOf: file) else { return [:] }  // no file yet
+        guard let dict = try? JSONDecoder().decode([String: String].self, from: data) else {
+            // Corrupt keys file: don't silently report "never configured" — move
+            // it aside for recovery and log loudly, so lost keys are explainable.
+            let aside = file.deletingLastPathComponent().appendingPathComponent("keys.json.corrupt")
+            try? FileManager.default.removeItem(at: aside)
+            try? FileManager.default.moveItem(at: file, to: aside)
+            NSLog("PowerTools: keys.json was unreadable — moved to keys.json.corrupt; re-enter API keys in Settings")
             return [:]
         }
         return dict
@@ -20,10 +26,9 @@ enum Keychain {
 
     private static func store(_ dict: [String: String]) {
         guard let data = try? JSONEncoder().encode(dict) else { return }
-        // Create with owner-only perms, then write.
-        FileManager.default.createFile(atPath: file.path, contents: nil,
-                                       attributes: [.posixPermissions: 0o600])
-        try? data.write(to: file)
+        // Atomic replace (write-to-temp + rename) — no truncate-then-write window
+        // that a mid-write kill can turn into a 0-byte file. Then owner-only perms.
+        try? data.write(to: file, options: .atomic)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
 

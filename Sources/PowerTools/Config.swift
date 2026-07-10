@@ -273,46 +273,50 @@ struct Config: Codable {
         case connections
     }
 
-    // Lenient decode: any missing key falls back to its default, so adding new
-    // settings never invalidates an older config file.
+    // Lenient decode: any missing OR type-mismatched value falls back to its
+    // default, so adding new settings — or one hand-edited bad value — never
+    // invalidates the rest of the config file. (A throwing field here used to
+    // make load() fail wholesale and save defaults over the file.)
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        hotkey = try c.decodeIfPresent(Hotkey.self, forKey: .hotkey) ?? .optionShift
-        polish = try c.decodeIfPresent(PolishMode.self, forKey: .polish) ?? .apple
-        localeIdentifier = try c.decodeIfPresent(String.self, forKey: .localeIdentifier) ?? "en_US"
-        llmDeadlineMs = try c.decodeIfPresent(Int.self, forKey: .llmDeadlineMs) ?? 2500
-        clipboardRestoreDelayMs = try c.decodeIfPresent(Int.self, forKey: .clipboardRestoreDelayMs) ?? 600
-        minHoldMs = try c.decodeIfPresent(Int.self, forKey: .minHoldMs) ?? 250
-        maxUtteranceSeconds = try c.decodeIfPresent(Int.self, forKey: .maxUtteranceSeconds) ?? 120
-        preRollSeconds = try c.decodeIfPresent(Double.self, forKey: .preRollSeconds) ?? 1.0
-        claudeModel = try c.decodeIfPresent(String.self, forKey: .claudeModel) ?? "claude-haiku-4-5"
-        openaiModel = try c.decodeIfPresent(String.self, forKey: .openaiModel) ?? "gpt-4o-mini"
-        overlayPosition = try c.decodeIfPresent(OverlayPosition.self, forKey: .overlayPosition) ?? .bottomCenter
-        appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? .dark
-        aiChatMode = try c.decodeIfPresent(AIChatMode.self, forKey: .aiChatMode) ?? .both
-        snapSizes = try c.decodeIfPresent(SnapSizes.self, forKey: .snapSizes) ?? .thirds
-        snapAssist = try c.decodeIfPresent(Bool.self, forKey: .snapAssist) ?? true
-        gridSize = try c.decodeIfPresent(GridSize.self, forKey: .gridSize) ?? .c12x8
-        windowPalette = try c.decodeIfPresent(Bool.self, forKey: .windowPalette) ?? true
-        clipboardHistory = try c.decodeIfPresent(Bool.self, forKey: .clipboardHistory) ?? true
-        lastWindowSwitch = try c.decodeIfPresent(Bool.self, forKey: .lastWindowSwitch) ?? true
-        muteWhileDictating = try c.decodeIfPresent(Bool.self, forKey: .muteWhileDictating) ?? true
-        finderEnterOpens = try c.decodeIfPresent(Bool.self, forKey: .finderEnterOpens) ?? true
+        func field<T: Decodable>(_ key: CodingKeys, _ def: T) -> T {
+            ((try? c.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? def
+        }
+        hotkey = field(.hotkey, .optionShift)
+        polish = field(.polish, .apple)
+        localeIdentifier = field(.localeIdentifier, "en_US")
+        llmDeadlineMs = field(.llmDeadlineMs, 2500)
+        clipboardRestoreDelayMs = field(.clipboardRestoreDelayMs, 600)
+        minHoldMs = field(.minHoldMs, 250)
+        maxUtteranceSeconds = field(.maxUtteranceSeconds, 120)
+        preRollSeconds = field(.preRollSeconds, 1.0)
+        claudeModel = field(.claudeModel, "claude-haiku-4-5")
+        openaiModel = field(.openaiModel, "gpt-4o-mini")
+        overlayPosition = field(.overlayPosition, .bottomCenter)
+        appearance = field(.appearance, .dark)
+        aiChatMode = field(.aiChatMode, .both)
+        snapSizes = field(.snapSizes, .thirds)
+        snapAssist = field(.snapAssist, true)
+        gridSize = field(.gridSize, .c12x8)
+        windowPalette = field(.windowPalette, true)
+        clipboardHistory = field(.clipboardHistory, true)
+        lastWindowSwitch = field(.lastWindowSwitch, true)
+        muteWhileDictating = field(.muteWhileDictating, true)
+        finderEnterOpens = field(.finderEnterOpens, true)
         // Migration: the old combined `windowsKeys` flag (read from a separate
         // container so it needn't be a CodingKey the synthesized encoder must
         // satisfy) seeds all four if the granular keys aren't present yet.
         enum LegacyKeys: String, CodingKey { case windowsKeys }
-        let legacyWinKeys = try decoder.container(keyedBy: LegacyKeys.self)
-            .decodeIfPresent(Bool.self, forKey: .windowsKeys)
-        keyHomeEnd = try c.decodeIfPresent(Bool.self, forKey: .keyHomeEnd) ?? legacyWinKeys ?? true
-        finderBackspaceUp = try c.decodeIfPresent(Bool.self, forKey: .finderBackspaceUp) ?? legacyWinKeys ?? true
-        finderDeleteTrash = try c.decodeIfPresent(Bool.self, forKey: .finderDeleteTrash) ?? legacyWinKeys ?? true
-        taskManagerShortcut = try c.decodeIfPresent(Bool.self, forKey: .taskManagerShortcut) ?? legacyWinKeys ?? true
-        captureEndpoint = try c.decodeIfPresent(String.self, forKey: .captureEndpoint) ?? ""
-        captureAuthHeader = try c.decodeIfPresent(String.self, forKey: .captureAuthHeader) ?? "X-Api-Key"
-        captureBodyTemplate = try c.decodeIfPresent(String.self, forKey: .captureBodyTemplate) ?? "{\"title\":\"%TEXT%\"}"
-        // try? so a malformed element can never wipe the whole config on load.
-        connections = (try? c.decodeIfPresent([Connection].self, forKey: .connections)) ?? []
+        let legacyWinKeys = ((try? decoder.container(keyedBy: LegacyKeys.self)
+            .decodeIfPresent(Bool.self, forKey: .windowsKeys)) ?? nil)
+        keyHomeEnd = field(.keyHomeEnd, legacyWinKeys ?? true)
+        finderBackspaceUp = field(.finderBackspaceUp, legacyWinKeys ?? true)
+        finderDeleteTrash = field(.finderDeleteTrash, legacyWinKeys ?? true)
+        taskManagerShortcut = field(.taskManagerShortcut, legacyWinKeys ?? true)
+        captureEndpoint = field(.captureEndpoint, "")
+        captureAuthHeader = field(.captureAuthHeader, "X-Api-Key")
+        captureBodyTemplate = field(.captureBodyTemplate, "{\"title\":\"%TEXT%\"}")
+        connections = field(.connections, [])
     }
 
     /// One-time migration: fold the pre-multi-connection single fields into
@@ -341,11 +345,20 @@ struct Config: Codable {
     static var configURL: URL { appSupportDir.appendingPathComponent("config.json") }
 
     static func load() -> Config {
-        guard let data = try? Data(contentsOf: configURL),
-              var cfg = try? JSONDecoder().decode(Config.self, from: data) else {
-            let cfg = Config()
+        guard let data = try? Data(contentsOf: configURL) else {
+            let cfg = Config()   // first launch — no file yet
             cfg.save()
             return cfg
+        }
+        guard var cfg = try? JSONDecoder().decode(Config.self, from: data) else {
+            // Unparseable JSON (not just a bad field — those fall back per-field).
+            // Preserve the file for recovery and do NOT save defaults over it;
+            // run on in-memory defaults instead.
+            let aside = appSupportDir.appendingPathComponent("config.json.unreadable")
+            try? FileManager.default.removeItem(at: aside)
+            try? FileManager.default.copyItem(at: configURL, to: aside)
+            NSLog("PowerTools: config.json failed to parse — using defaults this run; original preserved at config.json.unreadable")
+            return Config()
         }
         if cfg.migrateLegacyCapture() { cfg.save() }
         return cfg
@@ -355,7 +368,7 @@ struct Config: Codable {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? enc.encode(self) {
-            try? data.write(to: Config.configURL)
+            try? data.write(to: Config.configURL, options: .atomic)
         }
     }
 }

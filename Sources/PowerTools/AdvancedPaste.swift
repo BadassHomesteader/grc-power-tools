@@ -31,15 +31,17 @@ final class AdvancedPaste {
                   localTransform: { $0.lowercased() }),
         Transform(digit: 7, title: "UPPERCASE", subtitle: "all caps", ai: false, instruction: nil,
                   localTransform: { $0.uppercased() }),
-        Transform(digit: 8, title: "Summarize", subtitle: "AI · the key points", ai: true,
+        Transform(digit: 8, title: "Numbers only", subtitle: "strip $ , % — paste as values", ai: false, instruction: nil,
+                  localTransform: { TextOps.numbersOnly($0) }),
+        Transform(digit: 9, title: "Summarize", subtitle: "AI · the key points", ai: true,
                   instruction: "Summarize the following text concisely. Output only the summary."),
-        Transform(digit: 9, title: "Rewrite", subtitle: "AI · fix grammar, tighten", ai: true,
+        Transform(digit: 10, title: "Rewrite", subtitle: "AI · fix grammar, tighten", ai: true,
                   instruction: "Rewrite the following to fix grammar and make it clear and concise, keeping the meaning and tone. Output only the rewrite."),
-        Transform(digit: 10, title: "Bullet points", subtitle: "AI · as a list", ai: true,
+        Transform(digit: 11, title: "Bullet points", subtitle: "AI · as a list", ai: true,
                   instruction: "Rewrite the following as a concise bulleted list using '- '. Output only the list."),
-        Transform(digit: 11, title: "Markdown", subtitle: "AI · clean markdown", ai: true,
+        Transform(digit: 12, title: "Markdown", subtitle: "AI · clean markdown", ai: true,
                   instruction: "Reformat the following as clean, well-structured Markdown. Output only the Markdown."),
-        Transform(digit: 12, title: "Translate → English", subtitle: "AI", ai: true,
+        Transform(digit: 13, title: "Translate → English", subtitle: "AI", ai: true,
                   instruction: "Translate the following into natural English. If it's already English, correct it lightly. Output only the translation."),
     ]
 
@@ -110,6 +112,17 @@ enum TextOps {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    /// Spreadsheet "paste values" for figures: strip currency symbols, thousands
+    /// commas, and % per line so numbers land as numbers, not text. Keeps tabs,
+    /// so a copied cell range stays a range.
+    static func numbersOnly(_ s: String) -> String {
+        let strip = CharacterSet(charactersIn: "$€£¥,%")
+        return s.components(separatedBy: .newlines).map { line in
+            String(line.unicodeScalars.filter { !strip.contains($0) })
+                .trimmingCharacters(in: .whitespaces)
+        }.joined(separator: "\n")
     }
 
     /// Lowercase everything, then capitalize the first letter of the text and of

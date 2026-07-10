@@ -16,6 +16,13 @@ enum Inserter {
     private static let sessionType = NSPasteboard.PasteboardType("com.grc.whisper.session")
     private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 
+    typealias Snapshot = [[(NSPasteboard.PasteboardType, Data)]]
+
+    /// Snapshot belonging to a paste whose restore hasn't fired yet. A second
+    /// insert() inside that window must carry THIS forward instead of snapshotting
+    /// the pasteboard — which still holds our own transcript, not the user's data.
+    private static var pendingSnapshot: Snapshot?
+
     enum InsertError: Error, LocalizedError {
         case secureInput
         case pasteboardWriteFailed
@@ -36,9 +43,19 @@ enum Inserter {
 
         // 1. Full-fidelity snapshot. Order matters: item.types is richest-first and
         // consumers walk it in order, so store an ordered array, not a dictionary.
-        let snapshot: [[(NSPasteboard.PasteboardType, Data)]] = (pb.pasteboardItems ?? []).map { item in
-            item.types.compactMap { type in
-                item.data(forType: type).map { (type, $0) }
+        // Never snapshot our own not-yet-restored transcript (session-tagged):
+        // rapid back-to-back pastes would later "restore" transcript A over the
+        // user's real clipboard. If our item is still on the pasteboard, the
+        // user's clipboard is whatever we saved when this window opened.
+        let items = pb.pasteboardItems ?? []
+        let snapshot: Snapshot
+        if items.contains(where: { $0.string(forType: sessionType) != nil }), let pending = pendingSnapshot {
+            snapshot = pending
+        } else {
+            snapshot = items.filter { $0.string(forType: sessionType) == nil }.map { item in
+                item.types.compactMap { type in
+                    item.data(forType: type).map { (type, $0) }
+                }
             }
         }
 
@@ -51,8 +68,13 @@ enum Inserter {
         item.setString(sessionID, forType: sessionType)
         item.setString("", forType: concealedType)
         guard pb.writeObjects([item]), pb.changeCount != before else {
+            // The clipboard was already cleared — put the user's content back
+            // before throwing so a failed paste doesn't eat their clipboard.
+            restore(snapshot, to: pb)
+            pendingSnapshot = nil
             throw InsertError.pasteboardWriteFailed
         }
+        pendingSnapshot = snapshot
 
         // 3./4. Give the pasteboard a beat to settle, then synthetic Cmd+V.
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) {
@@ -64,15 +86,20 @@ enum Inserter {
             guard pb.pasteboardItems?.contains(where: {
                 $0.string(forType: sessionType) == sessionID
             }) == true else { return } // user copied something meanwhile — leave it alone
-            pb.clearContents()
-            let restored = snapshot.compactMap { entry -> NSPasteboardItem? in
-                guard !entry.isEmpty else { return nil }
-                let item = NSPasteboardItem()
-                for (type, data) in entry { item.setData(data, forType: type) }
-                return item
-            }
-            if !restored.isEmpty { pb.writeObjects(restored) }
+            restore(snapshot, to: pb)
+            pendingSnapshot = nil
         }
+    }
+
+    private static func restore(_ snapshot: Snapshot, to pb: NSPasteboard) {
+        pb.clearContents()
+        let restored = snapshot.compactMap { entry -> NSPasteboardItem? in
+            guard !entry.isEmpty else { return nil }
+            let item = NSPasteboardItem()
+            for (type, data) in entry { item.setData(data, forType: type) }
+            return item
+        }
+        if !restored.isEmpty { pb.writeObjects(restored) }
     }
 
     private static func postCmdV() { postCmd(key: CGKeyCode(kVK_ANSI_V)) }
