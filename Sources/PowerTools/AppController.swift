@@ -165,6 +165,9 @@ final class AppController {
             case .findMouse:
                 self.interruptDictation()
                 self.findMouse.flash()
+            case .colorPicker:
+                self.interruptDictation()
+                self.pickColor()
             case .newDoc:
                 self.interruptDictation()
                 self.openNewDocMenu()
@@ -499,6 +502,20 @@ final class AppController {
                     self.overlay.showResult("Screenshot copied to clipboard")
                 }
             }
+        }
+    }
+
+    /// hold + K: screen color picker. Show the system loupe; the sampled color's
+    /// hex is copied to the clipboard and logged to history. Cancelling is silent.
+    private func pickColor() {
+        guard state == .idle else { return }
+        overlay.hide()
+        ColorPicker.pick { [weak self] picked in
+            guard let self, let picked else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(picked.hex, forType: .string)
+            self.overlay.showResult("Copied \(picked.hex) · \(picked.rgb)")
+            self.store.addHistory(app: "color-picker", raw: picked.hex, polished: picked.hex, durationMs: 0)
         }
     }
 

@@ -64,7 +64,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let captureBodyField = NSTextField()
     // Leader letters offered for connections — excludes ones already used by other
     // tools (A T S G C X V P M W H) and non-letters (3, arrows, ⏎, ⇥).
-    private static let connLeaderLetters = ["N","E","B","F","I","J","K","L","O","Q","R","U","Y","Z"]
+    private static let connLeaderLetters = ["N","E","B","F","I","J","L","O","Q","R","U","Y","Z"]
 
     init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void, onOpenChat: @escaping () -> Void = {}) {
         self.store = store

@@ -120,7 +120,7 @@ final class OverlayPanel {
     /// then swap in the waveform.
     private var awaitingSpeech = false
     private static let speechThreshold: Float = 0.22
-    private static let hintsText = "A ai · T text · S shot · G lens · H clips · D doc\nC X V files · P paste · W ← → ↑ ↓ windows"
+    private static let hintsText = "A ai · T text · S shot · G lens · K color · H clips · D doc\nC X V files · P paste · W ← → ↑ ↓ windows"
 
     private enum Mode { case waveform, text, window }
 
