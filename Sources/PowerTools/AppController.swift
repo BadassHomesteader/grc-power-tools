@@ -28,6 +28,7 @@ final class AppController {
             hotkey?.taskManagerShortcut = config.taskManagerShortcut
             hotkey?.setConnectionLeaders(Self.leaderMap(config.connections))
             windowSwitcher.dark = config.appearance.isDark
+            grabAndMove.update(enabled: config.grabAndMove, modifiers: config.grabMoveModifiers.flags)
         }
     }
 
@@ -45,6 +46,7 @@ final class AppController {
     private let windowPalette = WindowPalette()
     private let clipboardPalette = ClipboardPalette()
     private let windowSwitcher = WindowSwitcher()
+    private let grabAndMove = GrabAndMove()
     private lazy var clipboardWatcher = ClipboardHistory(store: store, enabled: config.clipboardHistory)
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
@@ -197,6 +199,10 @@ final class AppController {
         clipboardWatcher.start()
         windowSwitcher.dark = config.appearance.isDark
         windowSwitcher.start()
+        // Grab & Move rides the same Accessibility grant as the hotkey tap;
+        // a failure here is non-fatal (everything else still works).
+        grabAndMove.update(enabled: config.grabAndMove, modifiers: config.grabMoveModifiers.flags)
+        if !grabAndMove.start() { log("controller: Grab & Move tap unavailable") }
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
     }
 

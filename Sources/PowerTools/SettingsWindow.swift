@@ -26,6 +26,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let windowPaletteCheck = NSButton(checkboxWithTitle: "Snap palette (hold hotkey + W)", target: nil, action: nil)
     private let clipboardHistoryCheck = NSButton(checkboxWithTitle: "Clipboard history — hold hotkey + H to paste a recent copy or image", target: nil, action: nil)
     private let lastWindowCheck = NSButton(checkboxWithTitle: "⌘⇥ works like Windows Alt-Tab — last window first, per window not app", target: nil, action: nil)
+    private let grabMoveCheck = NSButton(checkboxWithTitle: "Grab & Move — hold the modifier and drag anywhere on a window to move it", target: nil, action: nil)
+    private let grabModsPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let muteDictationCheck = NSButton(checkboxWithTitle: "Mute speakers while dictating — keeps calls & music out of the transcript", target: nil, action: nil)
     private let finderEnterCheck = NSButton(checkboxWithTitle: "Return (⏎) opens the selected file or folder — rename via right-click", target: nil, action: nil)
     private let homeEndCheck = NSButton(checkboxWithTitle: "Home / End jump to line start / end in text fields", target: nil, action: nil)
@@ -128,6 +130,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         for g in Config.GridSize.allCases { gridSizePopup.addItem(withTitle: g.displayName) }
         gridSizePopup.target = self
         gridSizePopup.action = #selector(gridSizeChanged)
+        for m in Config.GrabModifiers.allCases { grabModsPopup.addItem(withTitle: m.displayName) }
+        grabModsPopup.target = self
+        grabModsPopup.action = #selector(grabModsChanged)
         hotkeyNote.font = .systemFont(ofSize: 11)
         hotkeyNote.textColor = .secondaryLabelColor
         hotkeyNote.stringValue = " "
@@ -141,6 +146,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         clipboardHistoryCheck.action = #selector(clipboardHistoryToggled)
         lastWindowCheck.target = self
         lastWindowCheck.action = #selector(lastWindowToggled)
+        grabMoveCheck.target = self
+        grabMoveCheck.action = #selector(grabMoveToggled)
         muteDictationCheck.target = self
         muteDictationCheck.action = #selector(muteDictationToggled)
         finderEnterCheck.target = self
@@ -386,6 +393,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                 snapAssistCheck,
                 windowPaletteCheck,
                 lastWindowCheck,
+                grabMoveCheck,
+                formRow("Grab & Move", grabModsPopup),
             ], width: 540),
             section("Saved layouts", [note, scroll, row1, row2, layoutStatus], width: 540),
         ])
@@ -643,6 +652,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         windowPaletteCheck.state = config.windowPalette ? .on : .off
         clipboardHistoryCheck.state = config.clipboardHistory ? .on : .off
         lastWindowCheck.state = config.lastWindowSwitch ? .on : .off
+        grabMoveCheck.state = config.grabAndMove ? .on : .off
+        grabModsPopup.selectItem(withTitle: config.grabMoveModifiers.displayName)
         muteDictationCheck.state = config.muteWhileDictating ? .on : .off
         finderEnterCheck.state = config.finderEnterOpens ? .on : .off
         homeEndCheck.state = config.keyHomeEnd ? .on : .off
@@ -690,7 +701,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         Release with no key to dictate normally.
 
-        Anytime: ⌘⇥ = last WINDOW first (Alt-Tab style) — walk with ⇥ or arrows, ⇧⌘⇥ backwards. In Finder: ⏎ opens · ⌫ up a folder · ⌦ to Trash. Home/End = line start/end.
+        Anytime: ⌘⇥ = last WINDOW first (Alt-Tab style) — walk with ⇥ or arrows, ⇧⌘⇥ backwards. Hold \(config.grabMoveModifiers.glyphs) and drag anywhere on a window to move it. In Finder: ⏎ opens · ⌫ up a folder · ⌦ to Trash. Home/End = line start/end.
         """
     }
 
@@ -894,6 +905,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         config.lastWindowSwitch = (lastWindowCheck.state == .on)
         config.save()
         onConfigChange(config)
+    }
+
+    @objc private func grabMoveToggled() {
+        config.grabAndMove = (grabMoveCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func grabModsChanged() {
+        let idx = grabModsPopup.indexOfSelectedItem
+        guard idx >= 0, idx < Config.GrabModifiers.allCases.count else { return }
+        config.grabMoveModifiers = Config.GrabModifiers.allCases[idx]
+        config.save()
+        onConfigChange(config)
+        helpLabel.stringValue = helpText(for: config.hotkey)
     }
 
     @objc private func toggleLaunchLogin() {

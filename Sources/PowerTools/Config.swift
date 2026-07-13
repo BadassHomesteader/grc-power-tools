@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// All user-tunable settings, persisted as JSON in Application Support.
 struct Config: Codable {
@@ -26,6 +27,51 @@ struct Config: Codable {
         init(from decoder: Decoder) throws {
             let raw = try decoder.singleValueContainer().decode(String.self)
             self = Hotkey(rawValue: raw) ?? .optionShift
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer(); try c.encode(rawValue)
+        }
+    }
+
+    /// Modifier combo for Grab & Move (hold + drag anywhere on a window).
+    /// ⇧-combos are deliberately absent: ⇧-click is select-range everywhere.
+    enum GrabModifiers: String, Codable, CaseIterable {
+        case ctrlCmd     // ⌃⌘ — DEFAULT (Easy Move+Resize convention, no system gesture)
+        case optCmd      // ⌥⌘
+        case ctrlOpt     // ⌃⌥ (collides if the main hotkey is Control+Option)
+        case ctrlOptCmd  // ⌃⌥⌘
+
+        var displayName: String {
+            switch self {
+            case .ctrlCmd: return "⌃⌘  Control + Command"
+            case .optCmd: return "⌥⌘  Option + Command"
+            case .ctrlOpt: return "⌃⌥  Control + Option"
+            case .ctrlOptCmd: return "⌃⌥⌘  Control + Option + Command"
+            }
+        }
+
+        /// Short glyph form for help text ("hold ⌃⌘ and drag").
+        var glyphs: String {
+            switch self {
+            case .ctrlCmd: return "⌃⌘"
+            case .optCmd: return "⌥⌘"
+            case .ctrlOpt: return "⌃⌥"
+            case .ctrlOptCmd: return "⌃⌥⌘"
+            }
+        }
+
+        var flags: CGEventFlags {
+            switch self {
+            case .ctrlCmd: return [.maskControl, .maskCommand]
+            case .optCmd: return [.maskAlternate, .maskCommand]
+            case .ctrlOpt: return [.maskControl, .maskAlternate]
+            case .ctrlOptCmd: return [.maskControl, .maskAlternate, .maskCommand]
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = GrabModifiers(rawValue: raw) ?? .ctrlCmd
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.singleValueContainer(); try c.encode(rawValue)
@@ -239,6 +285,10 @@ struct Config: Codable {
     /// ⌘Tab works like Windows Alt-Tab: window-level MRU switching across apps
     /// (replaces the macOS app switcher; ⇧⌘Tab walks backwards). ⌘` untouched.
     var lastWindowSwitch: Bool = true
+    /// Grab & Move: hold `grabMoveModifiers` + left-drag anywhere on a window to
+    /// move it (AltDrag / Easy Move+Resize style).
+    var grabAndMove: Bool = true
+    var grabMoveModifiers: GrabModifiers = .ctrlCmd
     /// Mute the speakers while the dictation key is held, so a call or music
     /// playing through them can't bleed into the transcript. Restored on release.
     var muteWhileDictating: Bool = true
@@ -268,6 +318,7 @@ struct Config: Codable {
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
         case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
         case windowPalette, clipboardHistory, lastWindowSwitch, muteWhileDictating, finderEnterOpens
+        case grabAndMove, grabMoveModifiers
         case keyHomeEnd, finderBackspaceUp, finderDeleteTrash, taskManagerShortcut
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
@@ -301,6 +352,8 @@ struct Config: Codable {
         windowPalette = field(.windowPalette, true)
         clipboardHistory = field(.clipboardHistory, true)
         lastWindowSwitch = field(.lastWindowSwitch, true)
+        grabAndMove = field(.grabAndMove, true)
+        grabMoveModifiers = field(.grabMoveModifiers, .ctrlCmd)
         muteWhileDictating = field(.muteWhileDictating, true)
         finderEnterOpens = field(.finderEnterOpens, true)
         // Migration: the old combined `windowsKeys` flag (read from a separate
