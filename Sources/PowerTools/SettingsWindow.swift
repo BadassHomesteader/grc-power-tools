@@ -677,6 +677,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  T   copy text off the screen (OCR)
         •  S   copy a screenshot
         •  G   screenshot → Google Lens
+        •  K   color picker — sample a pixel, copy HEX · RGB · HSL · HSV · CMYK
         •  C / X / V   copy · cut · paste files (Finder)
         •  P   Advanced Paste — plain, or AI: summarize / rewrite / translate
         •  H   clipboard history — paste something you copied earlier

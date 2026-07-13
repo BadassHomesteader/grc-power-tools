@@ -40,6 +40,7 @@ final class AppController {
     private let advancedPaste = AdvancedPaste()
     private let quickCapture = QuickCapture()
     private let findMouse = FindMouse()
+    private let colorPalette = ColorFormatPalette()
     private let ducker = AudioDucker()
     private let windowPalette = WindowPalette()
     private let clipboardPalette = ClipboardPalette()
@@ -505,17 +506,27 @@ final class AppController {
         }
     }
 
-    /// hold + K: screen color picker. Show the system loupe; the sampled color's
-    /// hex is copied to the clipboard and logged to history. Cancelling is silent.
+    /// hold + K: screen color picker. Show the system loupe; when a color comes
+    /// back, offer a palette of formats (HEX/RGB/HSL/HSV/CMYK…) and copy the one
+    /// picked to the clipboard, logging it to history. Cancelling is silent.
     private func pickColor() {
         guard state == .idle else { return }
         overlay.hide()
-        ColorPicker.pick { [weak self] picked in
-            guard let self, let picked else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(picked.hex, forType: .string)
-            self.overlay.showResult("Copied \(picked.hex) · \(picked.rgb)")
-            self.store.addHistory(app: "color-picker", raw: picked.hex, polished: picked.hex, durationMs: 0)
+        ColorPicker.pick { [weak self] color in
+            guard let self, let color else { return }
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+            guard let screen else { return }
+            self.colorPalette.present(
+                color: color, dark: self.config.appearance.isDark, screen: screen,
+                onPick: { fmt in
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(fmt.value, forType: .string)
+                    self.overlay.showResult("Copied \(fmt.value)")
+                    self.store.addHistory(app: "color-picker", raw: fmt.value, polished: fmt.value, durationMs: 0)
+                },
+                onCancel: { }
+            )
         }
     }
 
