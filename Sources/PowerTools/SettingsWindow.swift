@@ -48,6 +48,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private var dictEntries: [DictEntry] = []
     private let termField = NSTextField()
     private let misheardField = NSTextField()
+    private let pronTable = NSTableView()
+    private var pronEntries: [(word: String, spoken: String)] = []
+    private let pronWordField = NSTextField()
+    private let pronSpokenField = NSTextField()
 
     private let claudeKeyField = NSSecureTextField()
     private let openaiKeyField = NSSecureTextField()
@@ -935,8 +939,47 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         removeBtn.bezelStyle = .rounded
         let controls = NSStackView(views: [termField, misheardField, addBtn, removeBtn])
         controls.spacing = 8
+
+        // Read Aloud pronunciations — the reverse direction: how hold + R SAYS
+        // a word, while the personal dictionary above fixes what dictation WRITES.
+        let pronNote = NSTextField(labelWithString: "How Read Aloud (hold + R) says a word — names, acronyms, jargon. Write it the way it should sound; only the audio changes, the copied text stays exact. Adding a word again replaces it.")
+        pronNote.font = .systemFont(ofSize: 11)
+        pronNote.textColor = .secondaryLabelColor
+        pronNote.lineBreakMode = .byWordWrapping
+        pronNote.preferredMaxLayoutWidth = 500
+        let pronWordCol = NSTableColumn(identifier: .init("pronWord"))
+        pronWordCol.title = "Word"
+        pronWordCol.width = 140
+        let pronSpokenCol = NSTableColumn(identifier: .init("pronSpoken"))
+        pronSpokenCol.title = "Say it as"
+        pronSpokenCol.width = 300
+        pronTable.addTableColumn(pronWordCol)
+        pronTable.addTableColumn(pronSpokenCol)
+        pronTable.dataSource = self
+        pronTable.delegate = self
+        pronTable.usesAlternatingRowBackgroundColors = true
+        pronTable.rowHeight = 22
+        let pronScroll = NSScrollView()
+        pronScroll.documentView = pronTable
+        pronScroll.hasVerticalScroller = true
+        pronScroll.borderType = .bezelBorder
+        pronScroll.translatesAutoresizingMaskIntoConstraints = false
+        pronScroll.heightAnchor.constraint(equalToConstant: 160).isActive = true
+        pronScroll.widthAnchor.constraint(equalToConstant: 500).isActive = true
+        pronWordField.placeholderString = "KYAW"
+        pronWordField.widthAnchor.constraint(equalToConstant: 140).isActive = true
+        pronSpokenField.placeholderString = "K Y A W"
+        pronSpokenField.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        let pronAddBtn = NSButton(title: "Add", target: self, action: #selector(addPronEntry))
+        pronAddBtn.bezelStyle = .rounded
+        let pronRemoveBtn = NSButton(title: "Remove", target: self, action: #selector(removePronEntry))
+        pronRemoveBtn.bezelStyle = .rounded
+        let pronControls = NSStackView(views: [pronWordField, pronSpokenField, pronAddBtn, pronRemoveBtn])
+        pronControls.spacing = 8
+
         return vstack([
             section("Personal dictionary", [note, scroll, controls], width: 560),
+            section("Read Aloud pronunciations", [pronNote, pronScroll, pronControls], width: 560),
         ])
     }
 
@@ -991,6 +1034,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     private func loadConfigIntoControls() {
         config = Config.load()
+        reloadPronunciations()
         hotkeyPopup.selectItem(withTitle: config.hotkey.displayName)
         cleanupPopup.selectItem(withTitle: config.polish.displayName)
         positionPopup.selectItem(withTitle: config.overlayPosition.displayName)
@@ -1347,6 +1391,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     func numberOfRows(in tableView: NSTableView) -> Int {
         if tableView === connTable { return connEntries.count }
         if tableView === layoutsTable { return layoutEntries.count }
+        if tableView === pronTable { return pronEntries.count }
         if tableView === macroButtonsTable {
             guard let idx = selectedMacroProfileIndex else { return 0 }
             return macroProfiles[idx].buttons.count
@@ -1384,6 +1429,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                 let when = String(l.timestamp.prefix(16)).replacingOccurrences(of: "T", with: " ")
                 text = "\(count) windows · \(when)"
             }
+        } else if tableView === pronTable {
+            guard row < pronEntries.count else { return nil }
+            let e = pronEntries[row]
+            text = tableColumn?.identifier.rawValue == "pronWord" ? e.word : e.spoken
         } else {
             let entry = dictEntries[row]
             text = tableColumn?.identifier.rawValue == "term" ? entry.term : entry.misheard
@@ -1440,6 +1489,36 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         guard row >= 0, row < dictEntries.count else { return }
         store.removeDictTerm(dictEntries[row].term)
         reloadDictionary()
+    }
+
+    // MARK: Read Aloud pronunciations table
+
+    private func reloadPronunciations() {
+        pronEntries = config.pronunciations
+            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+            .map { (word: $0.key, spoken: $0.value) }
+        pronTable.reloadData()
+    }
+
+    @objc private func addPronEntry() {
+        let word = pronWordField.stringValue.trimmingCharacters(in: .whitespaces)
+        let spoken = pronSpokenField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !word.isEmpty, !spoken.isEmpty else { return }
+        config.pronunciations[word] = spoken
+        config.save()
+        onConfigChange(config)
+        pronWordField.stringValue = ""
+        pronSpokenField.stringValue = ""
+        reloadPronunciations()
+    }
+
+    @objc private func removePronEntry() {
+        let row = pronTable.selectedRow
+        guard row >= 0, row < pronEntries.count else { return }
+        config.pronunciations.removeValue(forKey: pronEntries[row].word)
+        config.save()
+        onConfigChange(config)
+        reloadPronunciations()
     }
 }
 
