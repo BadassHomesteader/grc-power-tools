@@ -52,6 +52,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private var pronEntries: [(word: String, spoken: String)] = []
     private let pronWordField = NSTextField()
     private let pronSpokenField = NSTextField()
+    /// Original key of the row loaded by Edit — a differing key on Save means
+    /// a rename, so the old entry is removed instead of left behind.
+    private var editingDictTerm: String?
+    private var editingPronWord: String?
+    private let dictAddBtn = NSButton(title: "Add", target: nil, action: nil)
+    private let pronAddBtn = NSButton(title: "Add", target: nil, action: nil)
 
     private let claudeKeyField = NSSecureTextField()
     private let openaiKeyField = NSSecureTextField()
@@ -930,14 +936,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         scroll.heightAnchor.constraint(equalToConstant: 240).isActive = true
         scroll.widthAnchor.constraint(equalToConstant: 500).isActive = true
         termField.placeholderString = "KYAW"
-        termField.widthAnchor.constraint(equalToConstant: 140).isActive = true
+        termField.widthAnchor.constraint(equalToConstant: 115).isActive = true
         misheardField.placeholderString = "K Y A W, kayak"
-        misheardField.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        let addBtn = NSButton(title: "Add", target: self, action: #selector(addDictEntry))
-        addBtn.bezelStyle = .rounded
+        misheardField.widthAnchor.constraint(equalToConstant: 185).isActive = true
+        dictAddBtn.target = self
+        dictAddBtn.action = #selector(addDictEntry)
+        dictAddBtn.bezelStyle = .rounded
+        let editBtn = NSButton(title: "Edit", target: self, action: #selector(editDictEntry))
+        editBtn.bezelStyle = .rounded
         let removeBtn = NSButton(title: "Remove", target: self, action: #selector(removeDictEntry))
         removeBtn.bezelStyle = .rounded
-        let controls = NSStackView(views: [termField, misheardField, addBtn, removeBtn])
+        dictTable.target = self
+        dictTable.doubleAction = #selector(editDictEntry)
+        let controls = NSStackView(views: [termField, misheardField, dictAddBtn, editBtn, removeBtn])
         controls.spacing = 8
 
         // Read Aloud pronunciations — the reverse direction: how hold + R SAYS
@@ -967,14 +978,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         pronScroll.heightAnchor.constraint(equalToConstant: 160).isActive = true
         pronScroll.widthAnchor.constraint(equalToConstant: 500).isActive = true
         pronWordField.placeholderString = "KYAW"
-        pronWordField.widthAnchor.constraint(equalToConstant: 140).isActive = true
+        pronWordField.widthAnchor.constraint(equalToConstant: 115).isActive = true
         pronSpokenField.placeholderString = "K Y A W"
-        pronSpokenField.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        let pronAddBtn = NSButton(title: "Add", target: self, action: #selector(addPronEntry))
+        pronSpokenField.widthAnchor.constraint(equalToConstant: 185).isActive = true
+        pronAddBtn.target = self
+        pronAddBtn.action = #selector(addPronEntry)
         pronAddBtn.bezelStyle = .rounded
+        let pronEditBtn = NSButton(title: "Edit", target: self, action: #selector(editPronEntry))
+        pronEditBtn.bezelStyle = .rounded
         let pronRemoveBtn = NSButton(title: "Remove", target: self, action: #selector(removePronEntry))
         pronRemoveBtn.bezelStyle = .rounded
-        let pronControls = NSStackView(views: [pronWordField, pronSpokenField, pronAddBtn, pronRemoveBtn])
+        pronTable.target = self
+        pronTable.doubleAction = #selector(editPronEntry)
+        let pronControls = NSStackView(views: [pronWordField, pronSpokenField, pronAddBtn, pronEditBtn, pronRemoveBtn])
         pronControls.spacing = 8
 
         return vstack([
@@ -1478,16 +1494,32 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     @objc private func addDictEntry() {
         let term = termField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !term.isEmpty else { return }
+        if let old = editingDictTerm, old != term { store.removeDictTerm(old) }  // renamed while editing
+        editingDictTerm = nil
+        dictAddBtn.title = "Add"
         store.addDictTerm(term, misheard: misheardField.stringValue.trimmingCharacters(in: .whitespaces))
         termField.stringValue = ""
         misheardField.stringValue = ""
         reloadDictionary()
     }
 
+    @objc private func editDictEntry() {
+        let row = dictTable.selectedRow
+        guard row >= 0, row < dictEntries.count else { return }
+        let e = dictEntries[row]
+        termField.stringValue = e.term
+        misheardField.stringValue = e.misheard
+        editingDictTerm = e.term
+        dictAddBtn.title = "Save"
+        window?.makeFirstResponder(termField)
+    }
+
     @objc private func removeDictEntry() {
         let row = dictTable.selectedRow
         guard row >= 0, row < dictEntries.count else { return }
         store.removeDictTerm(dictEntries[row].term)
+        editingDictTerm = nil
+        dictAddBtn.title = "Add"
         reloadDictionary()
     }
 
@@ -1504,6 +1536,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let word = pronWordField.stringValue.trimmingCharacters(in: .whitespaces)
         let spoken = pronSpokenField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !word.isEmpty, !spoken.isEmpty else { return }
+        if let old = editingPronWord, old != word { config.pronunciations.removeValue(forKey: old) }
+        editingPronWord = nil
+        pronAddBtn.title = "Add"
         config.pronunciations[word] = spoken
         config.save()
         onConfigChange(config)
@@ -1512,10 +1547,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         reloadPronunciations()
     }
 
+    @objc private func editPronEntry() {
+        let row = pronTable.selectedRow
+        guard row >= 0, row < pronEntries.count else { return }
+        let e = pronEntries[row]
+        pronWordField.stringValue = e.word
+        pronSpokenField.stringValue = e.spoken
+        editingPronWord = e.word
+        pronAddBtn.title = "Save"
+        window?.makeFirstResponder(pronWordField)
+    }
+
     @objc private func removePronEntry() {
         let row = pronTable.selectedRow
         guard row >= 0, row < pronEntries.count else { return }
         config.pronunciations.removeValue(forKey: pronEntries[row].word)
+        editingPronWord = nil
+        pronAddBtn.title = "Add"
         config.save()
         onConfigChange(config)
         reloadPronunciations()
