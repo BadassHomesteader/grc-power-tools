@@ -4,7 +4,7 @@ import ServiceManagement
 /// The app's real window: permission status, dictation options, personal
 /// dictionary, and general settings. Built programmatically (no xib).
 @MainActor
-final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSComboBoxDelegate {
+final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSComboBoxDelegate, NSMenuDelegate {
     private let store: Store
     private let onConfigChange: (Config) -> Void
     private let onOpenChat: () -> Void
@@ -73,6 +73,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let macroPadCheck = NSButton(checkboxWithTitle: "Macro Pad — floating per-app buttons (hold hotkey + B, or menu bar ▸ Macro Pad)", target: nil, action: nil)
     private let macroFoldersView = NSTextView()
     private let macroPadStatus = NSTextField(labelWithString: " ")
+
+    // Macro Pad: general per-app profile & button editor (any app, any chord).
+    private var macroProfiles: [Config.MacroProfile] = []
+    private let macroProfilePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let macroAppPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let macroButtonsTable = NSTableView()
+    private let macroBtnTitleField = NSTextField()
+    private let macroBtnChordField = NSTextField()
+    private let macroBtnTextField = NSTextField()
+    private let macroBtnReturnCheck = NSButton(checkboxWithTitle: "press Return at the end", target: nil, action: nil)
+    private let macroBtnKeywordsField = NSTextField()
+    private let macroEditorStatus = NSTextField(labelWithString: " ")
 
     init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void, onOpenChat: @escaping () -> Void = {}) {
         self.store = store
@@ -593,11 +605,240 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroPadStatus.font = .systemFont(ofSize: 11)
         macroPadStatus.textColor = .secondaryLabelColor
 
+        // General editor: any app, any buttons. The Outlook folders box above is
+        // the fast path for filing; this is the full control panel.
+        let editorNote = NSTextField(labelWithString: "Buttons for any app. Pick a profile (or add one from a running app), then edit its buttons: a keystroke chord (e.g. cmd+shift+m, delete, cmd+r), optional text typed after it, an optional Return, and optional suggestion keywords. Button order = digit order (1…9, 0). Changes apply to the pad immediately.")
+        editorNote.font = .systemFont(ofSize: 11)
+        editorNote.textColor = .secondaryLabelColor
+        editorNote.lineBreakMode = .byWordWrapping
+        editorNote.preferredMaxLayoutWidth = 520
+
+        macroProfilePopup.target = self
+        macroProfilePopup.action = #selector(macroProfileChanged)
+        macroAppPopup.menu?.delegate = self   // repopulate running apps on open
+        reloadMacroAppPopup()
+        let addProfileBtn = NSButton(title: "Add profile", target: self, action: #selector(addMacroProfile))
+        let removeProfileBtn = NSButton(title: "Remove profile", target: self, action: #selector(removeMacroProfile))
+        for b in [addProfileBtn, removeProfileBtn] { b.bezelStyle = .rounded }
+        let appRow = NSStackView(views: [macroAppPopup, addProfileBtn, removeProfileBtn]); appRow.spacing = 8
+
+        let titleCol = NSTableColumn(identifier: .init("mbTitle")); titleCol.title = "Button"; titleCol.width = 110
+        let chordCol = NSTableColumn(identifier: .init("mbChord")); chordCol.title = "Chord"; chordCol.width = 100
+        let textCol = NSTableColumn(identifier: .init("mbText")); textCol.title = "Types"; textCol.width = 110
+        let retCol = NSTableColumn(identifier: .init("mbRet")); retCol.title = "⏎"; retCol.width = 24
+        let kwCol = NSTableColumn(identifier: .init("mbKw")); kwCol.title = "Keywords"; kwCol.width = 120
+        for c in [titleCol, chordCol, textCol, retCol, kwCol] { macroButtonsTable.addTableColumn(c) }
+        macroButtonsTable.dataSource = self
+        macroButtonsTable.delegate = self
+        macroButtonsTable.usesAlternatingRowBackgroundColors = true
+        macroButtonsTable.rowHeight = 22
+        let btnScroll = NSScrollView()
+        btnScroll.documentView = macroButtonsTable
+        btnScroll.hasVerticalScroller = true
+        btnScroll.borderType = .bezelBorder
+        btnScroll.translatesAutoresizingMaskIntoConstraints = false
+        btnScroll.heightAnchor.constraint(equalToConstant: 140).isActive = true
+        btnScroll.widthAnchor.constraint(equalToConstant: 520).isActive = true
+
+        for f in [macroBtnTitleField, macroBtnChordField, macroBtnTextField, macroBtnKeywordsField] {
+            f.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        }
+        macroBtnTitleField.placeholderString = "Archive"
+        macroBtnChordField.placeholderString = "ctrl+e — blank = just type text"
+        macroBtnTextField.placeholderString = "typed after the chord (blank = nothing)"
+        macroBtnKeywordsField.placeholderString = "comma separated — lights the button up"
+        let addBtn = NSButton(title: "Add button", target: self, action: #selector(addMacroButton))
+        let updateBtn = NSButton(title: "Update selected", target: self, action: #selector(updateMacroButton))
+        let removeBtn = NSButton(title: "Remove", target: self, action: #selector(removeMacroButton))
+        let upBtn = NSButton(title: "↑", target: self, action: #selector(macroButtonUp))
+        let downBtn = NSButton(title: "↓", target: self, action: #selector(macroButtonDown))
+        for b in [addBtn, updateBtn, removeBtn, upBtn, downBtn] { b.bezelStyle = .rounded }
+        let btnRow = NSStackView(views: [addBtn, updateBtn, removeBtn, upBtn, downBtn]); btnRow.spacing = 8
+        macroEditorStatus.font = .systemFont(ofSize: 11)
+        macroEditorStatus.textColor = .secondaryLabelColor
+
         return vstack([
             section("Macro Pad", [note, macroPadCheck], width: 560),
             section("Outlook folders", [example, scroll, saveBtn, macroPadStatus], width: 560),
+            section("All profiles & buttons", [
+                editorNote,
+                formRow("Profile", macroProfilePopup),
+                formRow("Running app", appRow),
+                btnScroll,
+                formRow("Title", macroBtnTitleField),
+                formRow("Chord", macroBtnChordField),
+                formRow("Types", macroBtnTextField),
+                formRow("", macroBtnReturnCheck),
+                formRow("Keywords", macroBtnKeywordsField),
+                btnRow,
+                macroEditorStatus,
+            ], width: 560),
         ])
     }
+
+    // MARK: Macro Pad general editor
+
+    private var selectedMacroProfileIndex: Int? {
+        let i = macroProfilePopup.indexOfSelectedItem
+        return (i >= 0 && i < macroProfiles.count) ? i : nil
+    }
+
+    /// The bundle id of the profile the popup currently shows (derived from
+    /// the item title, never from an index into a possibly-mutated array).
+    private var selectedMacroBundleID: String? {
+        macroProfilePopup.selectedItem?.title.components(separatedBy: "  —  ").last
+    }
+
+    /// Rebuild the profile popup from `macroProfiles`, preserving selection.
+    private func reloadMacroProfilesUI(select bundleID: String? = nil, keepEditor: Bool = false) {
+        let keep = bundleID ?? selectedMacroBundleID
+        macroProfilePopup.removeAllItems()
+        for p in macroProfiles {
+            macroProfilePopup.addItem(withTitle: "\(p.name)  —  \(p.bundleID)")
+        }
+        if let keep, let idx = macroProfiles.firstIndex(where: { $0.bundleID == keep }) {
+            macroProfilePopup.selectItem(at: idx)
+        }
+        macroButtonsTable.deselectAll(nil)
+        macroButtonsTable.reloadData()
+        if !keepEditor { clearMacroButtonEditor() }
+    }
+
+    private func reloadMacroAppPopup() {
+        // Preserve the picked app across reopens (the menu repopulates every
+        // open) so "Add profile" targets what the user chose, not item 0.
+        let keep = macroAppPopup.selectedItem?.representedObject as? String
+        macroAppPopup.removeAllItems()
+        let apps = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != "com.grc.whisper" }
+            .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
+        for app in apps {
+            guard let bid = app.bundleIdentifier else { continue }
+            let item = NSMenuItem(title: app.localizedName ?? bid, action: nil, keyEquivalent: "")
+            item.representedObject = bid
+            macroAppPopup.menu?.addItem(item)
+        }
+        if let keep, let item = macroAppPopup.menu?.items.first(where: { ($0.representedObject as? String) == keep }) {
+            macroAppPopup.select(item)
+        }
+    }
+
+    private func clearMacroButtonEditor() {
+        macroBtnTitleField.stringValue = ""
+        macroBtnChordField.stringValue = ""
+        macroBtnTextField.stringValue = ""
+        macroBtnReturnCheck.state = .off
+        macroBtnKeywordsField.stringValue = ""
+    }
+
+    /// Persist the working copy and push it live (pad re-renders via didSet).
+    /// `touched` = the profile the mutation hit; the Outlook folders quick-box
+    /// is only re-derived when Outlook itself changed, so an edit to another
+    /// app can never stomp unsaved text typed in that box.
+    private func persistMacroProfiles(_ status: String, touched: String?) {
+        config.macroPadProfiles = macroProfiles
+        config.save()
+        onConfigChange(config)
+        macroButtonsTable.reloadData()
+        macroEditorStatus.stringValue = status
+        if let touched, touched.caseInsensitiveCompare("com.microsoft.Outlook") == .orderedSame {
+            let outlook = macroProfiles.first { $0.bundleID.caseInsensitiveCompare(touched) == .orderedSame }
+            macroFoldersView.string = (outlook?.buttons ?? [])
+                .filter { $0.chord == Self.macroMoveChord }
+                .map { $0.keywords.isEmpty ? $0.title : "\($0.title) | \($0.keywords)" }
+                .joined(separator: "\n")
+        }
+    }
+
+    @objc private func macroProfileChanged() {
+        // Deselect BEFORE reload: reloadData preserves a still-valid row index,
+        // which would leave Remove/Update aimed at the new profile's row while
+        // the editor fields show nothing (same guard as the connections table).
+        macroButtonsTable.deselectAll(nil)
+        macroButtonsTable.reloadData()
+        clearMacroButtonEditor()
+    }
+
+    @objc private func addMacroProfile() {
+        guard let item = macroAppPopup.selectedItem, let bid = item.representedObject as? String else {
+            macroEditorStatus.stringValue = "Pick a running app first"
+            return
+        }
+        if macroProfiles.contains(where: { $0.bundleID.caseInsensitiveCompare(bid) == .orderedSame }) {
+            reloadMacroProfilesUI(select: bid)
+            macroEditorStatus.stringValue = "Profile already exists — selected it"
+            return
+        }
+        macroProfiles.append(Config.MacroProfile(bundleID: bid, name: item.title, buttons: []))
+        reloadMacroProfilesUI(select: bid)
+        persistMacroProfiles("Added \(item.title) — now add its buttons below", touched: bid)
+    }
+
+    @objc private func removeMacroProfile() {
+        guard let idx = selectedMacroProfileIndex else { return }
+        let removed = macroProfiles.remove(at: idx)
+        reloadMacroProfilesUI(select: macroProfiles.first?.bundleID)
+        persistMacroProfiles("Removed \(removed.name)", touched: removed.bundleID)
+    }
+
+    /// Editor fields → a MacroButton (nil + alert on a bad chord).
+    private func macroButtonFromFields() -> Config.MacroButton? {
+        let title = macroBtnTitleField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty else { macroEditorStatus.stringValue = "Give the button a title"; return nil }
+        let chord = macroBtnChordField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
+        if !chord.isEmpty, MacroPad.parseChord(chord) == nil {
+            appAlert("“\(chord)” isn't a valid chord. Use modifiers cmd/shift/ctrl/opt + a letter, digit, or return/tab/space/esc/delete — e.g. cmd+shift+m.")
+            return nil
+        }
+        return Config.MacroButton(
+            title: title, chord: chord,
+            text: macroBtnTextField.stringValue,
+            pressReturn: macroBtnReturnCheck.state == .on,
+            keywords: macroBtnKeywordsField.stringValue.trimmingCharacters(in: .whitespaces))
+    }
+
+    @objc private func addMacroButton() {
+        guard let idx = selectedMacroProfileIndex else { macroEditorStatus.stringValue = "Add or pick a profile first"; return }
+        guard let button = macroButtonFromFields() else { return }
+        macroProfiles[idx].buttons.append(button)
+        persistMacroProfiles("Added “\(button.title)” to \(macroProfiles[idx].name)", touched: macroProfiles[idx].bundleID)
+    }
+
+    @objc private func updateMacroButton() {
+        guard let idx = selectedMacroProfileIndex else { return }
+        let row = macroButtonsTable.selectedRow
+        guard row >= 0, row < macroProfiles[idx].buttons.count else {
+            macroEditorStatus.stringValue = "Select a button row first"
+            return
+        }
+        guard let button = macroButtonFromFields() else { return }
+        macroProfiles[idx].buttons[row] = button
+        persistMacroProfiles("Updated “\(button.title)”", touched: macroProfiles[idx].bundleID)
+        macroButtonsTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    }
+
+    @objc private func removeMacroButton() {
+        guard let idx = selectedMacroProfileIndex else { return }
+        let row = macroButtonsTable.selectedRow
+        guard row >= 0, row < macroProfiles[idx].buttons.count else { return }
+        let removed = macroProfiles[idx].buttons.remove(at: row)
+        persistMacroProfiles("Removed “\(removed.title)”", touched: macroProfiles[idx].bundleID)
+        clearMacroButtonEditor()
+    }
+
+    private func moveMacroButton(by delta: Int) {
+        guard let idx = selectedMacroProfileIndex else { return }
+        let row = macroButtonsTable.selectedRow
+        let dest = row + delta
+        guard row >= 0, row < macroProfiles[idx].buttons.count,
+              dest >= 0, dest < macroProfiles[idx].buttons.count else { return }
+        macroProfiles[idx].buttons.swapAt(row, dest)
+        persistMacroProfiles("Moved — digits follow the order", touched: macroProfiles[idx].bundleID)
+        macroButtonsTable.selectRowIndexes(IndexSet(integer: dest), byExtendingSelection: false)
+    }
+
+    @objc private func macroButtonUp() { moveMacroButton(by: -1) }
+    @objc private func macroButtonDown() { moveMacroButton(by: 1) }
 
     /// The chord the folders editor manages; buttons with any OTHER chord are
     /// custom (Delete, Archive, …) and must survive a folder-list save.
@@ -623,18 +864,34 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         // Case-insensitive to match MacroPad's runtime lookup — a hand-edited
         // lowercase bundle id must not spawn a duplicate profile.
         if let idx = config.macroPadProfiles.firstIndex(where: { $0.bundleID.caseInsensitiveCompare(outlookID) == .orderedSame }) {
-            let custom = config.macroPadProfiles[idx].buttons.filter { $0.chord != Self.macroMoveChord }
+            let existing = config.macroPadProfiles[idx].buttons
+            // No-op save must not touch anything: rebuilding would front-load
+            // the folder buttons and silently reshuffle custom buttons' digits.
+            let unchanged = existing.filter { $0.chord == Self.macroMoveChord }
+                .map { "\($0.title)|\($0.keywords)" } == buttons.map { "\($0.title)|\($0.keywords)" }
+            if unchanged {
+                macroPadStatus.stringValue = "No folder changes"
+                return
+            }
+            let custom = existing.filter { $0.chord != Self.macroMoveChord }
             let merged = buttons + custom   // folder buttons keep the low digits
             if merged.isEmpty { config.macroPadProfiles.remove(at: idx) }
             else { config.macroPadProfiles[idx].buttons = merged }
         } else if !buttons.isEmpty {
             config.macroPadProfiles.append(Config.MacroProfile(bundleID: outlookID, name: "Outlook", buttons: buttons))
+        } else {
+            macroPadStatus.stringValue = "No folder changes"
+            return
         }
         config.save()
         onConfigChange(config)
         macroPadStatus.stringValue = buttons.isEmpty
-            ? "Outlook profile removed"
+            ? "Outlook folder buttons removed"
             : "Saved \(buttons.count) folder button\(buttons.count == 1 ? "" : "s")"
+        // Sync the general editor's working copy WITHOUT stealing its selection
+        // or wiping fields mid-edit.
+        macroProfiles = config.macroPadProfiles
+        reloadMacroProfilesUI(select: selectedMacroBundleID, keepEditor: true)
     }
 
     @objc private func macroPadToggled() {
@@ -767,6 +1024,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             .filter { $0.chord == Self.macroMoveChord }
             .map { $0.keywords.isEmpty ? $0.title : "\($0.title) | \($0.keywords)" }
             .joined(separator: "\n")
+        macroProfiles = config.macroPadProfiles
+        reloadMacroProfilesUI()
         connEntries = config.connections
         connTable.reloadData()
         if connEntries.isEmpty {
@@ -1079,9 +1338,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         dictTable.reloadData()
     }
 
+    /// Running-apps popup repopulates every time it opens (apps come and go).
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === macroAppPopup.menu { reloadMacroAppPopup() }
+    }
+
     func numberOfRows(in tableView: NSTableView) -> Int {
         if tableView === connTable { return connEntries.count }
         if tableView === layoutsTable { return layoutEntries.count }
+        if tableView === macroButtonsTable {
+            guard let idx = selectedMacroProfileIndex else { return 0 }
+            return macroProfiles[idx].buttons.count
+        }
         return dictEntries.count
     }
 
@@ -1094,6 +1362,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             case "connName": text = c.name
             case "connKey": text = c.leaderKey
             default: text = c.endpoint
+            }
+        } else if tableView === macroButtonsTable {
+            guard let idx = selectedMacroProfileIndex, row < macroProfiles[idx].buttons.count else { return nil }
+            let b = macroProfiles[idx].buttons[row]
+            switch tableColumn?.identifier.rawValue {
+            case "mbTitle": text = b.title
+            case "mbChord": text = b.chord
+            case "mbText": text = b.text
+            case "mbRet": text = b.pressReturn ? "⏎" : ""
+            default: text = b.keywords
             }
         } else if tableView === layoutsTable {
             guard row < layoutEntries.count else { return nil }
@@ -1116,6 +1394,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        if (notification.object as? NSTableView) === macroButtonsTable {
+            guard let idx = selectedMacroProfileIndex else { return }
+            let row = macroButtonsTable.selectedRow
+            guard row >= 0, row < macroProfiles[idx].buttons.count else { return }
+            let b = macroProfiles[idx].buttons[row]
+            macroBtnTitleField.stringValue = b.title
+            macroBtnChordField.stringValue = b.chord
+            macroBtnTextField.stringValue = b.text
+            macroBtnReturnCheck.state = b.pressReturn ? .on : .off
+            macroBtnKeywordsField.stringValue = b.keywords
+            return
+        }
         guard (notification.object as? NSTableView) === connTable else { return }
         let row = connTable.selectedRow
         guard row >= 0, row < connEntries.count else { return }

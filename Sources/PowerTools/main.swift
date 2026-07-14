@@ -121,7 +121,7 @@ case "lens":
     print(url?.absoluteString ?? "(lens upload failed)")
 
 case "settings-preview":
-    // settings-preview [out.png] [light|dark] [tabIndex]
+    // settings-preview [out.png] [light|dark] [tabIndex] [height]
     MainActor.assumeIsolated {
         var cfg = Config.load()
         if args.count >= 3, args[2] == "light" { cfg.appearance = .light }
@@ -129,7 +129,8 @@ case "settings-preview":
         let sc = SettingsWindowController(store: Store(), config: cfg, onConfigChange: { _ in })
         if args.count >= 4, let tab = Int(args[3]) { sc.selectTab(tab) }
         guard let window = sc.window else { exit(1) }
-        window.setContentSize(NSSize(width: 660, height: 640))
+        let previewH = args.count >= 5 ? Int(args[4]) ?? 640 : 640
+        window.setContentSize(NSSize(width: 660, height: CGFloat(previewH)))
         window.layoutIfNeeded()
         guard let content = window.contentView else { exit(1) }
         content.layoutSubtreeIfNeeded()
