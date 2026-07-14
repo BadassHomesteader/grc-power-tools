@@ -65,8 +65,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let captureTokenField = NSSecureTextField()
     private let captureBodyField = NSTextField()
     // Leader letters offered for connections — excludes ones already used by other
-    // tools (A T S G C X V P M W H) and non-letters (3, arrows, ⏎, ⇥).
-    private static let connLeaderLetters = ["N","E","B","F","I","J","L","O","Q","R","U","Y","Z"]
+    // tools (A T S G C X V P M W H D B) and non-letters (3, arrows, ⏎, ⇥). An
+    // existing saved B still works (grandfathered in HotkeyMonitor).
+    private static let connLeaderLetters = ["N","E","F","I","J","L","O","Q","R","U","Y","Z"]
+
+    // Macro Pad: enable toggle + the Outlook folder-button editor.
+    private let macroPadCheck = NSButton(checkboxWithTitle: "Macro Pad — floating per-app buttons (hold hotkey + B, or menu bar ▸ Macro Pad)", target: nil, action: nil)
+    private let macroFoldersView = NSTextView()
+    private let macroPadStatus = NSTextField(labelWithString: " ")
 
     init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void, onOpenChat: @escaping () -> Void = {}) {
         self.store = store
@@ -170,6 +176,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             ("AI", "sparkles", aiTab),
             ("Dictionary", "character.book.closed", dictionaryTab),
             ("Connections", "link", connectionsTab),
+            ("Macro Pad", "square.grid.2x2", macroPadTab),
             ("Permissions", "checkmark.shield", permissionsTab),
         ]
 
@@ -550,6 +557,85 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         ])
     }
 
+    private func macroPadTab() -> NSView {
+        let note = NSTextField(labelWithString: "A floating button pad (like an on-screen Stream Deck) that swaps with the app in front. Clicking a button never steals focus. First profile: Outlook filing — each folder below becomes a button that moves the selected email there (⌘⇧M → folder name → ⏎). Add keywords after a | and the pad highlights the buttons whose keywords appear in the open email (screenshot + on-device OCR of the reading pane — nothing leaves your Mac). Drag the pad anywhere; ✕ closes it. Profiles for other apps: edit config.json in the data folder.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.lineBreakMode = .byWordWrapping
+        note.preferredMaxLayoutWidth = 520
+        macroPadCheck.target = self
+        macroPadCheck.action = #selector(macroPadToggled)
+
+        let example = NSTextField(labelWithString: "One folder per line, optional keywords:   Projects | acme, quarterly")
+        example.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
+        example.textColor = .secondaryLabelColor
+
+        macroFoldersView.isRichText = false
+        macroFoldersView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        macroFoldersView.textContainerInset = NSSize(width: 4, height: 6)
+        macroFoldersView.minSize = NSSize(width: 0, height: 0)
+        macroFoldersView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        macroFoldersView.isVerticallyResizable = true
+        macroFoldersView.isHorizontallyResizable = false
+        macroFoldersView.autoresizingMask = [.width]
+        macroFoldersView.textContainer?.widthTracksTextView = true
+        let scroll = NSScrollView()
+        scroll.documentView = macroFoldersView
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(equalToConstant: 160).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 380).isActive = true
+        macroFoldersView.frame = NSRect(x: 0, y: 0, width: 380, height: 160)
+
+        let saveBtn = NSButton(title: "Save folders", target: self, action: #selector(saveMacroFolders))
+        saveBtn.bezelStyle = .rounded
+        macroPadStatus.font = .systemFont(ofSize: 11)
+        macroPadStatus.textColor = .secondaryLabelColor
+
+        return vstack([
+            section("Macro Pad", [note, macroPadCheck], width: 560),
+            section("Outlook folders", [example, scroll, saveBtn, macroPadStatus], width: 560),
+        ])
+    }
+
+    /// Rebuild the Outlook profile from the folder list ("Name | kw1, kw2" per
+    /// line). Other apps' profiles (hand-edited in config.json) are untouched.
+    @objc private func saveMacroFolders() {
+        let buttons: [Config.MacroButton] = macroFoldersView.string
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .compactMap { line -> Config.MacroButton? in
+                // split omits empty subsequences — a line of just "|" yields [].
+                let parts = line.split(separator: "|", maxSplits: 1)
+                guard let folder = parts.first?.trimmingCharacters(in: .whitespaces), !folder.isEmpty else { return nil }
+                let keywords = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
+                return Config.MacroButton(title: folder, chord: "cmd+shift+m", text: folder,
+                                          pressReturn: true, keywords: keywords)
+            }
+        let outlookID = "com.microsoft.Outlook"
+        // Case-insensitive to match MacroPad's runtime lookup — a hand-edited
+        // lowercase bundle id must not spawn a duplicate profile.
+        if let idx = config.macroPadProfiles.firstIndex(where: { $0.bundleID.caseInsensitiveCompare(outlookID) == .orderedSame }) {
+            if buttons.isEmpty { config.macroPadProfiles.remove(at: idx) }
+            else { config.macroPadProfiles[idx].buttons = buttons }
+        } else if !buttons.isEmpty {
+            config.macroPadProfiles.append(Config.MacroProfile(bundleID: outlookID, name: "Outlook", buttons: buttons))
+        }
+        config.save()
+        onConfigChange(config)
+        macroPadStatus.stringValue = buttons.isEmpty
+            ? "Outlook profile removed"
+            : "Saved \(buttons.count) folder button\(buttons.count == 1 ? "" : "s")"
+    }
+
+    @objc private func macroPadToggled() {
+        config.macroPad = (macroPadCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
     private func dictionaryTab() -> NSView {
         let note = NSTextField(labelWithString: "Words dictation should always get right — project names, people, jargon. Add the term plus what the recognizer mishears it as.")
         note.font = .systemFont(ofSize: 11)
@@ -666,6 +752,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         openaiModelField.stringValue = config.openaiModel
         claudeKeyField.placeholderString = Keychain.has("claude") ? "•••••• saved — paste to replace" : "sk-ant-…"
         openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
+        macroPadCheck.state = config.macroPad ? .on : .off
+        let outlook = config.macroPadProfiles.first { $0.bundleID.caseInsensitiveCompare("com.microsoft.Outlook") == .orderedSame }
+        macroFoldersView.string = (outlook?.buttons ?? [])
+            .map { $0.keywords.isEmpty ? $0.title : "\($0.title) | \($0.keywords)" }
+            .joined(separator: "\n")
         connEntries = config.connections
         connTable.reloadData()
         if connEntries.isEmpty {
@@ -695,6 +786,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  D   new document — Word / Excel / … in the current Finder folder
         •  N   quick capture — send a line to your connection (todo app, webhook)
         •  M   find my mouse — spotlight the cursor
+        •  B   macro pad — floating per-app buttons (Outlook folder filing)
         •  W   snap palette — halves · quarters · thirds · mini-grid
         •  ← → ↑ ↓   snap window (repeat = resize · chain ← ↑ = corner)
         •  ⏎   maximize   ·   3   draw-a-grid placement

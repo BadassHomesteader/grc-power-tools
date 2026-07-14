@@ -29,6 +29,8 @@ final class AppController {
             hotkey?.setConnectionLeaders(Self.leaderMap(config.connections))
             windowSwitcher.dark = config.appearance.isDark
             grabAndMove.update(enabled: config.grabAndMove, modifiers: config.grabMoveModifiers.flags)
+            macroPad.update(enabled: config.macroPad, profiles: config.macroPadProfiles,
+                            dark: config.appearance.isDark)
         }
     }
 
@@ -47,6 +49,7 @@ final class AppController {
     private let clipboardPalette = ClipboardPalette()
     private let windowSwitcher = WindowSwitcher()
     private let grabAndMove = GrabAndMove()
+    private let macroPad = MacroPad()
     private lazy var clipboardWatcher = ClipboardHistory(store: store, enabled: config.clipboardHistory)
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
@@ -174,6 +177,8 @@ final class AppController {
             case .newDoc:
                 self.interruptDictation()
                 self.openNewDocMenu()
+            case .macroPad:
+                self.toggleMacroPad()
             }
         }
         guard monitor.start() else {
@@ -194,7 +199,12 @@ final class AppController {
         ) { [weak self] note in
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             let isFinder = app?.bundleIdentifier == "com.apple.finder"
-            Task { @MainActor in self?.hotkey?.finderFrontmost = isFinder }
+            let bundleID = app?.bundleIdentifier
+            let appName = app?.localizedName
+            Task { @MainActor in
+                self?.hotkey?.finderFrontmost = isFinder
+                self?.macroPad.frontmostChanged(bundleID: bundleID, name: appName)
+            }
         }
         clipboardWatcher.start()
         windowSwitcher.dark = config.appearance.isDark
@@ -576,6 +586,81 @@ final class AppController {
                 await MainActor.run { self.overlay.hide(); paste(out) }
             } catch {
                 await MainActor.run { self.overlay.showError("Paste transform failed"); app.activate() }
+            }
+        }
+    }
+
+    /// hold + B (or menu bar): toggle the floating per-app macro pad. The pad
+    /// is a persistent non-activating panel — clicking its buttons leaves the
+    /// frontmost app focused, so the macro keystrokes land there.
+    func toggleMacroPad() {
+        interruptDictation()
+        if macroPad.isVisible { macroPad.dismiss(); return }
+        guard config.macroPad else {
+            overlay.showError("Macro Pad is off — enable it in Settings ▸ Macro Pad")
+            return
+        }
+        overlay.hide()
+        let app = NSWorkspace.shared.frontmostApplication
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        macroPad.present(
+            profiles: config.macroPadProfiles, dark: config.appearance.isDark, screen: screen,
+            frontApp: app,
+            onAction: { [weak self] button, bundleID in self?.runMacroButton(button, targetBundleID: bundleID) }
+        )
+        // Keyword suggestions ride on SCK window capture — without the Screen
+        // Recording grant they'd silently never light up. Ask + explain once.
+        let hasKeywords = config.macroPadProfiles.contains { profile in
+            profile.buttons.contains { !$0.keywords.trimmingCharacters(in: .whitespaces).isEmpty }
+        }
+        if hasKeywords, !CGPreflightScreenCaptureAccess() {
+            _ = CGRequestScreenCaptureAccess()
+            overlay.showError("Keyword suggestions need Screen Recording — grant it in Privacy & Security, then quit & reopen")
+        }
+    }
+
+    /// Run one macro button: chord → (delay) → typed text → (delay) → Return.
+    /// Focus can drift between render and click, so the profile's app is
+    /// re-activated first if something else slipped in front.
+    private func runMacroButton(_ button: Config.MacroButton, targetBundleID: String) {
+        let stepMs = max(config.macroPadStepDelayMs, 100)
+        // A hand-edited profile with a typo'd chord must abort — skipping just
+        // the chord would type the folder name + Return straight into the email.
+        let chord = MacroPad.parseChord(button.chord)
+        if !button.chord.isEmpty, chord == nil {
+            overlay.showError("Macro “\(button.title)” has an unrecognized chord — fix it in config.json")
+            return
+        }
+        // The pad is mouse-driven, but the toggle chord (or a habit-held ⌥⇧)
+        // may still be down — synthesized keystrokes must not inherit it.
+        afterModifiersClear {
+            Task { @MainActor in
+                if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != targetBundleID {
+                    guard let target = NSRunningApplication
+                        .runningApplications(withBundleIdentifier: targetBundleID).first else {
+                        self.overlay.showError("\(targetBundleID) isn't running")
+                        return
+                    }
+                    target.activate()
+                    try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
+                }
+                // Off the main actor: typeText/postKey pace themselves with
+                // usleep, which must not stall the app's UI mid-macro.
+                Task.detached(priority: .userInitiated) {
+                    if let chord {
+                        Inserter.postKey(chord.key, flags: chord.flags)
+                    }
+                    if !button.text.isEmpty {
+                        try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
+                        Inserter.typeText(button.text)
+                    }
+                    if button.pressReturn {
+                        try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
+                        Inserter.postKey(CGKeyCode(36 /* kVK_Return */), flags: [])
+                    }
+                }
             }
         }
     }

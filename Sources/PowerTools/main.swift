@@ -341,6 +341,25 @@ case "chat-preview":
         }
     }
 
+case "macropad-preview":
+    // Offscreen render of the macro pad for design checks (sample profile,
+    // second button shown as a keyword-suggested match).
+    let out = args.count >= 2 ? args[1] : "macropad-preview.png"
+    let dark = !(args.count >= 3 && args[2] == "light")
+    MainActor.assumeIsolated {
+        let buttons = ["Invoices", "Projects", "Receipts", "Travel", "Newsletters", "Archive"]
+            .map { Config.MacroButton(title: $0, chord: "cmd+shift+m", text: $0, pressReturn: true) }
+        let v = MacroPadView(dark: dark)
+        v.configure(appName: "Microsoft Outlook", buttons: buttons, dark: dark)
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        v.previewState(hover: 4, suggested: [1])
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
 case "doctor":
     let report = try! runBlocking { await Doctor.report() }
     print(report)

@@ -87,6 +87,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let chatMenuItem = NSMenuItem(title: "New AI Chat", action: #selector(openChat), keyEquivalent: "n")
         chatMenuItem.target = self
         appMenu.addItem(chatMenuItem)
+        let padMenuItem = NSMenuItem(title: "Toggle Macro Pad", action: #selector(toggleMacroPad), keyEquivalent: "b")
+        padMenuItem.target = self
+        appMenu.addItem(padMenuItem)
         appMenu.addItem(.separator())
         // Close just the focused window (chat/settings); target nil → key window.
         // Distinct from Quit (⌘Q), which shuts down all of Power Tools.
@@ -151,6 +154,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ocrItem.target = self
         menu.addItem(ocrItem)
 
+        let padItem = NSMenuItem(title: "Macro Pad  (hold \(config.hotkey.displayName) + B)",
+                                 action: #selector(toggleMacroPad), keyEquivalent: "")
+        padItem.target = self
+        menu.addItem(padItem)
+
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -166,6 +174,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openChat() {
         controller?.openChat()
+    }
+
+    @objc private func toggleMacroPad() {
+        controller?.toggleMacroPad()
     }
 
     @objc private func copyHistoryItem(_ sender: NSMenuItem) {

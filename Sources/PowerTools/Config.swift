@@ -250,6 +250,63 @@ struct Config: Codable {
     /// Quick Capture connections. Each has its own hotkey leader letter.
     var connections: [Connection] = []
 
+    /// One Macro Pad button: an optional keystroke chord ("cmd+shift+m"), then
+    /// optional literal text typed into whatever the chord opened, then an
+    /// optional Return. `keywords` (comma-separated) light the button up as a
+    /// suggestion when they appear in the target window's reading pane.
+    struct MacroButton: Codable {
+        var title: String
+        var chord: String
+        var text: String
+        var pressReturn: Bool
+        var keywords: String
+
+        init(title: String, chord: String = "", text: String = "",
+             pressReturn: Bool = false, keywords: String = "") {
+            self.title = title; self.chord = chord; self.text = text
+            self.pressReturn = pressReturn; self.keywords = keywords
+        }
+
+        private enum CodingKeys: String, CodingKey { case title, chord, text, pressReturn, keywords }
+
+        // Lenient: a partial/legacy element decodes with defaults instead of throwing.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+            chord = try c.decodeIfPresent(String.self, forKey: .chord) ?? ""
+            text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+            pressReturn = try c.decodeIfPresent(Bool.self, forKey: .pressReturn) ?? false
+            keywords = try c.decodeIfPresent(String.self, forKey: .keywords) ?? ""
+        }
+    }
+
+    /// Macro Pad profile: the buttons shown while `bundleID` is frontmost.
+    struct MacroProfile: Codable {
+        var bundleID: String
+        var name: String
+        var buttons: [MacroButton]
+
+        init(bundleID: String, name: String, buttons: [MacroButton]) {
+            self.bundleID = bundleID; self.name = name; self.buttons = buttons
+        }
+
+        private enum CodingKeys: String, CodingKey { case bundleID, name, buttons }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            bundleID = try c.decodeIfPresent(String.self, forKey: .bundleID) ?? ""
+            name = try c.decodeIfPresent(String.self, forKey: .name) ?? "App"
+            buttons = try c.decodeIfPresent([MacroButton].self, forKey: .buttons) ?? []
+        }
+    }
+
+    /// Macro Pad (hold hotkey + B): floating per-app button panel.
+    var macroPad: Bool = true
+    var macroPadProfiles: [MacroProfile] = []
+    /// Pause between macro steps (chord → text → Return) — the Outlook Move
+    /// dialog needs a beat to open and to filter before Return commits.
+    var macroPadStepDelayMs: Int = 350
+
     var hotkey: Hotkey = .optionShift
     var polish: PolishMode = .apple
     var localeIdentifier: String = "en_US"
@@ -322,6 +379,7 @@ struct Config: Codable {
         case keyHomeEnd, finderBackspaceUp, finderDeleteTrash, taskManagerShortcut
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
+        case macroPad, macroPadProfiles, macroPadStepDelayMs
     }
 
     // Lenient decode: any missing OR type-mismatched value falls back to its
@@ -370,6 +428,9 @@ struct Config: Codable {
         captureAuthHeader = field(.captureAuthHeader, "X-Api-Key")
         captureBodyTemplate = field(.captureBodyTemplate, "{\"title\":\"%TEXT%\"}")
         connections = field(.connections, [])
+        macroPad = field(.macroPad, true)
+        macroPadProfiles = field(.macroPadProfiles, [])
+        macroPadStepDelayMs = field(.macroPadStepDelayMs, 350)
     }
 
     /// One-time migration: fold the pre-multi-connection single fields into

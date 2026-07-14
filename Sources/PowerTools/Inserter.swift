@@ -131,6 +131,27 @@ enum Inserter {
         }
     }
 
+    /// Type literal text into the focused app as unicode keyboard events — no
+    /// clipboard involvement, so it's safe for live-filter search fields (the
+    /// Outlook Move dialog) and never disturbs what the user copied. Char by
+    /// char with a small gap so filtering UIs keep up.
+    static func typeText(_ text: String) {
+        guard let source = CGEventSource(stateID: .privateState) else { return }
+        for ch in text {
+            let units = Array(String(ch).utf16)
+            guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else { continue }
+            down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+            up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+            down.setIntegerValueField(.eventSourceUserData, value: kSyntheticEventMagic)
+            up.setIntegerValueField(.eventSourceUserData, value: kSyntheticEventMagic)
+            down.post(tap: .cghidEventTap)
+            usleep(8_000)
+            up.post(tap: .cghidEventTap)
+            usleep(8_000)
+        }
+    }
+
     /// Copy the current selection to a temporary pasteboard, read it, and restore
     /// the user's clipboard. Used by AI command mode to read the selected text.
     /// Returns nil if nothing was copied (no selection).
