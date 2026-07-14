@@ -368,6 +368,12 @@ struct Config: Codable {
     /// JSON body template; `%TEXT%` is replaced with the JSON-escaped capture text.
     var captureBodyTemplate: String = "{\"title\":\"%TEXT%\"}"
 
+    /// Read Aloud (hold + R) pronunciation fixes: word → phonetic respelling,
+    /// e.g. {"Juergs": "Yergs", "KYAW": "K Y A W"}. Matched case-insensitively
+    /// on word boundaries; only the spoken text changes, never the OCR copy.
+    /// Hand-edits to config.json load on the next app launch.
+    var pronunciations: [String: String] = [:]
+
     init() {}
 
     private enum CodingKeys: String, CodingKey {
@@ -380,6 +386,7 @@ struct Config: Codable {
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs
+        case pronunciations
     }
 
     // Lenient decode: any missing OR type-mismatched value falls back to its
@@ -431,6 +438,7 @@ struct Config: Codable {
         macroPad = field(.macroPad, true)
         macroPadProfiles = field(.macroPadProfiles, [])
         macroPadStepDelayMs = field(.macroPadStepDelayMs, 350)
+        pronunciations = field(.pronunciations, [:])
     }
 
     /// One-time migration: fold the pre-multi-connection single fields into

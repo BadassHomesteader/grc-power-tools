@@ -525,7 +525,7 @@ final class AppController {
                 guard let png else { return } // cancelled
                 let text = ScreenCapture.ocr(png).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { self.overlay.showError("No text found in the selection"); return }
-                self.readAloud.speak(text)
+                self.readAloud.speak(ReadAloud.applyPronunciations(text, self.config.pronunciations))
                 let preview = text.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\t", with: " ")
                 let short = preview.count > 60 ? String(preview.prefix(57)) + "…" : preview
                 self.overlay.showResult("Reading aloud · \(short)")
