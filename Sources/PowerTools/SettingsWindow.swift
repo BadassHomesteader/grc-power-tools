@@ -558,7 +558,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     private func macroPadTab() -> NSView {
-        let note = NSTextField(labelWithString: "A floating button pad (like an on-screen Stream Deck) that swaps with the app in front. Clicking a button never steals focus. First profile: Outlook filing — each folder below becomes a button that moves the selected email there (⌘⇧M → folder name → ⏎). Add keywords after a | and the pad highlights the buttons whose keywords appear in the open email (screenshot + on-device OCR of the reading pane — nothing leaves your Mac). Drag the pad anywhere; ✕ closes it. While the pad is open, hold your hotkey and tap the button's digit (1…9, 0 = tenth) to fire it without clicking — tap several to file several emails in one hold. Profiles for other apps: edit config.json in the data folder.")
+        let note = NSTextField(labelWithString: "A floating button pad (like an on-screen Stream Deck) that swaps with the app in front. Clicking a button never steals focus. First profile: Outlook filing — each folder below becomes a button that moves the selected email there (⌘⇧M → folder name → ⏎). Add keywords after a | and the pad highlights the buttons whose keywords appear in the open email (screenshot + on-device OCR of the reading pane — nothing leaves your Mac). Drag the pad anywhere; ✕ closes it. While the pad is open, hold your hotkey and tap the button's digit (1…9, 0 = tenth) to fire it without clicking — tap several to file several emails in one hold. Buttons aren't limited to moves — any keystroke works (Delete, Archive, Reply…): add them to the Outlook profile in config.json and this editor leaves them alone. Profiles for other apps: also config.json.")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         note.lineBreakMode = .byWordWrapping
@@ -599,8 +599,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         ])
     }
 
-    /// Rebuild the Outlook profile from the folder list ("Name | kw1, kw2" per
-    /// line). Other apps' profiles (hand-edited in config.json) are untouched.
+    /// The chord the folders editor manages; buttons with any OTHER chord are
+    /// custom (Delete, Archive, …) and must survive a folder-list save.
+    private static let macroMoveChord = "cmd+shift+m"
+
+    /// Rebuild the Outlook profile's folder-move buttons from the list
+    /// ("Name | kw1, kw2" per line). Custom buttons and other apps' profiles
+    /// (hand-edited in config.json) are preserved untouched.
     @objc private func saveMacroFolders() {
         let buttons: [Config.MacroButton] = macroFoldersView.string
             .split(separator: "\n")
@@ -611,15 +616,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                 let parts = line.split(separator: "|", maxSplits: 1)
                 guard let folder = parts.first?.trimmingCharacters(in: .whitespaces), !folder.isEmpty else { return nil }
                 let keywords = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
-                return Config.MacroButton(title: folder, chord: "cmd+shift+m", text: folder,
+                return Config.MacroButton(title: folder, chord: Self.macroMoveChord, text: folder,
                                           pressReturn: true, keywords: keywords)
             }
         let outlookID = "com.microsoft.Outlook"
         // Case-insensitive to match MacroPad's runtime lookup — a hand-edited
         // lowercase bundle id must not spawn a duplicate profile.
         if let idx = config.macroPadProfiles.firstIndex(where: { $0.bundleID.caseInsensitiveCompare(outlookID) == .orderedSame }) {
-            if buttons.isEmpty { config.macroPadProfiles.remove(at: idx) }
-            else { config.macroPadProfiles[idx].buttons = buttons }
+            let custom = config.macroPadProfiles[idx].buttons.filter { $0.chord != Self.macroMoveChord }
+            let merged = buttons + custom   // folder buttons keep the low digits
+            if merged.isEmpty { config.macroPadProfiles.remove(at: idx) }
+            else { config.macroPadProfiles[idx].buttons = merged }
         } else if !buttons.isEmpty {
             config.macroPadProfiles.append(Config.MacroProfile(bundleID: outlookID, name: "Outlook", buttons: buttons))
         }
@@ -754,7 +761,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
         macroPadCheck.state = config.macroPad ? .on : .off
         let outlook = config.macroPadProfiles.first { $0.bundleID.caseInsensitiveCompare("com.microsoft.Outlook") == .orderedSame }
+        // Only the folder-move buttons belong in the editor — a custom button
+        // listed here would be converted into a bogus folder on save.
         macroFoldersView.string = (outlook?.buttons ?? [])
+            .filter { $0.chord == Self.macroMoveChord }
             .map { $0.keywords.isEmpty ? $0.title : "\($0.title) | \($0.keywords)" }
             .joined(separator: "\n")
         connEntries = config.connections
