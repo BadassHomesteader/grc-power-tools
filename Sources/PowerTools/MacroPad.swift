@@ -23,6 +23,8 @@ final class MacroPad {
     /// Last non-self frontmost app: the profile shown AND the macro target.
     private(set) var currentBundleID: String?
     private var currentAppName = ""
+    /// Hotkey display name for the footer hint ("hold ⌥⇧ + digit").
+    private var hotkeyName = ""
     /// Panel top-left, preserved across re-renders and off/on toggles so the
     /// pad stays where the user dragged it.
     private var savedTopLeft: NSPoint?
@@ -60,10 +62,11 @@ final class MacroPad {
     }
 
     func present(profiles: [Config.MacroProfile], dark: Bool, screen: NSScreen,
-                 frontApp: NSRunningApplication?,
+                 hotkeyName: String, frontApp: NSRunningApplication?,
                  onAction: @escaping (Config.MacroButton, String) -> Void) {
         self.profiles = profiles
         self.dark = dark
+        self.hotkeyName = hotkeyName
         self.onAction = onAction
         if let app = frontApp, app.bundleIdentifier != "com.grc.whisper" {
             currentBundleID = app.bundleIdentifier
@@ -154,7 +157,7 @@ final class MacroPad {
         var current: Config.MacroProfile?
         if let id = currentBundleID { current = profile(for: id) }
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
-                       buttons: current?.buttons ?? [], dark: dark)
+                       buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName)
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
 
@@ -308,6 +311,7 @@ final class MacroPadView: NSView {
     private var appName = ""
     private var buttons: [Config.MacroButton] = []
     private var dark: Bool
+    private var hotkeyName = ""
     private var hovered: Int?
     private var pressed: Int?
 
@@ -317,6 +321,7 @@ final class MacroPadView: NSView {
     private static let btnH: CGFloat = 30
     private static let gap: CGFloat = 5
     private static let emptyH: CGFloat = 52
+    private static let footerH: CGFloat = 17
 
     init(dark: Bool) {
         self.dark = dark
@@ -324,10 +329,11 @@ final class MacroPadView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(appName: String, buttons: [Config.MacroButton], dark: Bool) {
+    func configure(appName: String, buttons: [Config.MacroButton], dark: Bool, hotkeyName: String = "") {
         self.appName = appName
         self.buttons = buttons
         self.dark = dark
+        self.hotkeyName = hotkeyName
         hovered = nil
         pressed = nil
         suggested = []
@@ -342,7 +348,7 @@ final class MacroPadView: NSView {
     override var fittingSize: NSSize {
         let content = buttons.isEmpty
             ? Self.emptyH
-            : CGFloat(buttons.count) * Self.btnH + CGFloat(buttons.count - 1) * Self.gap
+            : CGFloat(buttons.count) * Self.btnH + CGFloat(buttons.count - 1) * Self.gap + Self.footerH
         return NSSize(width: Self.width, height: Self.pad + Self.headerH + content + Self.pad)
     }
 
@@ -431,6 +437,15 @@ final class MacroPadView: NSView {
             ]
             title.draw(in: NSRect(x: titleX, y: r.minY + 7, width: r.maxX - 10 - titleX, height: 16), withAttributes: attrs)
         }
+
+        // The digits are LEADER keys — without this line nobody guesses that.
+        let hint = "hold \(hotkeyName.isEmpty ? "hotkey" : hotkeyName) + digit · click also works" as NSString
+        let hintAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim.withAlphaComponent(0.35),
+        ]
+        let hintSize = hint.size(withAttributes: hintAttrs)
+        hint.draw(at: NSPoint(x: bounds.midX - hintSize.width / 2, y: bounds.height - Self.pad - 12),
+                  withAttributes: hintAttrs)
     }
 
     /// Preview hook (macropad-preview CLI) — set state without live capture.

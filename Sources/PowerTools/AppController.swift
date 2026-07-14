@@ -615,7 +615,7 @@ final class AppController {
         guard let screen else { return }
         macroPad.present(
             profiles: config.macroPadProfiles, dark: config.appearance.isDark, screen: screen,
-            frontApp: app,
+            hotkeyName: config.hotkey.displayName, frontApp: app,
             onAction: { [weak self] button, bundleID in self?.runMacroButton(button, targetBundleID: bundleID) }
         )
         // Keyword suggestions ride on SCK window capture — without the Screen
