@@ -43,6 +43,7 @@ final class HotkeyMonitor {
         case synthKey(CGKeyCode, CGEventFlags) // remap: synthesize this keystroke
         case activityMonitor              // ⌃⇧⎋ — open Activity Monitor (Task Manager)
         case macroPad                     // hold + B — toggle the per-app macro pad
+        case macroPadDigit(Int)           // hold + 1…9/0 while the pad is open — fire that button
     }
 
     var handler: ((Callback) -> Void)?
@@ -61,6 +62,18 @@ final class HotkeyMonitor {
     /// thread (same discipline as `held`).
     var finderEnterOpens = true
     var finderFrontmost = false
+    /// True while the macro pad panel is shown (set from main, read on the tap
+    /// thread — same plain-Bool discipline as `held`). While true, leader-held
+    /// digits WITH a mapped button fire it instead of their usual chords
+    /// (3 stays the grid unless the pad actually has a third button).
+    var macroPadVisible = false
+    /// Buttons in the pad's current profile — digits ≥ this pass through.
+    var macroPadButtonCount = 0
+
+    /// keyCode → pad button index for the digit row (1…9 then 0 = tenth).
+    private static let macroDigitIndex: [Int64: Int] = [
+        18: 0, 19: 1, 20: 2, 21: 3, 23: 4, 22: 5, 26: 6, 28: 7, 25: 8, 29: 9,
+    ]
 
     /// Quick Capture leaders: keyCode → connection id, user-assigned per connection.
     /// A dictionary isn't safe to read on the tap thread while main writes it, so it
@@ -377,6 +390,19 @@ final class HotkeyMonitor {
         // if text is selected, else route this dictation through the cloud AI).
         // Esc cancels; any other key means an unrelated combo (e.g. Fn+arrow).
         if held && type == .keyDown {
+            // Macro pad digits: while the pad is shown, a digit that maps to a
+            // real button fires it (shadowing 3 = grid only when a third button
+            // exists); unmapped digits keep their normal meaning. Fires on
+            // keydown so several emails can be filed in one hold — the runs
+            // queue and flush when the leader lifts. Auto-repeat swallowed.
+            if macroPadVisible, let idx = Self.macroDigitIndex[keyCode], idx < macroPadButtonCount {
+                windowMode = true
+                swallowedKeyUps.insert(keyCode)
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                    dispatch(.macroPadDigit(idx))
+                }
+                return nil
+            }
             switch keyCode {
             case Self.kVK_Escape:
                 interrupted = true; swallowedKeyUps.insert(keyCode)

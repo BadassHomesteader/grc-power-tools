@@ -558,7 +558,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     private func macroPadTab() -> NSView {
-        let note = NSTextField(labelWithString: "A floating button pad (like an on-screen Stream Deck) that swaps with the app in front. Clicking a button never steals focus. First profile: Outlook filing — each folder below becomes a button that moves the selected email there (⌘⇧M → folder name → ⏎). Add keywords after a | and the pad highlights the buttons whose keywords appear in the open email (screenshot + on-device OCR of the reading pane — nothing leaves your Mac). Drag the pad anywhere; ✕ closes it. Profiles for other apps: edit config.json in the data folder.")
+        let note = NSTextField(labelWithString: "A floating button pad (like an on-screen Stream Deck) that swaps with the app in front. Clicking a button never steals focus. First profile: Outlook filing — each folder below becomes a button that moves the selected email there (⌘⇧M → folder name → ⏎). Add keywords after a | and the pad highlights the buttons whose keywords appear in the open email (screenshot + on-device OCR of the reading pane — nothing leaves your Mac). Drag the pad anywhere; ✕ closes it. While the pad is open, hold your hotkey and tap the button's digit (1…9, 0 = tenth) to fire it without clicking — tap several to file several emails in one hold. Profiles for other apps: edit config.json in the data folder.")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         note.lineBreakMode = .byWordWrapping
@@ -786,7 +786,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  D   new document — Word / Excel / … in the current Finder folder
         •  N   quick capture — send a line to your connection (todo app, webhook)
         •  M   find my mouse — spotlight the cursor
-        •  B   macro pad — floating per-app buttons (Outlook folder filing)
+        •  B   macro pad — floating per-app buttons (Outlook folder filing); while it's open, hold + 1…9 fires that button
         •  W   snap palette — halves · quarters · thirds · mini-grid
         •  ← → ↑ ↓   snap window (repeat = resize · chain ← ↑ = corner)
         •  ⏎   maximize   ·   3   draw-a-grid placement

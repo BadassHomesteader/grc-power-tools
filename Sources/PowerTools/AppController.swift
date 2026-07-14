@@ -179,6 +179,8 @@ final class AppController {
                 self.openNewDocMenu()
             case .macroPad:
                 self.toggleMacroPad()
+            case .macroPadDigit(let idx):
+                self.fireMacroPadDigit(idx)
             }
         }
         guard monitor.start() else {
@@ -194,6 +196,12 @@ final class AppController {
         monitor.finderDeleteTrash = config.finderDeleteTrash
         monitor.taskManagerShortcut = config.taskManagerShortcut
         monitor.finderFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
+        // The tap only intercepts leader-digits while the pad is shown, and
+        // only for digits that map to a real button of the current profile.
+        macroPad.onStateChanged = { [weak self] visible, buttonCount in
+            self?.hotkey?.macroPadVisible = visible
+            self?.hotkey?.macroPadButtonCount = buttonCount
+        }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] note in
@@ -621,6 +629,21 @@ final class AppController {
         }
     }
 
+    /// hold + digit while the pad is open: fire that button without clicking.
+    private func fireMacroPadDigit(_ index: Int) {
+        // The leader-down already started a recording — drop it, or release
+        // would leave the state machine wedged in .recording (windowMode
+        // release dispatches .windowEnd, never .up/.cancel).
+        interruptDictation()
+        guard let (button, bundleID) = macroPad.buttonForDigit(index) else { return }
+        macroPad.flashButton(index)
+        runMacroButton(button, targetBundleID: bundleID)
+    }
+
+    /// Runs are chained so rapid leader-digit fires queue and execute in order
+    /// — two macros must never interleave their synthesized keystrokes.
+    private var macroChain: Task<Void, Never>?
+
     /// Run one macro button: chord → (delay) → typed text → (delay) → Return.
     /// Focus can drift between render and click, so the profile's app is
     /// re-activated first if something else slipped in front.
@@ -633,35 +656,60 @@ final class AppController {
             overlay.showError("Macro “\(button.title)” has an unrecognized chord — fix it in config.json")
             return
         }
-        // The pad is mouse-driven, but the toggle chord (or a habit-held ⌥⇧)
-        // may still be down — synthesized keystrokes must not inherit it.
-        afterModifiersClear {
-            Task { @MainActor in
-                if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != targetBundleID {
-                    guard let target = NSRunningApplication
-                        .runningApplications(withBundleIdentifier: targetBundleID).first else {
-                        self.overlay.showError("\(targetBundleID) isn't running")
-                        return
-                    }
-                    target.activate()
-                    try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
-                }
-                // Off the main actor: typeText/postKey pace themselves with
-                // usleep, which must not stall the app's UI mid-macro.
-                Task.detached(priority: .userInitiated) {
-                    if let chord {
-                        Inserter.postKey(chord.key, flags: chord.flags)
-                    }
-                    if !button.text.isEmpty {
-                        try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
-                        Inserter.typeText(button.text)
-                    }
-                    if button.pressReturn {
-                        try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
-                        Inserter.postKey(CGKeyCode(36 /* kVK_Return */), flags: [])
-                    }
-                }
+        let prev = macroChain
+        macroChain = Task { @MainActor in
+            await prev?.value
+            // The trigger may still be physically held (a leader digit, or a
+            // habit-held ⌥⇧ after a click) — synthesized keystrokes must not
+            // inherit it. Abort loudly rather than post a polluted chord.
+            guard await self.modifiersCleared(timeout: 8) else {
+                self.overlay.showError("“\(button.title)” skipped — a modifier key never released")
+                return
             }
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != targetBundleID {
+                guard let target = NSRunningApplication
+                    .runningApplications(withBundleIdentifier: targetBundleID).first else {
+                    self.overlay.showError("\(targetBundleID) isn't running")
+                    return
+                }
+                target.activate()
+                try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
+            }
+            // Off the main actor (awaited, so the chain stays serial):
+            // typeText/postKey pace themselves with usleep, which must not
+            // stall the app's UI mid-macro.
+            await Task.detached(priority: .userInitiated) {
+                if let chord {
+                    Inserter.postKey(chord.key, flags: chord.flags)
+                }
+                if !button.text.isEmpty {
+                    try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
+                    Inserter.typeText(button.text)
+                }
+                if button.pressReturn {
+                    try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
+                    Inserter.postKey(CGKeyCode(36 /* kVK_Return */), flags: [])
+                }
+            }.value
+        }
+    }
+
+    /// True once no physical modifier (Fn included) remains down. While the
+    /// leader hotkey itself is still held this waits INDEFINITELY — queued
+    /// leader-digit macros must flush whenever the user finally lets go, no
+    /// matter how long they kept filing. The timeout only counts once the
+    /// leader is up (a stuck-flags guard, not a patience limit).
+    private func modifiersCleared(timeout: TimeInterval) async -> Bool {
+        var deadline = Date().addingTimeInterval(timeout)
+        while true {
+            let f = CGEventSource.flagsState(.combinedSessionState)
+            let down = f.contains(.maskShift) || f.contains(.maskCommand)
+                    || f.contains(.maskControl) || f.contains(.maskAlternate)
+                    || f.contains(.maskSecondaryFn)
+            if !down { return true }
+            if hotkey?.held == true { deadline = Date().addingTimeInterval(timeout) }
+            if Date() >= deadline { return false }
+            try? await Task.sleep(nanoseconds: 25_000_000)
         }
     }
 

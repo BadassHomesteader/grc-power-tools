@@ -37,6 +37,27 @@ final class MacroPad {
     private var lastCapture: Data?
 
     var isVisible: Bool { panel != nil }
+    /// Fired on show/hide and profile swaps so the hotkey tap knows when (and
+    /// for how many buttons) leader digits should fire.
+    var onStateChanged: ((_ visible: Bool, _ buttonCount: Int) -> Void)?
+
+    private func notifyState() {
+        var count = 0
+        if isVisible, let id = currentBundleID { count = profile(for: id)?.buttons.count ?? 0 }
+        onStateChanged?(isVisible, count)
+    }
+
+    /// Button `index` of the current profile, for leader-digit firing.
+    func buttonForDigit(_ index: Int) -> (button: Config.MacroButton, bundleID: String)? {
+        guard isVisible, let id = currentBundleID, let profile = profile(for: id),
+              index < profile.buttons.count else { return nil }
+        return (profile.buttons[index], id)
+    }
+
+    /// Brief pressed-state flash so a leader-digit fire is visible on the pad.
+    func flashButton(_ index: Int) {
+        padView?.flash(index)
+    }
 
     func present(profiles: [Config.MacroProfile], dark: Bool, screen: NSScreen,
                  frontApp: NSRunningApplication?,
@@ -49,7 +70,7 @@ final class MacroPad {
             currentAppName = app.localizedName ?? "App"
         }
         buildPanel(on: screen)
-        render(on: screen)
+        render(on: screen)   // render ends with notifyState()
         startSuggestTimer()
     }
 
@@ -62,6 +83,7 @@ final class MacroPad {
         panel?.orderOut(nil)
         panel = nil
         padView = nil
+        notifyState()
     }
 
     /// Cancel any in-flight scan and retire its generation so its cleanup /
@@ -156,6 +178,7 @@ final class MacroPad {
         }
         panel.setFrame(frame, display: true)
         refreshSuggestions()
+        notifyState()
     }
 
     private func profile(for bundleID: String) -> Config.MacroProfile? {
@@ -386,6 +409,16 @@ final class MacroPadView: NSView {
                 path.lineWidth = 1.5
                 path.stroke()
             }
+            // Digit badge for the first ten buttons (hold hotkey + digit fires it).
+            var titleX = r.minX + 10
+            if i < 10 {
+                let digit = "\((i + 1) % 10)" as NSString
+                digit.draw(at: NSPoint(x: r.minX + 8, y: r.minY + 9), withAttributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold),
+                    .foregroundColor: isPressed ? NSColor.white.withAlphaComponent(0.85) : dim,
+                ])
+                titleX = r.minX + 22
+            }
             let title = btn.title as NSString
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 12, weight: isSuggested ? .semibold : .regular),
@@ -396,7 +429,7 @@ final class MacroPadView: NSView {
                     return p
                 }(),
             ]
-            title.draw(in: NSRect(x: r.minX + 10, y: r.minY + 7, width: r.width - 20, height: 16), withAttributes: attrs)
+            title.draw(in: NSRect(x: titleX, y: r.minY + 7, width: r.maxX - 10 - titleX, height: 16), withAttributes: attrs)
         }
     }
 
@@ -407,17 +440,22 @@ final class MacroPadView: NSView {
         needsDisplay = true
     }
 
+    /// Pressed-state flash (mouse click and leader-digit fire share it).
+    func flash(_ i: Int) {
+        pressed = i
+        needsDisplay = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(140)) { [weak self] in
+            self?.pressed = nil
+            self?.needsDisplay = true
+        }
+    }
+
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -4, dy: -4).contains(p) { onClose?(); return }
         if rescanRect.insetBy(dx: -4, dy: -4).contains(p) { onRescan?(); return }
         if let i = buttons.indices.first(where: { buttonRect($0).contains(p) }) {
-            pressed = i
-            needsDisplay = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(140)) { [weak self] in
-                self?.pressed = nil
-                self?.needsDisplay = true
-            }
+            flash(i)
             onTap?(i)
             return
         }
