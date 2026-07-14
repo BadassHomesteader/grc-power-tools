@@ -84,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ocrMenuItem = NSMenuItem(title: "Capture Text from Screen", action: #selector(captureScreenText), keyEquivalent: "")
         ocrMenuItem.target = self
         appMenu.addItem(ocrMenuItem)
+        let readMenuItem = NSMenuItem(title: "Read Text from Screen", action: #selector(readScreenText), keyEquivalent: "")
+        readMenuItem.target = self
+        appMenu.addItem(readMenuItem)
         let chatMenuItem = NSMenuItem(title: "New AI Chat", action: #selector(openChat), keyEquivalent: "n")
         chatMenuItem.target = self
         appMenu.addItem(chatMenuItem)
@@ -154,6 +157,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ocrItem.target = self
         menu.addItem(ocrItem)
 
+        let readItem = NSMenuItem(title: "Read Text from Screen  (hold \(config.hotkey.displayName) + R)",
+                                  action: #selector(readScreenText), keyEquivalent: "")
+        readItem.target = self
+        menu.addItem(readItem)
+
         let padItem = NSMenuItem(title: "Macro Pad  (hold \(config.hotkey.displayName) + B)",
                                  action: #selector(toggleMacroPad), keyEquivalent: "")
         padItem.target = self
@@ -170,6 +178,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func captureScreenText() {
         controller?.captureScreenText()
+    }
+
+    @objc private func readScreenText() {
+        controller?.readScreenText()
     }
 
     @objc private func openChat() {

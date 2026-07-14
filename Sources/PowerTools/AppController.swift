@@ -48,6 +48,7 @@ final class AppController {
     private let windowPalette = WindowPalette()
     private let clipboardPalette = ClipboardPalette()
     private let windowSwitcher = WindowSwitcher()
+    private let readAloud = ReadAloud()
     private let grabAndMove = GrabAndMove()
     private let macroPad = MacroPad()
     private lazy var clipboardWatcher = ClipboardHistory(store: store, enabled: config.clipboardHistory)
@@ -117,6 +118,9 @@ final class AppController {
             case .ocr:
                 self.interruptDictation()
                 self.captureScreenText()
+            case .readAloud:
+                self.interruptDictation()
+                self.readScreenText()
             case .screenshot:
                 self.interruptDictation()
                 self.captureScreenshot(search: false)
@@ -498,6 +502,34 @@ final class AppController {
                 let short = preview.count > 60 ? String(preview.prefix(57)) + "…" : preview
                 self.overlay.showResult("Copied to clipboard · \(short)")
                 self.store.addHistory(app: "screen-ocr", raw: text, polished: text, durationMs: 0)
+            }
+        }
+    }
+
+    /// hold + R: read a screen region aloud — same grab + OCR as hold + T, but
+    /// the text goes to the system voice instead of the clipboard. A second
+    /// hold + R while it's talking stops it (Esc can't — by then the app is idle).
+    func readScreenText() {
+        if readAloud.isSpeaking {
+            readAloud.stop()
+            overlay.showResult("Stopped reading")
+            return
+        }
+        guard state == .idle, ensureScreenRecording() else { return }
+        state = .processing
+        onStateChange?(.processing)
+        Task {
+            let png = await ScreenCapture.grabRegionPNG()
+            await MainActor.run {
+                defer { self.finishCycle() }
+                guard let png else { return } // cancelled
+                let text = ScreenCapture.ocr(png).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { self.overlay.showError("No text found in the selection"); return }
+                self.readAloud.speak(text)
+                let preview = text.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\t", with: " ")
+                let short = preview.count > 60 ? String(preview.prefix(57)) + "…" : preview
+                self.overlay.showResult("Reading aloud · \(short)")
+                self.store.addHistory(app: "screen-read", raw: text, polished: text, durationMs: 0)
             }
         }
     }

@@ -1046,6 +1046,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         •  A   AI chat — speak your question
         •  T   copy text off the screen (OCR)
+        •  R   read text off the screen aloud — hold + R again to stop
         •  S   copy a screenshot
         •  G   screenshot → Google Lens
         •  K   color picker — sample a pixel, copy HEX · RGB · HSL · HSV · CMYK

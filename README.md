@@ -8,7 +8,7 @@
 
 Power Tools puts a suite of power-user utilities behind a single hotkey. **Hold Option + Shift**, then speak or tap a letter/arrow: dictate into any app, open a Claude chat, snap and tile windows, OCR the screen, grab a screenshot, cut & paste files, transform your clipboard, or spotlight your cursor. If you've missed Windows PowerToys on the Mac, this is that — FancyZones-style snapping, Advanced Paste, Text Extractor, Color Picker, and Find My Mouse — plus on-device dictation and AI chat.
 
-**In the box:** 🎙 Dictation · 💬 AI chat · 🔀 ⌘Tab like Windows Alt-Tab · 🪟 Window snapping + Snap Assist · 🖐 Grab & Move (hold ⌃⌘, drag anywhere on a window) · 🎛 Snap palette (Moom-style) · 🗔 Saved layouts · ▦ Grid placement · 📋 Clipboard history (Win+V-style, text + images) · ⚡ Quick Capture → your own endpoints · 🔤 OCR (Text Extractor) · 📸 Screenshots · 🔎 Google Lens · 🎨 Color Picker · 🗂 File cut/paste · 📝 Advanced Paste · 🖱 Find My Mouse · 🔇 Call-safe dictation
+**In the box:** 🎙 Dictation · 💬 AI chat · 🔀 ⌘Tab like Windows Alt-Tab · 🪟 Window snapping + Snap Assist · 🖐 Grab & Move (hold ⌃⌘, drag anywhere on a window) · 🎛 Snap palette (Moom-style) · 🗔 Saved layouts · ▦ Grid placement · 📋 Clipboard history (Win+V-style, text + images) · ⚡ Quick Capture → your own endpoints · 🔤 OCR (Text Extractor) · 🔊 Read Aloud · 📸 Screenshots · 🔎 Google Lens · 🎨 Color Picker · 🗂 File cut/paste · 📝 Advanced Paste · 🖱 Find My Mouse · 🔇 Call-safe dictation
 
 **The app bundle and data folder are still named `GRC Whisper` / bundle ID `com.grc.whisper`** so macOS permissions and saved keys survive the rename.
 
@@ -118,13 +118,14 @@ History, dictionary, and logs live in the same folder. Delete the folder to rese
 
 ## Leader chords (hold your hotkey, tap a letter)
 
-Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay shows the menu (`A ai · T text · S shot · G lens · K color` / `C X V files · W palette · ← → ↑ ↓ win`). Keep holding and tap a key, or just speak. Until you speak, the overlay shows the hint strip; the moment you talk it swaps to the live waveform.
+Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay shows the menu (`A ai · T text · R read · S shot · G lens · K color` / `C X V files · W palette · ← → ↑ ↓ win`). Keep holding and tap a key, or just speak. Until you speak, the overlay shows the hint strip; the moment you talk it swaps to the live waveform.
 
 **Text & AI**
 - **hold + speak + release** → dictation (as normal).
 - **On a Zoom/Teams call?** The speakers auto-mute for exactly as long as you hold the key, then restore — so the meeting audio never bleeds through the mic into your transcript. Toggle in Settings ▸ Dictation.
 - **hold + A**, then speak → **AI chat**: what you say opens a streaming Claude chat window. Set the mode in Settings — *native* (in-app window), *browser* (claude.ai tab), or *both* (a native window with a “claude.ai ↗” button).
 - **hold + T** → **text (OCR)**: drag a screen region, the recognized text is copied to your clipboard. Tables come back **tab-separated** so they paste into Excel/Sheets/Numbers as a grid. Fully local via Apple Vision.
+- **hold + R** → **read aloud**: drag a screen region, the recognized text is spoken through the system voice — hold + R again stops it. Same on-device OCR as T; nothing leaves your Mac. Better voices: download an Enhanced/Premium voice in System Settings ▸ Accessibility ▸ Spoken Content and it's used automatically.
 - **hold + S** → **screenshot**: drag a region, the image is copied to your clipboard.
 - **hold + G** → **Google Lens**: drag a region → image to clipboard + Google Lens results open in your browser (Circle-to-Search style).
 
@@ -158,7 +159,7 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 - **Template placeholders**: `%TEXT%` (the captured line, JSON-escaped), `%TODAY%` (today as a Unix-seconds due date), `%PRIORITY%` (p0–p3, defaults 0), `%DUE%` (yyyy-mm-dd), `%DUE_TS%` (parsed due date in Unix seconds, today when absent), `%CONTEXT%` (@word). Example: `{"title":"%TEXT%","priority":%PRIORITY%,"duedate":%DUE_TS%,"context":"%CONTEXT%"}`.
 - If a POST fails, the panel re-opens pre-filled so the text is never lost.
 
-T / S / G need Screen Recording permission the first time (System Settings ▸ Privacy & Security ▸ Screen Recording, then quit & reopen). OCR is also on the menu-bar mic ▸ Capture Text from Screen.
+T / R / S / G need Screen Recording permission the first time (System Settings ▸ Privacy & Security ▸ Screen Recording, then quit & reopen). OCR is also on the menu-bar mic ▸ Capture Text from Screen.
 
 
 ## Cloud cleanup (optional, opt-in)

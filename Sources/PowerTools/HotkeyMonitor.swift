@@ -20,6 +20,7 @@ final class HotkeyMonitor {
         case up(Command)
         case cancel
         case ocr
+        case readAloud                    // hold + R — OCR a region and speak it
         case screenshot
         case search
         case fileCopy
@@ -116,7 +117,7 @@ final class HotkeyMonitor {
     /// keys (e.g. two arrows) are each tracked, not just the last one.
     private var swallowedKeyUps: Set<Int64> = []
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, clipboardHistory, findMouse, colorPicker, newDoc, quickCapture(String) }
+    private enum Pending { case none, ocr, readAloud, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, clipboardHistory, findMouse, colorPicker, newDoc, quickCapture(String) }
     private var pending: Pending = .none
     /// Set once an arrow/Return moves a window this hold, so release ends the
     /// window session instead of dispatching a dictation.
@@ -127,6 +128,7 @@ final class HotkeyMonitor {
     private static let kVK_RightCommand: Int64 = 54
     private static let kVK_Escape: Int64 = 53
     private static let kVK_ANSI_T: Int64 = 17
+    private static let kVK_ANSI_R: Int64 = 15
     private static let kVK_ANSI_A: Int64 = 0
     private static let kVK_ANSI_S: Int64 = 1
     private static let kVK_ANSI_G: Int64 = 5
@@ -412,6 +414,16 @@ final class HotkeyMonitor {
                 log("hotkey: +T leader armed (OCR)")
                 pending = .ocr; swallowedKeyUps.insert(keyCode)
                 return nil // OCR fires on release; recording continues harmlessly until then
+            case Self.kVK_ANSI_R:
+                // A user-assigned Quick Capture connection on R wins (same rule as B).
+                if let connId = connectionLeader(for: keyCode) {
+                    log("hotkey: connection leader armed (\(connId))")
+                    pending = .quickCapture(connId); swallowedKeyUps.insert(keyCode)
+                    return nil
+                }
+                log("hotkey: +R leader armed (read aloud)")
+                pending = .readAloud; swallowedKeyUps.insert(keyCode)
+                return nil
             case Self.kVK_ANSI_A:
                 log("hotkey: +A leader armed (AI)")
                 pending = .ai; swallowedKeyUps.insert(keyCode)
@@ -552,6 +564,7 @@ final class HotkeyMonitor {
                 case .none: dispatch(.up(.dictate))
                 case .ai: dispatch(.up(.ai))
                 case .ocr: dispatch(.ocr)
+                case .readAloud: dispatch(.readAloud)
                 case .screenshot: dispatch(.screenshot)
                 case .search: dispatch(.search)
                 case .fileCopy: dispatch(.fileCopy)
