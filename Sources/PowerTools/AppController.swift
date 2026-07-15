@@ -252,6 +252,8 @@ final class AppController {
             if !hookServer.start(port: config.agentPadPort) {
                 log("controller: Agent Pad server couldn't bind 127.0.0.1:\(config.agentPadPort)")
             }
+            claudeRegistry.loadPersisted()      // survive our own restarts
+            claudeRegistry.refreshDiscovered()  // find sessions that predate us
         }
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
     }
@@ -702,6 +704,7 @@ final class AppController {
         }
         overlay.hide()
         claudeRegistry.pruneDead()
+        claudeRegistry.refreshDiscovered()  // catch silent sessions on every open
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }

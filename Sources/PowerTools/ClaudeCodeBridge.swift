@@ -19,8 +19,8 @@ import Network
 
 // MARK: - Session model
 
-struct ClaudeSession {
-    enum State {
+struct ClaudeSession: Codable {
+    enum State: String, Codable {
         case busy             // a turn is running
         case idle             // finished, waiting for input
         case needsPermission  // a permission dialog is on screen
@@ -38,7 +38,7 @@ struct ClaudeSession {
         }
     }
 
-    let id: String
+    var id: String
     var cwd: String = ""
     /// Controlling terminal of the claude process ("ttys003"), reported by the
     /// hook script — it's how we find the right Terminal.app tab.
@@ -86,6 +86,69 @@ final class ClaudeSessionRegistry {
         sessions.values.sorted { $0.started < $1.started }
     }
 
+    // MARK: Persistence — the app restarts (updates, crashes) must not blank
+    // the pad; sessions reload and the liveness prune drops the stale ones.
+
+    private static var persistURL: URL {
+        Config.appSupportDir.appendingPathComponent("agent-sessions.json")
+    }
+
+    func loadPersisted() {
+        guard let data = try? Data(contentsOf: Self.persistURL),
+              let list = try? JSONDecoder().decode([ClaudeSession].self, from: data) else { return }
+        // Skip placeholders persisted by older builds that predate the "/"
+        // utility-process filter.
+        for s in list where !(s.id.hasPrefix("pid-") && s.cwd == "/") { sessions[s.id] = s }
+        pruneDead()
+        onChange?(ordered)
+    }
+
+    private func persist() {
+        if let data = try? JSONEncoder().encode(ordered) {
+            try? data.write(to: Self.persistURL, options: .atomic)
+        }
+    }
+
+    /// Sweep running `claude` processes and add any the hooks haven't reported
+    /// (live but silent since before the hooks existed). When exactly one
+    /// recent transcript matches the process's project, the row adopts its
+    /// real session id + title; otherwise it shows as an untitled idle row
+    /// keyed "pid-N" and upgrades in place on its first hook event.
+    func refreshDiscovered() {
+        ClaudeDiscovery.runningSessions { [weak self] procs in
+            guard let self else { return }
+            for proc in procs {
+                // cwd "/" is the extension's utility process, not a chat session.
+                if proc.cwd == "/" { continue }
+                if self.sessions.values.contains(where: { $0.claudePID == proc.pid }) { continue }
+                var id = "pid-\(proc.pid)"
+                var label = ""
+                let known = Set(self.sessions.keys)
+                let candidates = ClaudeDiscovery.transcripts(inProjectFor: proc.cwd, since: proc.started)
+                    .filter { !known.contains($0.stem) }
+                if candidates.count == 1, let only = candidates.first {
+                    id = only.stem
+                    label = Self.titleFromTranscript(only.path) ?? ""
+                }
+                var s = ClaudeSession(id: id)
+                s.cwd = proc.cwd
+                s.claudePID = proc.pid
+                s.label = label
+                s.labelBackfillStarted = true   // we already tried; events refresh it
+                s.started = proc.started
+                s.stateChanged = proc.started
+                if let host = ClaudeInjector.resolveHostApp(of: proc.pid) {
+                    s.hostPID = host.pid
+                    s.hostBundleID = host.bundleID
+                }
+                self.sessions[id] = s
+            }
+            self.pruneDead()
+            self.persist()
+            self.onChange?(self.ordered)
+        }
+    }
+
     /// Ingest one wrapped hook event: {"event", "tty", "ppid", "tmux", "payload"}.
     func ingest(_ obj: [String: Any]) {
         guard let event = obj["event"] as? String else { return }
@@ -110,6 +173,9 @@ final class ClaudeSessionRegistry {
                 s.hostPID = host.pid
                 s.hostBundleID = host.bundleID
             }
+            // A discovery placeholder for this process is superseded by the
+            // real session the moment it speaks.
+            if sid != "pid-\(ppid)" { sessions.removeValue(forKey: "pid-\(ppid)") }
         }
 
         switch event {
@@ -158,16 +224,18 @@ final class ClaudeSessionRegistry {
             Task.detached(priority: .utility) {
                 let title = Self.titleFromTranscript(transcript)
                 await MainActor.run { [weak self] in
-                    guard let title, var cur = self?.sessions[sid], cur.label.isEmpty else { return }
+                    guard let self, let title, var cur = self.sessions[sid], cur.label.isEmpty else { return }
                     cur.label = title
-                    self?.sessions[sid] = cur
-                    self?.onChange?(self?.ordered ?? [])
+                    self.sessions[sid] = cur
+                    self.persist()
+                    self.onChange?(self.ordered)
                 }
             }
         }
         s.stateChanged = Date()
         sessions[sid] = s
         pruneDead()
+        persist()
         onChange?(ordered)
     }
 
@@ -213,16 +281,101 @@ final class ClaudeSessionRegistry {
     }
 
     /// Drop sessions whose claude process is gone (crash / kill -9 — SessionEnd
-    /// never fired). kill(pid, 0) probes liveness without signaling.
+    /// never fired). kill(pid, 0) probes liveness without signaling. Sessions
+    /// that never reported a pid can't be probed — age those out instead.
     func pruneDead() {
         var changed = false
-        for (sid, s) in sessions where s.claudePID > 0 {
-            if kill(s.claudePID, 0) != 0 && errno == ESRCH {
+        for (sid, s) in sessions {
+            let dead = (s.claudePID > 0 && kill(s.claudePID, 0) != 0 && errno == ESRCH)
+                || (s.claudePID == 0 && s.stateChanged.timeIntervalSinceNow < -12 * 3600)
+            if dead {
                 sessions.removeValue(forKey: sid)
                 changed = true
             }
         }
-        if changed { onChange?(ordered) }
+        if changed {
+            persist()
+            onChange?(ordered)
+        }
+    }
+}
+
+// MARK: - Discovery
+
+/// Finds live `claude` processes the hooks haven't told us about — sessions
+/// that were already running (and silent) when Power Tools started. Both the
+/// terminal CLI and the IDE extension's sidecar run a binary named `claude`.
+enum ClaudeDiscovery {
+    struct Proc {
+        let pid: pid_t
+        let cwd: String
+        let started: Date
+    }
+
+    /// Enumerate running claude processes with their working directory and
+    /// start time. Shells out (ps + lsof), so results come back async on main.
+    nonisolated static func runningSessions(completion: @escaping ([Proc]) -> Void) {
+        DispatchQueue.global(qos: .utility).async {
+            // pid + executable path (no args) — match the binary name exactly.
+            var pids: [pid_t] = []
+            var startDates: [pid_t: Date] = [:]
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.dateFormat = "EEE MMM d HH:mm:ss yyyy"
+            for line in runLines("/bin/ps", ["-axo", "pid=,lstart=,comm="]) {
+                let cols = line.split(separator: " ", omittingEmptySubsequences: true)
+                guard cols.count >= 7, let pid = pid_t(cols[0]) else { continue }
+                let comm = cols[6...].joined(separator: " ")
+                guard comm == "claude" || comm.hasSuffix("/claude") else { continue }
+                pids.append(pid)
+                startDates[pid] = fmt.date(from: cols[1...5].joined(separator: " ")) ?? Date()
+            }
+            guard !pids.isEmpty else { DispatchQueue.main.async { completion([]) }; return }
+            // One lsof call for all pids: cwd per process.
+            var cwds: [pid_t: String] = [:]
+            var current: pid_t = 0
+            for line in runLines("/usr/sbin/lsof", ["-a", "-p", pids.map(String.init).joined(separator: ","), "-d", "cwd", "-Fn"]) {
+                if line.hasPrefix("p"), let pid = pid_t(line.dropFirst()) { current = pid }
+                else if line.hasPrefix("n"), current != 0 { cwds[current] = String(line.dropFirst()) }
+            }
+            let procs = pids.compactMap { pid -> Proc? in
+                guard let cwd = cwds[pid] else { return nil }
+                return Proc(pid: pid, cwd: cwd, started: startDates[pid] ?? Date())
+            }
+            DispatchQueue.main.async { completion(procs) }
+        }
+    }
+
+    /// Transcripts in a project's folder touched since `since` (with slack for
+    /// clock/parse skew) — candidates for which session a silent process is.
+    /// The project folder name is the cwd with every "/" and "." dashed.
+    nonisolated static func transcripts(inProjectFor cwd: String, since: Date) -> [(stem: String, path: String)] {
+        let slug = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects/\(slug)")
+        let cutoff = since.addingTimeInterval(-120)
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        return files.compactMap { url in
+            guard url.pathExtension == "jsonl",
+                  let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                  mtime > cutoff else { return nil }
+            return (url.deletingPathExtension().lastPathComponent, url.path)
+        }
+    }
+
+    nonisolated private static func runLines(_ path: String, _ args: [String]) -> [String] {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        guard (try? p.run()) != nil else { return [] }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+            .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
     }
 }
 
