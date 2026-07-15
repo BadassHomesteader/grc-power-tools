@@ -51,6 +51,9 @@ final class AppController {
     private let readAloud = ReadAloud()
     private let grabAndMove = GrabAndMove()
     private let macroPad = MacroPad()
+    private let agentPad = AgentPad()
+    private let claudeRegistry = ClaudeSessionRegistry()
+    private let hookServer = ClaudeHookServer()
     private lazy var clipboardWatcher = ClipboardHistory(store: store, enabled: config.clipboardHistory)
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
@@ -185,6 +188,8 @@ final class AppController {
                 self.toggleMacroPad()
             case .macroPadDigit(let idx):
                 self.fireMacroPadDigit(idx)
+            case .agentPad:
+                self.toggleAgentPad()
             }
         }
         guard monitor.start() else {
@@ -225,6 +230,29 @@ final class AppController {
         // a failure here is non-fatal (everything else still works).
         grabAndMove.update(enabled: config.grabAndMove, modifiers: config.grabMoveModifiers.flags)
         if !grabAndMove.start() { log("controller: Grab & Move tap unavailable") }
+        // Agent Pad plumbing: the hook server runs whenever the feature is on
+        // (session states accrue even while the panel is closed). Port changes
+        // apply on relaunch; a failed bind is non-fatal.
+        if config.agentPad {
+            hookServer.onEvent = { [weak self] obj in
+                Task { @MainActor in self?.claudeRegistry.ingest(obj) }
+            }
+            hookServer.sessionsJSON = { [weak self] in
+                self?.claudeRegistry.pruneDead()  // a crashed claude never sent SessionEnd
+                let list: [[String: Any]] = (self?.claudeRegistry.ordered ?? []).map { s in
+                    ["id": s.id, "project": s.projectName, "cwd": s.cwd, "tty": s.tty,
+                     "state": s.state.label, "detail": s.detail, "host": s.hostBundleID]
+                }
+                return (try? JSONSerialization.data(withJSONObject: list, options: [.prettyPrinted])) ?? Data("[]".utf8)
+            }
+            claudeRegistry.onChange = { [weak self] sessions in
+                guard let self else { return }
+                self.agentPad.updateSessions(sessions, hooksInstalled: ClaudeHooksInstaller.isInstalled())
+            }
+            if !hookServer.start(port: config.agentPadPort) {
+                log("controller: Agent Pad server couldn't bind 127.0.0.1:\(config.agentPadPort)")
+            }
+        }
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
     }
 
@@ -658,6 +686,94 @@ final class AppController {
         if hasKeywords, !CGPreflightScreenCaptureAccess() {
             _ = CGRequestScreenCaptureAccess()
             overlay.showError("Keyword suggestions need Screen Recording — grant it in Privacy & Security, then quit & reopen")
+        }
+    }
+
+    /// hold + J (or menu bar): toggle the Agent Pad — the floating Claude Code
+    /// session panel. Non-activating like the macro pad, so clicking a row's
+    /// buttons leaves the user's app focused unless the action itself focuses
+    /// a terminal.
+    func toggleAgentPad() {
+        interruptDictation()
+        if agentPad.isVisible { agentPad.dismiss(); return }
+        guard config.agentPad else {
+            overlay.showError("Agent Pad is off — enable agentPad in config.json")
+            return
+        }
+        overlay.hide()
+        claudeRegistry.pruneDead()
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        agentPad.present(
+            sessions: claudeRegistry.ordered, dark: config.appearance.isDark, screen: screen,
+            hotkeyName: config.hotkey.displayName, hooksInstalled: ClaudeHooksInstaller.isInstalled(),
+            onAction: { [weak self] session, action in self?.handleAgentPadAction(session, action) }
+        )
+    }
+
+    private func handleAgentPadAction(_ session: ClaudeSession, _ action: AgentPad.Action) {
+        switch action {
+        case .focus:
+            ClaudeInjector.focus(session)
+        case .accept:
+            ClaudeInjector.sendControl(session, .acceptYes) { [weak self] err in
+                if let err { self?.overlay.showError("Approve failed — \(err)") }
+                else { self?.overlay.showSuccess("Approved · \(session.projectName)") }
+            }
+        case .deny:
+            ClaudeInjector.sendControl(session, .denyEscape) { [weak self] err in
+                if let err { self?.overlay.showError("Deny failed — \(err)") }
+                else { self?.overlay.showResult("Denied · \(session.projectName)") }
+            }
+        case .cycleMode:
+            ClaudeInjector.sendControl(session, .cycleMode) { [weak self] err in
+                if let err { self?.overlay.showError("Mode switch failed — \(err)") }
+            }
+        case .interrupt:
+            ClaudeInjector.sendControl(session, .interrupt) { [weak self] err in
+                if let err { self?.overlay.showError("Interrupt failed — \(err)") }
+                else { self?.overlay.showResult("Interrupted · \(session.projectName)") }
+            }
+        case .prompt:
+            openAgentPrompt(session)
+        }
+    }
+
+    /// The prompt box for a session — the Quick Capture panel, so typing AND
+    /// hold-to-dictate both already work. Submit types the text into the
+    /// session's terminal and presses Return.
+    private func openAgentPrompt(_ session: ClaudeSession) {
+        interruptDictation()
+        overlay.hide()
+        let priorApp = NSWorkspace.shared.frontmostApplication
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        quickCapture.present(
+            dark: config.appearance.isDark, screen: screen, title: "→ \(session.projectName)",
+            onSubmit: { [weak self] text in
+                ClaudeInjector.send(session, text: text) { err in
+                    if let err {
+                        self?.overlay.showError("Send failed — \(err)")
+                    } else {
+                        self?.overlay.showSuccess("Sent → \(session.projectName)")
+                        priorApp?.activate()
+                    }
+                }
+            },
+            onCancel: { priorApp?.activate() }
+        )
+    }
+
+    /// Menu action: merge the Agent Pad hooks into ~/.claude/settings.json.
+    func installClaudeHooks() {
+        do {
+            let summary = try ClaudeHooksInstaller.install(port: config.agentPadPort)
+            overlay.showSuccess("Claude Code hooks installed")
+            log("controller: \(summary)")
+        } catch {
+            overlay.showError("Hook install failed: \(error.localizedDescription)")
         }
     }
 

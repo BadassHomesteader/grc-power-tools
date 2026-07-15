@@ -307,6 +307,12 @@ struct Config: Codable {
     /// dialog needs a beat to open and to filter before Return commits.
     var macroPadStepDelayMs: Int = 350
 
+    /// Agent Pad (hold hotkey + J): floating Claude Code session panel fed by
+    /// hooks POSTing to a loopback server. Port changes need an app relaunch
+    /// AND a hook re-install (the port is baked into the settings.json entries).
+    var agentPad: Bool = true
+    var agentPadPort: Int = 8377
+
     var hotkey: Hotkey = .optionShift
     var polish: PolishMode = .apple
     var localeIdentifier: String = "en_US"
@@ -386,6 +392,7 @@ struct Config: Codable {
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs
+        case agentPad, agentPadPort
         case pronunciations
     }
 
@@ -438,6 +445,8 @@ struct Config: Codable {
         macroPad = field(.macroPad, true)
         macroPadProfiles = field(.macroPadProfiles, [])
         macroPadStepDelayMs = field(.macroPadStepDelayMs, 350)
+        agentPad = field(.agentPad, true)
+        agentPadPort = field(.agentPadPort, 8377)
         pronunciations = field(.pronunciations, [:])
     }
 

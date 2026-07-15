@@ -81,6 +81,7 @@ A new `PadKey` mapping model (extend `MacroButton`/`MacroProfile`): key → acti
 ## Phased plan (minimal first)
 
 1. **Phase 1 — Claude Code control plane, no hardware.** Localhost server + surgical hooks installer + session registry + menu-bar attention states + `PermissionRequest` approve/deny + dictate-into-session via tmux (fallback iTerm2/Terminal). This alone reproduces most of the Codex Micro demo using existing hold-key hotkeys.
+   **✅ Shipped in v1.19.0 as the Agent Pad** (hold hotkey + J): `ClaudeCodeBridge.swift` (loopback hook server + session registry + injector + hooks installer) and `AgentPad.swift` (floating session panel — status, focus, prompt/dictate, ⇧⇥ mode cycle, interrupt, approve/deny). Permission answers use the keystroke path (`Notification` hook + `y`/Esc) rather than the synchronous `PermissionRequest` gate.
 2. **Phase 2 — Tier A pad support.** F13–F24 bindings in the existing tap; pad-key → session/action mapping UI; works with any VIA pad (KB16).
 3. **Phase 3 — Stream Deck + module.** Direct HID; paint per-session status (color + project name + state icon); dials → effort/model/scroll.
 4. **Later, only if demanded:** Tier B generic-keyboard engine; custom QMK raw-HID RGB for the KB16; managed sessions via Agent SDK (`--input-format stream-json`).

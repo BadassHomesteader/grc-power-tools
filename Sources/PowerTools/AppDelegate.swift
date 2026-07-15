@@ -93,6 +93,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let padMenuItem = NSMenuItem(title: "Toggle Macro Pad", action: #selector(toggleMacroPad), keyEquivalent: "b")
         padMenuItem.target = self
         appMenu.addItem(padMenuItem)
+        let agentMenuItem = NSMenuItem(title: "Toggle Agent Pad", action: #selector(toggleAgentPad), keyEquivalent: "j")
+        agentMenuItem.target = self
+        appMenu.addItem(agentMenuItem)
+        let hooksMenuItem = NSMenuItem(title: "Install Claude Code Hooks…", action: #selector(installClaudeHooks), keyEquivalent: "")
+        hooksMenuItem.target = self
+        appMenu.addItem(hooksMenuItem)
         appMenu.addItem(.separator())
         // Close just the focused window (chat/settings); target nil → key window.
         // Distinct from Quit (⌘Q), which shuts down all of Power Tools.
@@ -167,6 +173,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         padItem.target = self
         menu.addItem(padItem)
 
+        let agentItem = NSMenuItem(title: "Agent Pad  (hold \(config.hotkey.displayName) + J)",
+                                   action: #selector(toggleAgentPad), keyEquivalent: "")
+        agentItem.target = self
+        menu.addItem(agentItem)
+        if !ClaudeHooksInstaller.isInstalled() {
+            let hooksItem = NSMenuItem(title: "Install Claude Code Hooks…",
+                                       action: #selector(installClaudeHooks), keyEquivalent: "")
+            hooksItem.target = self
+            menu.addItem(hooksItem)
+        }
+
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -190,6 +207,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleMacroPad() {
         controller?.toggleMacroPad()
+    }
+
+    @objc private func toggleAgentPad() {
+        controller?.toggleAgentPad()
+    }
+
+    @objc private func installClaudeHooks() {
+        // Confirm before touching ~/.claude/settings.json — it's the user's
+        // live Claude Code config (a backup is written either way).
+        let alert = NSAlert()
+        alert.messageText = "Install Claude Code hooks?"
+        alert.informativeText = """
+        Power Tools will merge 6 hook entries into ~/.claude/settings.json so \
+        Claude Code sessions report their status to the Agent Pad. Your existing \
+        hooks are untouched, a backup (settings.json.pt-backup) is written first, \
+        and re-running this replaces only Power Tools' own entries.
+        """
+        alert.addButton(withTitle: "Install")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        controller?.installClaudeHooks()
+        statusItem.menu = buildStatusMenu()  // the install item hides once installed
     }
 
     @objc private func copyHistoryItem(_ sender: NSMenuItem) {

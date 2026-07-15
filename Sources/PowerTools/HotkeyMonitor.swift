@@ -45,6 +45,7 @@ final class HotkeyMonitor {
         case activityMonitor              // ⌃⇧⎋ — open Activity Monitor (Task Manager)
         case macroPad                     // hold + B — toggle the per-app macro pad
         case macroPadDigit(Int)           // hold + 1…9/0 while the pad is open — fire that button
+        case agentPad                     // hold + J — toggle the Claude Code session pad
     }
 
     var handler: ((Callback) -> Void)?
@@ -142,6 +143,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_K: Int64 = 40
     private static let kVK_ANSI_D: Int64 = 2
     private static let kVK_ANSI_B: Int64 = 11
+    private static let kVK_ANSI_J: Int64 = 38
     private static let kVK_ANSI_3: Int64 = 20
     private static let kVK_Tab: Int64 = 48
     private static let kVK_Return: Int64 = 36
@@ -483,6 +485,19 @@ final class HotkeyMonitor {
                 windowMode = true
                 swallowedKeyUps.insert(keyCode)
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.macroPad) }
+                return nil
+            case Self.kVK_ANSI_J:
+                // Agent Pad toggle — same rules as B: a user-assigned Quick
+                // Capture connection on J wins, and auto-repeat must not
+                // re-toggle the panel.
+                if let connId = connectionLeader(for: keyCode) {
+                    log("hotkey: connection leader armed (\(connId))")
+                    pending = .quickCapture(connId); swallowedKeyUps.insert(keyCode)
+                    return nil
+                }
+                windowMode = true
+                swallowedKeyUps.insert(keyCode)
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.agentPad) }
                 return nil
             case Self.kVK_ANSI_3:
                 // Grid draw mode. Enter windowMode so release ends the session (no

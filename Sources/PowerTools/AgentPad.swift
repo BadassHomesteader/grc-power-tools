@@ -1,0 +1,369 @@
+import Cocoa
+
+/// Agent Pad — a virtual Codex Micro for Claude Code. A floating,
+/// NON-ACTIVATING panel (same discipline as MacroPad) listing every live
+/// Claude Code session with its status at a glance: working, idle, needs
+/// permission, needs input, failed. Click a row to focus that session's
+/// terminal; per-row buttons send a prompt (typed or dictated), cycle the
+/// permission/plan mode (⇧⇥), or interrupt (Esc); when a permission dialog
+/// is waiting, the row swaps to Approve / Deny. State arrives via Claude
+/// Code hooks → `ClaudeHookServer` → `ClaudeSessionRegistry`.
+@MainActor
+final class AgentPad {
+    enum Action { case focus, prompt, cycleMode, interrupt, accept, deny }
+
+    private var panel: NSPanel?
+    private var padView: AgentPadView?
+    private var dark = true
+    private var hotkeyName = ""
+    private var hooksInstalled = false
+    private var savedTopLeft: NSPoint?
+    /// Re-render every 30s so the "2m ago" ages and stale states stay honest.
+    private var refreshTimer: Timer?
+    private var sessions: [ClaudeSession] = []
+    private var onAction: ((ClaudeSession, Action) -> Void)?
+
+    var isVisible: Bool { panel != nil }
+
+    func present(sessions: [ClaudeSession], dark: Bool, screen: NSScreen, hotkeyName: String,
+                 hooksInstalled: Bool, onAction: @escaping (ClaudeSession, Action) -> Void) {
+        self.sessions = sessions
+        self.dark = dark
+        self.hotkeyName = hotkeyName
+        self.hooksInstalled = hooksInstalled
+        self.onAction = onAction
+        buildPanel(on: screen)
+        render(on: screen)
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in if let self, self.isVisible { self.render() } }
+        }
+    }
+
+    func dismiss() {
+        if let panel { savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY) }
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+        panel?.orderOut(nil)
+        panel = nil
+        padView = nil
+    }
+
+    /// Live update from the registry (hook events land while the pad is open).
+    func updateSessions(_ sessions: [ClaudeSession], hooksInstalled: Bool) {
+        self.sessions = sessions
+        self.hooksInstalled = hooksInstalled
+        if isVisible { render() }
+    }
+
+    private func buildPanel(on screen: NSScreen) {
+        if panel != nil { return }
+        let view = AgentPadView(dark: dark)
+        view.onRowAction = { [weak self] index, action in
+            guard let self, index < self.sessions.count else { return }
+            self.onAction?(self.sessions[index], action)
+        }
+        view.onClose = { [weak self] in self?.dismiss() }
+        let win = NSPanel(contentRect: NSRect(origin: .zero, size: view.fittingSize),
+                          styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        win.isOpaque = false
+        win.backgroundColor = .clear
+        win.level = .statusBar
+        win.hasShadow = true
+        win.ignoresMouseEvents = false
+        win.becomesKeyOnlyIfNeeded = true
+        win.hidesOnDeactivate = false
+        win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        win.contentView = view
+        panel = win
+        padView = view
+        win.orderFrontRegardless()
+    }
+
+    private func render(on screen: NSScreen? = nil) {
+        guard let panel, let view = padView else { return }
+        view.configure(sessions: sessions, dark: dark, hotkeyName: hotkeyName,
+                       hooksInstalled: hooksInstalled)
+        let size = view.fittingSize
+        view.frame = NSRect(origin: .zero, size: size)
+
+        // Same top-left anchoring as MacroPad so re-renders don't move the pad.
+        let topLeft: NSPoint
+        if let saved = savedTopLeft {
+            topLeft = saved
+        } else if panel.frame.origin == .zero {
+            let vf = (screen ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+            topLeft = NSPoint(x: vf.maxX - size.width - 24, y: vf.midY + size.height / 2)
+        } else {
+            topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        }
+        savedTopLeft = nil
+        var frame = NSRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height)
+        if let vf = (screen ?? panel.screen ?? NSScreen.main)?.visibleFrame {
+            frame.origin.x = min(max(frame.minX, vf.minX + 8), vf.maxX - frame.width - 8)
+            frame.origin.y = min(max(frame.minY, vf.minY + 8), vf.maxY - frame.height - 8)
+        }
+        panel.setFrame(frame, display: true)
+    }
+}
+
+/// The pad canvas: header + one two-line row per session with action buttons.
+/// Same palette and drawing style as MacroPadView so it reads as one system.
+final class AgentPadView: NSView {
+    var onRowAction: ((Int, AgentPad.Action) -> Void)?
+    var onClose: (() -> Void)?
+
+    private var sessions: [ClaudeSession] = []
+    private var dark: Bool
+    private var hotkeyName = ""
+    private var hooksInstalled = true
+    private var hoveredRow: Int?
+    private var hoveredButton: (row: Int, index: Int)?
+    private var pressedRow: Int?
+
+    private static let width: CGFloat = 280
+    private static let pad: CGFloat = 10
+    private static let headerH: CGFloat = 30
+    private static let rowH: CGFloat = 46
+    private static let gap: CGFloat = 5
+    private static let emptyH: CGFloat = 64
+    private static let footerH: CGFloat = 17
+    private static let btnW: CGFloat = 26
+    private static let btnH: CGFloat = 20
+
+    init(dark: Bool) {
+        self.dark = dark
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(sessions: [ClaudeSession], dark: Bool, hotkeyName: String, hooksInstalled: Bool) {
+        self.sessions = sessions
+        self.dark = dark
+        self.hotkeyName = hotkeyName
+        self.hooksInstalled = hooksInstalled
+        hoveredRow = nil
+        hoveredButton = nil
+        pressedRow = nil
+        needsDisplay = true
+    }
+
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override var fittingSize: NSSize {
+        let content = sessions.isEmpty
+            ? Self.emptyH
+            : CGFloat(sessions.count) * Self.rowH + CGFloat(sessions.count - 1) * Self.gap + Self.footerH
+        return NSSize(width: Self.width, height: Self.pad + Self.headerH + content + Self.pad)
+    }
+
+    private var bg: NSColor { dark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 0.98) : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 0.98) }
+    private var fg: NSColor { dark ? .white : .black }
+    private var dim: NSColor { (dark ? NSColor.white : .black).withAlphaComponent(0.5) }
+    private var accent: NSColor { NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1) }
+
+    private static func stateColor(_ state: ClaudeSession.State) -> NSColor {
+        switch state {
+        case .busy: return NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1)
+        case .idle: return NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)
+        case .needsPermission, .needsInput: return NSColor(srgbRed: 1.0, green: 0.65, blue: 0.15, alpha: 1)
+        case .error: return NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
+        }
+    }
+
+    private func rowRect(_ i: Int) -> NSRect {
+        NSRect(x: Self.pad, y: Self.pad + Self.headerH + CGFloat(i) * (Self.rowH + Self.gap),
+               width: Self.width - Self.pad * 2, height: Self.rowH)
+    }
+
+    /// Buttons for row `i`, right-aligned and vertically centered in the row.
+    private func buttons(for session: ClaudeSession) -> [(glyph: String, action: AgentPad.Action, tint: NSColor?)] {
+        if session.state == .needsPermission {
+            return [("✓", .accept, NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)),
+                    ("✕", .deny, NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1))]
+        }
+        return [("✎", .prompt, nil), ("⇆", .cycleMode, nil), ("■", .interrupt, nil)]
+    }
+
+    private func buttonRect(_ row: Int, _ index: Int, count: Int) -> NSRect {
+        let r = rowRect(row)
+        let x = r.maxX - 8 - CGFloat(count - index) * Self.btnW - CGFloat(count - 1 - index) * 4
+        return NSRect(x: x, y: r.midY - Self.btnH / 2, width: Self.btnW, height: Self.btnH)
+    }
+
+    private var closeRect: NSRect { NSRect(x: Self.width - Self.pad - 18, y: Self.pad + 2, width: 18, height: 18) }
+
+    private static func age(_ date: Date) -> String {
+        let s = Int(-date.timeIntervalSinceNow)
+        if s < 60 { return "\(s)s" }
+        if s < 3600 { return "\(s / 60)m" }
+        return "\(s / 3600)h"
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSBezierPath(roundedRect: bounds, xRadius: 14, yRadius: 14).setClip()
+        bg.setFill()
+        bounds.fill()
+
+        ("Claude Code" as NSString).draw(
+            at: NSPoint(x: Self.pad + 4, y: Self.pad + 3),
+            withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg])
+        ("✕" as NSString).draw(in: closeRect.offsetBy(dx: 3, dy: 1), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
+
+        if sessions.isEmpty {
+            let msg = (hooksInstalled
+                ? "No Claude Code sessions.\nStart `claude` in a terminal."
+                : "Hooks not installed.\n⌘ menu ▸ Install Claude Code Hooks") as NSString
+            let p = NSMutableParagraphStyle()
+            p.alignment = .center
+            p.lineSpacing = 3
+            msg.draw(in: NSRect(x: Self.pad, y: Self.pad + Self.headerH + 8,
+                                width: Self.width - Self.pad * 2, height: Self.emptyH),
+                     withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: dim, .paragraphStyle: p])
+            return
+        }
+
+        for (i, session) in sessions.enumerated() {
+            let r = rowRect(i)
+            let path = NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8)
+            if i == pressedRow {
+                accent.withAlphaComponent(0.5).setFill()
+            } else if i == hoveredRow && hoveredButton == nil {
+                accent.withAlphaComponent(0.2).setFill()
+            } else {
+                (dark ? NSColor.white : .black).withAlphaComponent(0.06).setFill()
+            }
+            path.fill()
+            // Attention ring for the states worth glancing at.
+            if session.state == .needsPermission || session.state == .needsInput || session.state == .error {
+                Self.stateColor(session.state).setStroke()
+                path.lineWidth = 1.5
+                path.stroke()
+            }
+
+            // Status dot + project name.
+            let dot = NSRect(x: r.minX + 10, y: r.minY + 12, width: 8, height: 8)
+            Self.stateColor(session.state).setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            let btns = buttons(for: session)
+            let textMaxX = buttonRect(i, 0, count: btns.count).minX - 8
+            (session.projectName as NSString).draw(
+                in: NSRect(x: r.minX + 26, y: r.minY + 6, width: textMaxX - (r.minX + 26), height: 16),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg,
+                                 .paragraphStyle: truncating])
+
+            // Second line: state · age (· tty when two sessions share a project).
+            var line2 = "\(session.state.label) · \(Self.age(session.stateChanged))"
+            if !session.ttyTag.isEmpty,
+               sessions.contains(where: { $0.id != session.id && $0.projectName == session.projectName }) {
+                line2 += " · \(session.ttyTag)"
+            }
+            if !session.detail.isEmpty {
+                let d = session.detail.replacingOccurrences(of: "\n", with: " ")
+                line2 = "\(session.state.label) · \(d)"
+            }
+            (line2 as NSString).draw(
+                in: NSRect(x: r.minX + 26, y: r.minY + 24, width: textMaxX - (r.minX + 26), height: 14),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: dim,
+                                 .paragraphStyle: truncating])
+
+            // Action buttons.
+            for (bi, btn) in btns.enumerated() {
+                let br = buttonRect(i, bi, count: btns.count)
+                let bPath = NSBezierPath(roundedRect: br, xRadius: 5, yRadius: 5)
+                let isHover = hoveredButton?.row == i && hoveredButton?.index == bi
+                if let tint = btn.tint {
+                    tint.withAlphaComponent(isHover ? 0.85 : 0.25).setFill()
+                } else {
+                    (isHover ? accent.withAlphaComponent(0.6)
+                             : (dark ? NSColor.white : .black).withAlphaComponent(0.1)).setFill()
+                }
+                bPath.fill()
+                let glyphColor: NSColor = (isHover || btn.tint != nil) ? (dark ? .white : (isHover ? .white : fg)) : dim
+                let glyph = btn.glyph as NSString
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: glyphColor]
+                let size = glyph.size(withAttributes: attrs)
+                glyph.draw(at: NSPoint(x: br.midX - size.width / 2, y: br.midY - size.height / 2), withAttributes: attrs)
+            }
+        }
+
+        let hint = "click session to focus · hold \(hotkeyName.isEmpty ? "hotkey" : hotkeyName) + J toggles" as NSString
+        let hintAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim.withAlphaComponent(0.35),
+        ]
+        let hintSize = hint.size(withAttributes: hintAttrs)
+        hint.draw(at: NSPoint(x: bounds.midX - hintSize.width / 2, y: bounds.height - Self.pad - 12),
+                  withAttributes: hintAttrs)
+    }
+
+    private var truncating: NSParagraphStyle {
+        let p = NSMutableParagraphStyle()
+        p.lineBreakMode = .byTruncatingTail
+        return p
+    }
+
+    /// Preview hook (agentpad-preview CLI) — set hover state without a mouse.
+    func previewState(hoverRow: Int?, hoverButton: (row: Int, index: Int)?) {
+        hoveredRow = hoverRow
+        hoveredButton = hoverButton
+        needsDisplay = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if closeRect.insetBy(dx: -4, dy: -4).contains(p) { onClose?(); return }
+        for (i, session) in sessions.enumerated() {
+            let btns = buttons(for: session)
+            for bi in btns.indices where buttonRect(i, bi, count: btns.count).insetBy(dx: -2, dy: -2).contains(p) {
+                onRowAction?(i, btns[bi].action)
+                return
+            }
+            if rowRect(i).contains(p) {
+                pressedRow = i
+                needsDisplay = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(140)) { [weak self] in
+                    self?.pressedRow = nil
+                    self?.needsDisplay = true
+                }
+                onRowAction?(i, .focus)
+                return
+            }
+        }
+        window?.performDrag(with: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        var newRow: Int?
+        var newButton: (row: Int, index: Int)?
+        for (i, session) in sessions.enumerated() {
+            let btns = buttons(for: session)
+            for bi in btns.indices where buttonRect(i, bi, count: btns.count).contains(p) {
+                newButton = (i, bi)
+            }
+            if rowRect(i).contains(p) { newRow = i }
+        }
+        if newRow != hoveredRow || newButton?.row != hoveredButton?.row || newButton?.index != hoveredButton?.index {
+            hoveredRow = newRow
+            hoveredButton = newButton
+            needsDisplay = true
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoveredRow = nil
+        hoveredButton = nil
+        needsDisplay = true
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self))
+    }
+}

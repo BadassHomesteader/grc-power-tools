@@ -361,6 +361,84 @@ case "macropad-preview":
         }
     }
 
+case "agentpad-preview":
+    // Offscreen render of the Agent Pad for design checks (fake sessions in
+    // every state; second row hovered).
+    let out = args.count >= 2 ? args[1] : "agentpad-preview.png"
+    let dark = !(args.count >= 3 && args[2] == "light")
+    MainActor.assumeIsolated {
+        func fake(_ id: String, _ cwd: String, _ tty: String, _ state: ClaudeSession.State,
+                  _ detail: String, ageSec: Double) -> ClaudeSession {
+            var s = ClaudeSession(id: id)
+            s.cwd = cwd; s.tty = tty; s.state = state; s.detail = detail
+            s.stateChanged = Date().addingTimeInterval(-ageSec)
+            return s
+        }
+        let sessions = [
+            fake("1", "/Users/dev/gridops-ft-kyaw", "ttys003", .busy, "", ageSec: 45),
+            fake("2", "/Users/dev/grc-power-tools", "ttys005", .needsPermission, "Bash: scripts/bundle.sh", ageSec: 12),
+            fake("3", "/Users/dev/libre-crm-cci", "ttys007", .idle, "", ageSec: 300),
+            fake("4", "/Users/dev/grc-todo", "ttys009", .error, "rate_limit", ageSec: 660),
+        ]
+        let v = AgentPadView(dark: dark)
+        v.configure(sessions: sessions, dark: dark, hotkeyName: "Option + Shift", hooksInstalled: true)
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        v.previewState(hoverRow: 2, hoverButton: nil)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
+case "agentpad-server-test":
+    // Smoke-test the hook pipeline without the UI: start the loopback server +
+    // registry, print session states as events arrive, exit after N seconds.
+    // Feed it with: sh claude-hook.sh SessionStart <port> <<< '<payload json>'
+    // or a direct curl to http://127.0.0.1:<port>/hook.
+    let port = args.count >= 2 ? Int(args[1]) ?? 8377 : 8377
+    let seconds = args.count >= 3 ? Double(args[2]) ?? 10 : 10
+    MainActor.assumeIsolated {
+        let registry = ClaudeSessionRegistry()
+        let server = ClaudeHookServer()
+        registry.onChange = { sessions in
+            for s in sessions {
+                print("SESSION \(s.id) project=\(s.projectName) tty=\(s.tty) state=\(s.state.label) detail=\(s.detail)")
+            }
+            print("---")
+        }
+        server.onEvent = { obj in MainActor.assumeIsolated { registry.ingest(obj) } }
+        guard server.start(port: port) else { print("BIND FAILED on \(port)"); exit(1) }
+        print("listening on 127.0.0.1:\(port) for \(Int(seconds))s")
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        print("done")
+    }
+
+case "claude-hooks":
+    // claude-hooks install|remove|status [--settings <path>] [--port <n>]
+    // Test/admin for the Agent Pad hook entries in ~/.claude/settings.json.
+    var settingsURL = ClaudeHooksInstaller.defaultSettingsURL
+    var port = Config.load().agentPadPort
+    var rest = Array(args.dropFirst(2))
+    while let flag = rest.first {
+        if flag == "--settings", rest.count >= 2 { settingsURL = URL(fileURLWithPath: rest[1]); rest.removeFirst(2) }
+        else if flag == "--port", rest.count >= 2, let p = Int(rest[1]) { port = p; rest.removeFirst(2) }
+        else { rest.removeFirst() }
+    }
+    switch args.count > 1 ? args[1] : "" {
+    case "install":
+        do { print(try ClaudeHooksInstaller.install(port: port, settings: settingsURL)) }
+        catch { print("install failed: \(error.localizedDescription)"); exit(1) }
+    case "remove":
+        do { print(try ClaudeHooksInstaller.remove(settings: settingsURL)) }
+        catch { print("remove failed: \(error.localizedDescription)"); exit(1) }
+    case "status":
+        print(ClaudeHooksInstaller.isInstalled(settings: settingsURL)
+            ? "installed (\(settingsURL.path))" : "not installed (\(settingsURL.path))")
+    default:
+        print("usage: claude-hooks install|remove|status [--settings path] [--port n]"); exit(1)
+    }
+
 case "doctor":
     let report = try! runBlocking { await Doctor.report() }
     print(report)
