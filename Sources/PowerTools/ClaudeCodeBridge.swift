@@ -52,6 +52,11 @@ struct ClaudeSession {
     var state: State = .idle
     /// One-line context for the state ("Bash: rm -rf …" for a permission ask).
     var detail: String = ""
+    /// Human title — the session's first real prompt (IDE tabs all share one
+    /// cwd, so the folder name alone is useless). Backfilled from the
+    /// transcript or captured from UserPromptSubmit.
+    var label: String = ""
+    var labelBackfillStarted = false
     var started = Date()
     var stateChanged = Date()
 
@@ -59,6 +64,8 @@ struct ClaudeSession {
         let name = (cwd as NSString).lastPathComponent
         return name.isEmpty ? "session" : name
     }
+
+    var displayTitle: String { label.isEmpty ? projectName : label }
 
     /// Short tty tag ("s003") to tell two sessions in the same project apart.
     var ttyTag: String {
@@ -137,10 +144,72 @@ final class ClaudeSessionRegistry {
         default:
             break
         }
+        // Title: a fresh UserPromptSubmit carries the prompt directly; anything
+        // else gets a one-time transcript read (covers sessions that were
+        // already running — their first prompt predates our hooks).
+        if s.label.isEmpty, event == "UserPromptSubmit",
+           let prompt = payload["prompt"] as? String,
+           let title = Self.cleanTitle(prompt) {
+            s.label = title
+        }
+        if s.label.isEmpty, !s.labelBackfillStarted,
+           let transcript = payload["transcript_path"] as? String {
+            s.labelBackfillStarted = true
+            Task.detached(priority: .utility) {
+                let title = Self.titleFromTranscript(transcript)
+                await MainActor.run { [weak self] in
+                    guard let title, var cur = self?.sessions[sid], cur.label.isEmpty else { return }
+                    cur.label = title
+                    self?.sessions[sid] = cur
+                    self?.onChange?(self?.ordered ?? [])
+                }
+            }
+        }
         s.stateChanged = Date()
         sessions[sid] = s
         pruneDead()
         onChange?(ordered)
+    }
+
+    /// First usable line of a prompt: skip blanks, slash-command/meta markup
+    /// ("<command-name>…"), and bare URLs (a pasted link says nothing about
+    /// the task — the sentence after it does).
+    nonisolated static func cleanTitle(_ text: String) -> String? {
+        for raw in text.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("<") { continue }
+            if line.range(of: #"^https?://\S+$"#, options: .regularExpression) != nil { continue }
+            if line.range(of: #"^[~/][^ ]*$"#, options: .regularExpression) != nil { continue }  // bare path
+            let collapsed = line.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            return collapsed.count > 60 ? String(collapsed.prefix(57)) + "…" : collapsed
+        }
+        return nil
+    }
+
+    /// Pull a title out of a session transcript (~/.claude/projects/…/<id>.jsonl):
+    /// a stored summary line if one exists, else the first real user message.
+    nonisolated static func titleFromTranscript(_ path: String) -> String? {
+        guard let fh = FileHandle(forReadingAtPath: path),
+              let data = try? fh.read(upToCount: 262_144) else { return nil }
+        try? fh.close()
+        var firstPrompt: String?
+        for lineData in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+            guard let obj = (try? JSONSerialization.jsonObject(with: Data(lineData.utf8))) as? [String: Any]
+            else { continue }
+            let type = obj["type"] as? String
+            if type == "summary", let s = obj["summary"] as? String, let t = cleanTitle(s) {
+                return t   // a compaction summary is the best title there is
+            }
+            guard firstPrompt == nil, type == "user", (obj["isMeta"] as? Bool) != true,
+                  let message = obj["message"] as? [String: Any] else { continue }
+            var text: String?
+            if let s = message["content"] as? String { text = s }
+            else if let parts = message["content"] as? [[String: Any]] {
+                text = parts.first { $0["type"] as? String == "text" }?["text"] as? String
+            }
+            if let text, let t = cleanTitle(text) { firstPrompt = t }
+        }
+        return firstPrompt
     }
 
     /// Drop sessions whose claude process is gone (crash / kill -9 — SessionEnd

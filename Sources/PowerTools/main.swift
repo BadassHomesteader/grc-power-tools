@@ -367,18 +367,18 @@ case "agentpad-preview":
     let out = args.count >= 2 ? args[1] : "agentpad-preview.png"
     let dark = !(args.count >= 3 && args[2] == "light")
     MainActor.assumeIsolated {
-        func fake(_ id: String, _ cwd: String, _ tty: String, _ state: ClaudeSession.State,
+        func fake(_ id: String, _ cwd: String, _ label: String, _ state: ClaudeSession.State,
                   _ detail: String, ageSec: Double) -> ClaudeSession {
             var s = ClaudeSession(id: id)
-            s.cwd = cwd; s.tty = tty; s.state = state; s.detail = detail
+            s.cwd = cwd; s.label = label; s.state = state; s.detail = detail
             s.stateChanged = Date().addingTimeInterval(-ageSec)
             return s
         }
         let sessions = [
-            fake("1", "/Users/dev/gridops-ft-kyaw", "ttys003", .busy, "", ageSec: 45),
-            fake("2", "/Users/dev/grc-power-tools", "ttys005", .needsPermission, "Bash: scripts/bundle.sh", ageSec: 12),
-            fake("3", "/Users/dev/libre-crm-cci", "ttys007", .idle, "", ageSec: 300),
-            fake("4", "/Users/dev/grc-todo", "ttys009", .error, "rate_limit", ageSec: 660),
+            fake("1", "/Users/dev/gridops-ft-kyaw", "Fix the daypart call columns rebuild", .busy, "", ageSec: 45),
+            fake("2", "/Users/dev/grc-power-tools", "Review macropad idea for Power Tools", .needsPermission, "Bash: scripts/bundle.sh", ageSec: 12),
+            fake("3", "/Users/dev/libre-crm-cci", "I need to make a CRM for CCI", .idle, "", ageSec: 300),
+            fake("4", "/Users/dev/grc-todo", "", .error, "rate_limit", ageSec: 660),
         ]
         let v = AgentPadView(dark: dark)
         v.configure(sessions: sessions, dark: dark, hotkeyName: "Option + Shift", hooksInstalled: true)

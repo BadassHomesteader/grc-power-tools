@@ -240,8 +240,8 @@ final class AppController {
             hookServer.sessionsJSON = { [weak self] in
                 self?.claudeRegistry.pruneDead()  // a crashed claude never sent SessionEnd
                 let list: [[String: Any]] = (self?.claudeRegistry.ordered ?? []).map { s in
-                    ["id": s.id, "project": s.projectName, "cwd": s.cwd, "tty": s.tty,
-                     "state": s.state.label, "detail": s.detail, "host": s.hostBundleID]
+                    ["id": s.id, "title": s.displayTitle, "project": s.projectName, "cwd": s.cwd,
+                     "tty": s.tty, "state": s.state.label, "detail": s.detail, "host": s.hostBundleID]
                 }
                 return (try? JSONSerialization.data(withJSONObject: list, options: [.prettyPrinted])) ?? Data("[]".utf8)
             }

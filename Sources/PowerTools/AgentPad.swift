@@ -121,7 +121,7 @@ final class AgentPadView: NSView {
     private var hoveredButton: (row: Int, index: Int)?
     private var pressedRow: Int?
 
-    private static let width: CGFloat = 280
+    private static let width: CGFloat = 320
     private static let pad: CGFloat = 10
     private static let headerH: CGFloat = 30
     private static let rowH: CGFloat = 46
@@ -249,15 +249,18 @@ final class AgentPadView: NSView {
             NSBezierPath(ovalIn: dot).fill()
             let btns = buttons(for: session)
             let textMaxX = buttonRect(i, 0, count: btns.count).minX - 8
-            (session.projectName as NSString).draw(
+            (session.displayTitle as NSString).draw(
                 in: NSRect(x: r.minX + 26, y: r.minY + 6, width: textMaxX - (r.minX + 26), height: 16),
                 withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg,
                                  .paragraphStyle: truncating])
 
-            // Second line: state · age (· tty when two sessions share a project).
+            // Second line: state · age · project (the project folder moves down
+            // here once the title is the prompt; tty tag disambiguates twins).
             var line2 = "\(session.state.label) · \(Self.age(session.stateChanged))"
-            if !session.ttyTag.isEmpty,
-               sessions.contains(where: { $0.id != session.id && $0.projectName == session.projectName }) {
+            if !session.label.isEmpty {
+                line2 += " · \(session.projectName)"
+            } else if !session.ttyTag.isEmpty,
+                      sessions.contains(where: { $0.id != session.id && $0.projectName == session.projectName }) {
                 line2 += " · \(session.ttyTag)"
             }
             if !session.detail.isEmpty {
