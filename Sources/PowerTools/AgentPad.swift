@@ -24,6 +24,11 @@ final class AgentPad: NSObject {
     private var hotkeyName = ""
     private var hooksInstalled = false
     private var savedTopLeft: NSPoint?
+    /// Traffic-light mode: the header "–" collapses the pad to a strip of
+    /// status squares; hovering the strip peeks the full pad, leaving it
+    /// drops back to the strip. ✕ / hotkey dismiss resets to full.
+    private var miniPreferred = false
+    private var miniActive = false
     /// Re-render every 10s so the "2m ago" ages and stale states stay honest.
     private var refreshTimer: Timer?
     /// Fired on that same tick — the controller re-runs discovery so IDE tab
@@ -78,6 +83,8 @@ final class AgentPad: NSObject {
         panel?.orderOut(nil)
         panel = nil
         padView = nil
+        miniPreferred = false
+        miniActive = false
     }
 
     /// Live update from the registry (hook events land while the pad is open).
@@ -99,6 +106,22 @@ final class AgentPad: NSObject {
             self.showRowMenu(for: self.sessions[index], with: event)
         }
         view.onClose = { [weak self] in self?.dismiss() }
+        view.onMinimize = { [weak self] in
+            guard let self else { return }
+            self.miniPreferred = true
+            self.miniActive = true
+            self.render()
+        }
+        view.onExpand = { [weak self] in
+            guard let self, self.miniActive else { return }
+            self.miniActive = false
+            self.render()
+        }
+        view.onCollapse = { [weak self] in
+            guard let self, self.miniPreferred, !self.miniActive else { return }
+            self.miniActive = true
+            self.render()
+        }
         let win = NSPanel(contentRect: NSRect(origin: .zero, size: view.fittingSize),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         win.isOpaque = false
@@ -169,7 +192,7 @@ final class AgentPad: NSObject {
     private func render(on screen: NSScreen? = nil) {
         guard let panel, let view = padView else { return }
         view.configure(sessions: sessions, dark: dark, hotkeyName: hotkeyName,
-                       hooksInstalled: hooksInstalled)
+                       hooksInstalled: hooksInstalled, mini: miniActive)
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
 
@@ -200,9 +223,13 @@ final class AgentPadView: NSView {
     var onRowAction: ((Int, AgentPad.Action) -> Void)?
     var onRowMenu: ((Int, NSEvent) -> Void)?
     var onClose: (() -> Void)?
+    var onMinimize: (() -> Void)?
+    var onExpand: (() -> Void)?
+    var onCollapse: (() -> Void)?
 
     private var sessions: [ClaudeSession] = []
     private var dark: Bool
+    private var mini = false
     private var hotkeyName = ""
     private var hooksInstalled = true
     private var hoveredRow: Int?
@@ -220,6 +247,9 @@ final class AgentPadView: NSView {
     private static let footerH: CGFloat = 30
     private static let btnW: CGFloat = 26
     private static let btnH: CGFloat = 20
+    private static let sq: CGFloat = 14      // traffic-light square
+    private static let sqGap: CGFloat = 4
+    private static let miniPad: CGFloat = 7
 
     init(dark: Bool) {
         self.dark = dark
@@ -227,9 +257,11 @@ final class AgentPadView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(sessions: [ClaudeSession], dark: Bool, hotkeyName: String, hooksInstalled: Bool) {
+    func configure(sessions: [ClaudeSession], dark: Bool, hotkeyName: String, hooksInstalled: Bool,
+                   mini: Bool = false) {
         self.sessions = sessions
         self.dark = dark
+        self.mini = mini
         self.hotkeyName = hotkeyName
         self.hooksInstalled = hooksInstalled
         hoveredRow = nil
@@ -243,6 +275,11 @@ final class AgentPadView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override var fittingSize: NSSize {
+        if mini {
+            let n = CGFloat(max(sessions.count, 1))
+            return NSSize(width: Self.miniPad * 2 + n * Self.sq + (n - 1) * Self.sqGap,
+                          height: Self.miniPad * 2 + Self.sq)
+        }
         let content = sessions.isEmpty
             ? Self.emptyH
             : sessions.indices.reduce(0) { $0 + rowHeight($1) } + CGFloat(sessions.count - 1) * Self.gap + Self.footerH
@@ -298,6 +335,7 @@ final class AgentPadView: NSView {
     }
 
     private var closeRect: NSRect { NSRect(x: Self.width - Self.pad - 18, y: Self.pad + 2, width: 18, height: 18) }
+    private var minimizeRect: NSRect { NSRect(x: closeRect.minX - 22, y: Self.pad + 2, width: 18, height: 18) }
 
     /// The per-row ✕ (close a stale chat), top-right corner of the row.
     private func rowCloseRect(_ i: Int) -> NSRect {
@@ -313,9 +351,37 @@ final class AgentPadView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSBezierPath(roundedRect: bounds, xRadius: 14, yRadius: 14).setClip()
+        NSBezierPath(roundedRect: bounds, xRadius: mini ? 9 : 14, yRadius: mini ? 9 : 14).setClip()
         bg.setFill()
         bounds.fill()
+
+        // Traffic lights: one status square per session, most urgent leftmost
+        // (same triage order as the rows). Hover expands to the full pad.
+        if mini {
+            if sessions.isEmpty {
+                dim.withAlphaComponent(0.3).setFill()
+                NSBezierPath(roundedRect: NSRect(x: Self.miniPad, y: Self.miniPad,
+                                                 width: Self.sq, height: Self.sq),
+                             xRadius: 4, yRadius: 4).fill()
+                return
+            }
+            for (i, session) in sessions.enumerated() {
+                let r = NSRect(x: Self.miniPad + CGFloat(i) * (Self.sq + Self.sqGap),
+                               y: Self.miniPad, width: Self.sq, height: Self.sq)
+                let stale = session.state == .idle
+                    && session.stateChanged.timeIntervalSinceNow < -3600
+                Self.stateColor(session.state).withAlphaComponent(stale ? 0.35 : 0.9).setFill()
+                let path = NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4)
+                path.fill()
+                if session.state == .needsPermission || session.state == .needsInput
+                    || session.state == .unseen || session.state == .error {
+                    fg.withAlphaComponent(0.9).setStroke()
+                    path.lineWidth = 1.5
+                    path.stroke()
+                }
+            }
+            return
+        }
 
         let titleAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg]
@@ -340,6 +406,8 @@ final class AgentPadView: NSView {
             }
         }
         ("✕" as NSString).draw(in: closeRect.offsetBy(dx: 3, dy: 1), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
+        ("–" as NSString).draw(in: minimizeRect.offsetBy(dx: 4, dy: 1), withAttributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
 
         if sessions.isEmpty {
@@ -480,8 +548,10 @@ final class AgentPadView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if mini { window?.performDrag(with: event); return }
         let p = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -4, dy: -4).contains(p) { onClose?(); return }
+        if minimizeRect.insetBy(dx: -4, dy: -4).contains(p) { onMinimize?(); return }
         for (i, session) in sessions.enumerated() {
             if rowCloseRect(i).insetBy(dx: -3, dy: -3).contains(p) {
                 onRowAction?(i, .closeChat)
@@ -516,6 +586,7 @@ final class AgentPadView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        if mini { onExpand?(); return }
         let p = convert(event.locationInWindow, from: nil)
         let newRow = sessions.indices.first { rowRect($0).contains(p) }
         var newButton: (row: Int, index: Int)?
@@ -545,6 +616,7 @@ final class AgentPadView: NSView {
         hoveredButton = nil
         hoveredCloseRow = nil
         needsDisplay = true
+        if !mini { onCollapse?() }   // no-op unless this pad lives in mini mode
     }
 
     override func updateTrackingAreas() {

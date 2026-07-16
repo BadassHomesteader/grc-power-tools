@@ -363,9 +363,10 @@ case "macropad-preview":
 
 case "agentpad-preview":
     // Offscreen render of the Agent Pad for design checks (fake sessions in
-    // every state; second row hovered).
+    // every state; second row hovered). Flags: "light", "mini" (traffic strip).
     let out = args.count >= 2 ? args[1] : "agentpad-preview.png"
-    let dark = !(args.count >= 3 && args[2] == "light")
+    let dark = !args.contains("light")
+    let mini = args.contains("mini")
     MainActor.assumeIsolated {
         func fake(_ id: String, _ cwd: String, _ label: String, _ state: ClaudeSession.State,
                   _ detail: String, ageSec: Double) -> ClaudeSession {
@@ -382,9 +383,10 @@ case "agentpad-preview":
             fake("5", "/Users/dev/gridops-ft-njaw", "Reconcile the corr-index blanks", .idle, "", ageSec: 90_000),
         ])
         let v = AgentPadView(dark: dark)
-        v.configure(sessions: sessions, dark: dark, hotkeyName: "Option + Shift", hooksInstalled: true)
+        v.configure(sessions: sessions, dark: dark, hotkeyName: "Option + Shift", hooksInstalled: true,
+                    mini: mini)
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
-        v.previewState(hoverRow: 2, hoverButton: nil)
+        if !mini { v.previewState(hoverRow: 2, hoverButton: nil) }
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
         v.cacheDisplay(in: v.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {
