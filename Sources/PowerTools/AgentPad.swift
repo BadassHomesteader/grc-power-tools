@@ -277,8 +277,8 @@ final class AgentPadView: NSView {
     override var fittingSize: NSSize {
         if mini {
             let n = CGFloat(max(sessions.count, 1))
-            return NSSize(width: Self.miniPad * 2 + n * Self.sq + (n - 1) * Self.sqGap,
-                          height: Self.miniPad * 2 + Self.sq)
+            return NSSize(width: Self.miniPad * 2 + Self.sq,
+                          height: Self.miniPad * 2 + n * Self.sq + (n - 1) * Self.sqGap)
         }
         let content = sessions.isEmpty
             ? Self.emptyH
@@ -355,8 +355,9 @@ final class AgentPadView: NSView {
         bg.setFill()
         bounds.fill()
 
-        // Traffic lights: one status square per session, most urgent leftmost
-        // (same triage order as the rows). Hover expands to the full pad.
+        // Traffic lights: one status square per session, stacked vertically in
+        // the same triage order as the rows (most urgent on top), so each
+        // light sits where its row lands when hover expands the full pad.
         if mini {
             if sessions.isEmpty {
                 dim.withAlphaComponent(0.3).setFill()
@@ -366,8 +367,8 @@ final class AgentPadView: NSView {
                 return
             }
             for (i, session) in sessions.enumerated() {
-                let r = NSRect(x: Self.miniPad + CGFloat(i) * (Self.sq + Self.sqGap),
-                               y: Self.miniPad, width: Self.sq, height: Self.sq)
+                let r = NSRect(x: Self.miniPad, y: Self.miniPad + CGFloat(i) * (Self.sq + Self.sqGap),
+                               width: Self.sq, height: Self.sq)
                 let stale = session.state == .idle
                     && session.stateChanged.timeIntervalSinceNow < -3600
                 Self.stateColor(session.state).withAlphaComponent(stale ? 0.35 : 0.9).setFill()
