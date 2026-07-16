@@ -720,6 +720,7 @@ final class AppController {
         switch action {
         case .focus:
             ClaudeInjector.focus(session)
+            overlay.showResult("→ \(session.projectName)")
         case .accept:
             ClaudeInjector.sendControl(session, .acceptYes) { [weak self] err in
                 if let err { self?.overlay.showError("Approve failed — \(err)") }

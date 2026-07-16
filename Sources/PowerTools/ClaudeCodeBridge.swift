@@ -698,8 +698,42 @@ enum ClaudeInjector {
             runAppleScript(selectTerminalTabScript(tty: s.tty)) { _ in }
             return
         }
-        if s.hostPID > 0, let app = NSRunningApplication(processIdentifier: s.hostPID) {
-            app.activate()
+        var app = s.hostPID > 0 ? NSRunningApplication(processIdentifier: s.hostPID) : nil
+        if app == nil, !s.hostBundleID.isEmpty {
+            app = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == s.hostBundleID }
+        }
+        guard let app else { return }
+        raiseWindow(titledWith: s.projectName, in: app.processIdentifier)
+        app.activate()
+    }
+
+    /// Bring the IDE window whose title carries this workspace folder to the
+    /// front of its app (titles look like "Code — <active tab>"). Electron
+    /// hides its tab strip from AX (verified: only AXWindow/AXRaise are
+    /// exposed), so the window is the finest grain we can steer — selecting
+    /// the session's tab inside it stays manual.
+    private static func raiseWindow(titledWith project: String, in pid: pid_t) {
+        guard !project.isEmpty, AXIsProcessTrusted() else { return }
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid),
+                                            kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement] else { return }
+        for window in windows {
+            var t: CFTypeRef?
+            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &t)
+            guard let title = t as? String else { continue }
+            // "<folder> — <tab>" or "<tab> — <folder>", with a possible dirty
+            // dot — match any exact " — " segment against the folder name.
+            let segments = title.replacingOccurrences(of: "●", with: "")
+                .components(separatedBy: "—").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard segments.contains(project) else { continue }
+            var minimized: CFTypeRef?
+            AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized)
+            if (minimized as? Bool) == true {
+                AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+            }
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+            return
         }
     }
 
