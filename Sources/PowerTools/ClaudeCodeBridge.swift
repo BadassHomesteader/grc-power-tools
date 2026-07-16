@@ -116,37 +116,75 @@ final class ClaudeSessionRegistry {
     /// keyed "pid-N" and upgrades in place on its first hook event.
     func refreshDiscovered() {
         ClaudeDiscovery.runningSessions { [weak self] procs in
-            guard let self else { return }
-            for proc in procs {
-                // cwd "/" is the extension's utility process, not a chat session.
-                if proc.cwd == "/" { continue }
-                if self.sessions.values.contains(where: { $0.claudePID == proc.pid }) { continue }
-                var id = "pid-\(proc.pid)"
-                var label = ""
-                let known = Set(self.sessions.keys)
-                let candidates = ClaudeDiscovery.transcripts(inProjectFor: proc.cwd, since: proc.started)
-                    .filter { !known.contains($0.stem) }
-                if candidates.count == 1, let only = candidates.first {
-                    id = only.stem
-                    label = Self.titleFromTranscript(only.path) ?? ""
+            // The log parse is file IO — off the main thread, then apply.
+            DispatchQueue.global(qos: .utility).async {
+                let tabs = ClaudeDiscovery.ideTabSessions()
+                DispatchQueue.main.async { [weak self] in
+                    self?.applyDiscovery(procs: procs, tabs: tabs)
                 }
-                var s = ClaudeSession(id: id)
-                s.cwd = proc.cwd
-                s.claudePID = proc.pid
-                s.label = label
-                s.labelBackfillStarted = true   // we already tried; events refresh it
-                s.started = proc.started
-                s.stateChanged = proc.started
-                if let host = ClaudeInjector.resolveHostApp(of: proc.pid) {
-                    s.hostPID = host.pid
-                    s.hostBundleID = host.bundleID
-                }
-                self.sessions[id] = s
             }
-            self.pruneDead()
-            self.persist()
-            self.onChange?(self.ordered)
         }
+    }
+
+    private func applyDiscovery(procs: [ClaudeDiscovery.Proc], tabs: [(id: String, title: String)]) {
+        for proc in procs {
+            // cwd "/" is the extension's utility process, not a chat session.
+            if proc.cwd == "/" { continue }
+            if sessions.values.contains(where: { $0.claudePID == proc.pid }) { continue }
+            var id = "pid-\(proc.pid)"
+            var label = ""
+            let known = Set(sessions.keys)
+            let candidates = ClaudeDiscovery.transcripts(inProjectFor: proc.cwd, since: proc.started)
+                .filter { !known.contains($0.stem) }
+            if candidates.count == 1, let only = candidates.first {
+                id = only.stem
+                label = Self.titleFromTranscript(only.path) ?? ""
+            }
+            var s = ClaudeSession(id: id)
+            s.cwd = proc.cwd
+            s.claudePID = proc.pid
+            s.label = label
+            s.labelBackfillStarted = true   // we already tried; events refresh it
+            s.started = proc.started
+            s.stateChanged = proc.started
+            if let host = ClaudeInjector.resolveHostApp(of: proc.pid) {
+                s.hostPID = host.pid
+                s.hostBundleID = host.bundleID
+            }
+            sessions[id] = s
+        }
+
+        // Tab titles from the IDE extension log are canonical — they're what
+        // the user actually sees in the tab strip; overwrite heuristic labels.
+        for (sid, title) in tabs {
+            if var s = sessions[sid], s.label != title {
+                s.label = title
+                sessions[sid] = s
+            }
+        }
+
+        // Placeholder adoption: an IDE-hosted process can't reveal its session
+        // id, but the log knows which tabs exist. Pair the newest placeholders
+        // with the most recently active unclaimed tabs — if a pairing is ever
+        // wrong, the row self-corrects on that session's next hook event.
+        let terminalHosts = ["com.apple.Terminal", "com.googlecode.iterm2"]
+        var unclaimed = tabs.reversed().filter { sessions[$0.id] == nil }
+        let placeholders = sessions.values
+            .filter { $0.id.hasPrefix("pid-") && !terminalHosts.contains($0.hostBundleID) }
+            .sorted { $0.started > $1.started }
+        for ph in placeholders {
+            guard let tab = unclaimed.first else { break }
+            unclaimed.removeFirst()
+            var s = ph
+            s.id = tab.id
+            s.label = tab.title
+            sessions.removeValue(forKey: ph.id)
+            sessions[tab.id] = s
+        }
+
+        pruneDead()
+        persist()
+        onChange?(ordered)
     }
 
     /// Ingest one wrapped hook event: {"event", "tty", "ppid", "tmux", "payload"}.
@@ -364,7 +402,51 @@ enum ClaudeDiscovery {
         }
     }
 
-    nonisolated private static func runLines(_ path: String, _ args: [String]) -> [String] {
+    /// Canonical tab titles: the IDE extension logs `rename_session` /
+    /// `update_session_state` webview messages carrying sessionId + the exact
+    /// tab title. Returned oldest→newest by last appearance, so callers can
+    /// pair the most recent tabs first. Covers Antigravity + VS Code + Cursor.
+    nonisolated static func ideTabSessions() -> [(id: String, title: String)] {
+        var titles: [String: String] = [:]
+        var order: [String] = []
+        let fm = FileManager.default
+        let appSupport = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        for app in ["Antigravity IDE", "Code", "Cursor"] {
+            let logsRoot = appSupport.appendingPathComponent("\(app)/logs")
+            guard let launches = try? fm.contentsOfDirectory(atPath: logsRoot.path) else { continue }
+            // Launch dirs are timestamp-named; open tabs re-announce themselves
+            // after an IDE restart, so the two newest launches cover reloads.
+            for launch in launches.sorted().suffix(2) {
+                let launchDir = logsRoot.appendingPathComponent(launch)
+                let windows = (try? fm.contentsOfDirectory(atPath: launchDir.path)) ?? []
+                for w in windows where w.hasPrefix("window") {
+                    let logPath = launchDir.appendingPathComponent("\(w)/exthost/Anthropic.claude-code/Claude VSCode.log").path
+                    guard let fh = FileHandle(forReadingAtPath: logPath) else { continue }
+                    // Titles repeat on every state change — the tail is plenty.
+                    let size = (try? fh.seekToEnd()) ?? 0
+                    try? fh.seek(toOffset: size > 2_097_152 ? size - 2_097_152 : 0)
+                    let data = (try? fh.readToEnd()) ?? Data()
+                    try? fh.close()
+                    for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+                        guard line.contains("rename_session") || line.contains("update_session_state"),
+                              let sid = Self.sidRegex.capture(line),
+                              let raw = Self.titleRegex.capture(line),
+                              let title = try? JSONDecoder().decode(String.self, from: Data("\"\(raw)\"".utf8)),
+                              !title.isEmpty else { continue }
+                        titles[sid] = title
+                        order.removeAll { $0 == sid }
+                        order.append(sid)
+                    }
+                }
+            }
+        }
+        return order.map { ($0, titles[$0] ?? "") }
+    }
+
+    nonisolated private static let sidRegex = try! NSRegularExpression(pattern: #""sessionId":"([0-9a-fA-F-]{36})""#)
+    nonisolated private static let titleRegex = try! NSRegularExpression(pattern: #""title":"((?:[^"\\]|\\.)*)""#)
+
+    nonisolated fileprivate static func runLines(_ path: String, _ args: [String]) -> [String] {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = args
@@ -376,6 +458,16 @@ enum ClaudeDiscovery {
         p.waitUntilExit()
         return String(decoding: data, as: UTF8.self)
             .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+}
+
+private extension NSRegularExpression {
+    /// First capture group of the first match, or nil.
+    func capture(_ line: Substring) -> String? {
+        let s = String(line)
+        guard let m = firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+              m.numberOfRanges > 1, let r = Range(m.range(at: 1), in: s) else { return nil }
+        return String(s[r])
     }
 }
 

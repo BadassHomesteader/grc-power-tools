@@ -9,8 +9,12 @@ import Cocoa
 /// is waiting, the row swaps to Approve / Deny. State arrives via Claude
 /// Code hooks → `ClaudeHookServer` → `ClaudeSessionRegistry`.
 @MainActor
-final class AgentPad {
-    enum Action { case focus, prompt, cycleMode, interrupt, accept, deny }
+final class AgentPad: NSObject {
+    enum Action {
+        case focus, prompt, cycleMode, interrupt, accept, deny
+        case setModel(String)   // sends "/model <alias>" into the session
+        case modelPicker        // focuses the session and opens /model (effort lives there)
+    }
 
     private var panel: NSPanel?
     private var padView: AgentPadView?
@@ -63,6 +67,10 @@ final class AgentPad {
             guard let self, index < self.sessions.count else { return }
             self.onAction?(self.sessions[index], action)
         }
+        view.onRowMenu = { [weak self] index, event in
+            guard let self, index < self.sessions.count else { return }
+            self.showRowMenu(for: self.sessions[index], with: event)
+        }
         view.onClose = { [weak self] in self?.dismiss() }
         let win = NSPanel(contentRect: NSRect(origin: .zero, size: view.fittingSize),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -78,6 +86,48 @@ final class AgentPad {
         panel = win
         padView = view
         win.orderFrontRegardless()
+    }
+
+    // MARK: Row context menu — model / effort per conversation
+
+    /// The session the open context menu refers to (menus outlive the render
+    /// cycle, so the row index can't be trusted at action time).
+    private var menuSession: ClaudeSession?
+
+    private func showRowMenu(for session: ClaudeSession, with event: NSEvent) {
+        menuSession = session
+        let menu = NSMenu()
+        let header = NSMenuItem(title: session.displayTitle, action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(.separator())
+        for (title, alias) in [("Switch to Opus 4.8", "opus"),
+                               ("Switch to Sonnet 5", "sonnet"),
+                               ("Switch to Haiku 4.5", "haiku")] {
+            let item = NSMenuItem(title: title, action: #selector(menuSetModel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = alias
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        // Effort has no text command — it lives inside the /model dialog, so
+        // open that in the session and let arrow keys take it from there.
+        let picker = NSMenuItem(title: "Model & Effort Picker…", action: #selector(menuOpenPicker(_:)), keyEquivalent: "")
+        picker.target = self
+        menu.addItem(picker)
+        if let view = padView {
+            menu.popUp(positioning: nil, at: view.convert(event.locationInWindow, from: nil), in: view)
+        }
+    }
+
+    @objc private func menuSetModel(_ sender: NSMenuItem) {
+        guard let session = menuSession, let alias = sender.representedObject as? String else { return }
+        onAction?(session, .setModel(alias))
+    }
+
+    @objc private func menuOpenPicker(_ sender: NSMenuItem) {
+        guard let session = menuSession else { return }
+        onAction?(session, .modelPicker)
     }
 
     private func render(on screen: NSScreen? = nil) {
@@ -111,6 +161,7 @@ final class AgentPad {
 /// Same palette and drawing style as MacroPadView so it reads as one system.
 final class AgentPadView: NSView {
     var onRowAction: ((Int, AgentPad.Action) -> Void)?
+    var onRowMenu: ((Int, NSEvent) -> Void)?
     var onClose: (() -> Void)?
 
     private var sessions: [ClaudeSession] = []
@@ -163,11 +214,13 @@ final class AgentPadView: NSView {
     private var dim: NSColor { (dark ? NSColor.white : .black).withAlphaComponent(0.5) }
     private var accent: NSColor { NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1) }
 
+    /// Claude Code's own signal palette: terracotta (the tab-strip attention
+    /// dot / Claude mark) for needs-you states, blue for a running turn.
     private static func stateColor(_ state: ClaudeSession.State) -> NSColor {
         switch state {
-        case .busy: return NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1)
+        case .busy: return NSColor(srgbRed: 0.25, green: 0.55, blue: 0.95, alpha: 1)
         case .idle: return NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)
-        case .needsPermission, .needsInput: return NSColor(srgbRed: 1.0, green: 0.65, blue: 0.15, alpha: 1)
+        case .needsPermission, .needsInput: return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
         case .error: return NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
         }
     }
@@ -293,7 +346,7 @@ final class AgentPadView: NSView {
             }
         }
 
-        let hint = "click session to focus · hold \(hotkeyName.isEmpty ? "hotkey" : hotkeyName) + J toggles" as NSString
+        let hint = "click = focus · right-click = model/effort · hold \(hotkeyName.isEmpty ? "hotkey" : hotkeyName) + J" as NSString
         let hintAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim.withAlphaComponent(0.35),
         ]
@@ -336,6 +389,13 @@ final class AgentPadView: NSView {
             }
         }
         window?.performDrag(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if let i = sessions.indices.first(where: { rowRect($0).contains(p) }) {
+            onRowMenu?(i, event)
+        }
     }
 
     override func mouseMoved(with event: NSEvent) {

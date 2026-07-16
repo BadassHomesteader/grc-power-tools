@@ -740,6 +740,18 @@ final class AppController {
             }
         case .prompt:
             openAgentPrompt(session)
+        case .setModel(let alias):
+            ClaudeInjector.send(session, text: "/model \(alias)") { [weak self] err in
+                if let err { self?.overlay.showError("Model switch failed — \(err)") }
+                else { self?.overlay.showSuccess("/model \(alias) → \(session.projectName)") }
+            }
+        case .modelPicker:
+            // The /model dialog carries the effort selector; put the session in
+            // front so the arrow keys land in it.
+            ClaudeInjector.focus(session)
+            ClaudeInjector.send(session, text: "/model") { [weak self] err in
+                if let err { self?.overlay.showError("Couldn't open the picker — \(err)") }
+            }
         }
     }
 
