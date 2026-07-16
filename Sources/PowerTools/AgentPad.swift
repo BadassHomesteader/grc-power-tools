@@ -153,8 +153,10 @@ final class AgentPad: NSObject {
         view.onClose = { [weak self] in self?.dismiss() }
         view.onMinimize = { [weak self] in
             guard let self else { return }
-            self.miniPreferred = true
-            self.miniActive = true
+            // Toggle: from full → traffic lights; from a peeked pad (hover-
+            // expanded strip) → pin it back to full-time.
+            self.miniPreferred.toggle()
+            self.miniActive = self.miniPreferred
             self.render()
         }
         view.onExpand = { [weak self] in
@@ -238,7 +240,8 @@ final class AgentPad: NSObject {
     private func render(on screen: NSScreen? = nil) {
         guard let panel, let view = padView else { return }
         view.configure(sessions: sessions, dark: dark, hotkeyName: hotkeyName,
-                       hooksInstalled: hooksInstalled, mini: miniActive)
+                       hooksInstalled: hooksInstalled, mini: miniActive,
+                       peeking: miniPreferred && !miniActive)
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
 
@@ -286,6 +289,7 @@ final class AgentPadView: NSView {
     private var sessions: [ClaudeSession] = []
     private var dark: Bool
     private var mini = false
+    private var peeking = false   // hover-expanded from the strip; – becomes □
     private var hotkeyName = ""
     private var hooksInstalled = true
     private var hoveredRow: Int?
@@ -314,10 +318,11 @@ final class AgentPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(sessions: [ClaudeSession], dark: Bool, hotkeyName: String, hooksInstalled: Bool,
-                   mini: Bool = false) {
+                   mini: Bool = false, peeking: Bool = false) {
         self.sessions = sessions
         self.dark = dark
         self.mini = mini
+        self.peeking = peeking
         self.hotkeyName = hotkeyName
         self.hooksInstalled = hooksInstalled
         hoveredRow = nil
@@ -464,7 +469,8 @@ final class AgentPadView: NSView {
         }
         ("✕" as NSString).draw(in: closeRect.offsetBy(dx: 3, dy: 1), withAttributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
-        ("–" as NSString).draw(in: minimizeRect.offsetBy(dx: 4, dy: 1), withAttributes: [
+        // – collapses to traffic lights; □ (while peeking) pins full mode back.
+        ((peeking ? "□" : "–") as NSString).draw(in: minimizeRect.offsetBy(dx: 4, dy: 1), withAttributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
 
         if sessions.isEmpty {
