@@ -213,7 +213,8 @@ final class AgentPadView: NSView {
     private static let width: CGFloat = 224
     private static let pad: CGFloat = 10
     private static let headerH: CGFloat = 30
-    private static let rowH: CGFloat = 68
+    private static let rowH: CGFloat = 46        // resting: title + state line
+    private static let rowHTall: CGFloat = 68    // needs-permission: ✓/✕ get their own line
     private static let gap: CGFloat = 5
     private static let emptyH: CGFloat = 64
     private static let footerH: CGFloat = 30
@@ -244,7 +245,7 @@ final class AgentPadView: NSView {
     override var fittingSize: NSSize {
         let content = sessions.isEmpty
             ? Self.emptyH
-            : CGFloat(sessions.count) * Self.rowH + CGFloat(sessions.count - 1) * Self.gap + Self.footerH
+            : sessions.indices.reduce(0) { $0 + rowHeight($1) } + CGFloat(sessions.count - 1) * Self.gap + Self.footerH
         return NSSize(width: Self.width, height: Self.pad + Self.headerH + content + Self.pad)
     }
 
@@ -264,12 +265,24 @@ final class AgentPadView: NSView {
         }
     }
 
-    private func rowRect(_ i: Int) -> NSRect {
-        NSRect(x: Self.pad, y: Self.pad + Self.headerH + CGFloat(i) * (Self.rowH + Self.gap),
-               width: Self.width - Self.pad * 2, height: Self.rowH)
+    private func rowHeight(_ i: Int) -> CGFloat {
+        sessions[i].state == .needsPermission ? Self.rowHTall : Self.rowH
     }
 
-    /// Buttons for row `i`, left-aligned on their own line under the text.
+    private func rowRect(_ i: Int) -> NSRect {
+        var y = Self.pad + Self.headerH
+        for j in 0..<i { y += rowHeight(j) + Self.gap }
+        return NSRect(x: Self.pad, y: y, width: Self.width - Self.pad * 2, height: rowHeight(i))
+    }
+
+    /// Buttons show on demand — always for a waiting permission, on hover
+    /// otherwise (they take over the state line, so nothing shifts).
+    private func showsActions(_ i: Int) -> Bool {
+        sessions[i].state == .needsPermission || hoveredRow == i
+    }
+
+    /// Buttons for row `i` — hover reveals them in place of the state line;
+    /// a waiting permission keeps ✓/✕ visible on its own (taller) row.
     private func buttons(for session: ClaudeSession) -> [(glyph: String, action: AgentPad.Action, tint: NSColor?)] {
         if session.state == .needsPermission {
             return [("✓", .accept, NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)),
@@ -405,13 +418,15 @@ final class AgentPadView: NSView {
                 let d = session.detail.replacingOccurrences(of: "\n", with: " ")
                 line2 = "\(session.state.label) · \(d)"
             }
-            (line2 as NSString).draw(
-                in: NSRect(x: r.minX + 10, y: r.minY + 24, width: textMaxX - (r.minX + 10), height: 14),
-                withAttributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: dim,
-                                 .paragraphStyle: truncating])
+            if session.state == .needsPermission || i != hoveredRow {
+                (line2 as NSString).draw(
+                    in: NSRect(x: r.minX + 10, y: r.minY + 24, width: textMaxX - (r.minX + 10), height: 14),
+                    withAttributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: dim,
+                                     .paragraphStyle: truncating])
+            }
 
             // Action buttons.
-            for (bi, btn) in btns.enumerated() {
+            for (bi, btn) in btns.enumerated() where showsActions(i) {
                 let br = buttonRect(i, bi)
                 let bPath = NSBezierPath(roundedRect: br, xRadius: 5, yRadius: 5)
                 let isHover = hoveredButton?.row == i && hoveredButton?.index == bi
@@ -473,7 +488,7 @@ final class AgentPadView: NSView {
                 return
             }
             let btns = buttons(for: session)
-            for bi in btns.indices where buttonRect(i, bi).insetBy(dx: -2, dy: -2).contains(p) {
+            for bi in btns.indices where showsActions(i) && buttonRect(i, bi).insetBy(dx: -2, dy: -2).contains(p) {
                 // The model button pops a menu, which needs the click event —
                 // route it through the menu path instead of the action path.
                 if case .modelMenu = btns[bi].action { onRowMenu?(i, event) } else { onRowAction?(i, btns[bi].action) }
@@ -502,16 +517,19 @@ final class AgentPadView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        var newRow: Int?
+        let newRow = sessions.indices.first { rowRect($0).contains(p) }
         var newButton: (row: Int, index: Int)?
         var newClose: Int?
         for (i, session) in sessions.enumerated() {
-            let btns = buttons(for: session)
-            for bi in btns.indices where buttonRect(i, bi).contains(p) {
-                newButton = (i, bi)
+            // Buttons only exist where they're drawn: permission rows always,
+            // other rows once the cursor is on them.
+            if session.state == .needsPermission || newRow == i {
+                let btns = buttons(for: session)
+                for bi in btns.indices where buttonRect(i, bi).contains(p) {
+                    newButton = (i, bi)
+                }
             }
             if rowCloseRect(i).insetBy(dx: -3, dy: -3).contains(p) { newClose = i }
-            if rowRect(i).contains(p) { newRow = i }
         }
         if newRow != hoveredRow || newButton?.row != hoveredButton?.row || newButton?.index != hoveredButton?.index
             || newClose != hoveredCloseRow {
