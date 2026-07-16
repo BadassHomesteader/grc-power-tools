@@ -34,9 +34,27 @@ final class AgentPad: NSObject {
 
     var isVisible: Bool { panel != nil }
 
+    /// Triage order: blocked sessions first, then everything else by how fresh
+    /// its state is — the pad exists to surface whoever needs the user now.
+    nonisolated static func triageSorted(_ sessions: [ClaudeSession]) -> [ClaudeSession] {
+        func rank(_ s: ClaudeSession) -> Int {
+            switch s.state {
+            case .needsPermission: return 0
+            case .needsInput, .unseen: return 1
+            case .error: return 2
+            case .busy: return 3
+            case .idle: return 4
+            }
+        }
+        return sessions.sorted {
+            let (a, b) = (rank($0), rank($1))
+            return a != b ? a < b : $0.stateChanged > $1.stateChanged
+        }
+    }
+
     func present(sessions: [ClaudeSession], dark: Bool, screen: NSScreen, hotkeyName: String,
                  hooksInstalled: Bool, onAction: @escaping (ClaudeSession, Action) -> Void) {
-        self.sessions = sessions
+        self.sessions = Self.triageSorted(sessions)
         self.dark = dark
         self.hotkeyName = hotkeyName
         self.hooksInstalled = hooksInstalled
@@ -64,7 +82,7 @@ final class AgentPad: NSObject {
 
     /// Live update from the registry (hook events land while the pad is open).
     func updateSessions(_ sessions: [ClaudeSession], hooksInstalled: Bool) {
-        self.sessions = sessions
+        self.sessions = Self.triageSorted(sessions)
         self.hooksInstalled = hooksInstalled
         if isVisible { render() }
     }
@@ -286,9 +304,28 @@ final class AgentPadView: NSView {
         bg.setFill()
         bounds.fill()
 
-        ("Claude Code" as NSString).draw(
-            at: NSPoint(x: Self.pad + 4, y: Self.pad + 3),
-            withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg])
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg]
+        ("Claude Code" as NSString).draw(at: NSPoint(x: Self.pad + 4, y: Self.pad + 3), withAttributes: titleAttrs)
+        // Fleet state at a glance: total count, and how many are blocked on you.
+        if !sessions.isEmpty {
+            let attention = sessions.filter {
+                $0.state == .needsPermission || $0.state == .needsInput
+                    || $0.state == .unseen || $0.state == .error
+            }.count
+            var x = Self.pad + 4 + ("Claude Code" as NSString).size(withAttributes: titleAttrs).width + 6
+            var counts: [(String, NSColor)] = [("· \(sessions.count)", dim)]
+            if attention > 0 {
+                counts.append(("· \(attention) need\(attention == 1 ? "s" : "") you",
+                               NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)))
+            }
+            for (text, color) in counts {
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: color]
+                (text as NSString).draw(at: NSPoint(x: x, y: Self.pad + 5), withAttributes: attrs)
+                x += (text as NSString).size(withAttributes: attrs).width + 6
+            }
+        }
         ("✕" as NSString).draw(in: closeRect.offsetBy(dx: 3, dy: 1), withAttributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
 
@@ -306,6 +343,16 @@ final class AgentPadView: NSView {
         }
 
         for (i, session) in sessions.enumerated() {
+            // Rows parked idle for over an hour recede so live work pops;
+            // hovering restores full strength for reading.
+            let stale = session.state == .idle && i != hoveredRow
+                && session.stateChanged.timeIntervalSinceNow < -3600
+            let ctx = NSGraphicsContext.current?.cgContext
+            if stale, let ctx {
+                ctx.saveGState()
+                ctx.setAlpha(0.5)
+                ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+            }
             let r = rowRect(i)
             let path = NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8)
             // The whole row wears its status color; hover/press just deepen it.
@@ -381,6 +428,11 @@ final class AgentPadView: NSView {
                     .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: glyphColor]
                 let size = glyph.size(withAttributes: attrs)
                 glyph.draw(at: NSPoint(x: br.midX - size.width / 2, y: br.midY - size.height / 2), withAttributes: attrs)
+            }
+
+            if stale, let ctx {
+                ctx.endTransparencyLayer()
+                ctx.restoreGState()
             }
         }
 

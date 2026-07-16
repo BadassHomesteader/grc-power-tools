@@ -374,12 +374,13 @@ case "agentpad-preview":
             s.stateChanged = Date().addingTimeInterval(-ageSec)
             return s
         }
-        let sessions = [
+        let sessions = AgentPad.triageSorted([
             fake("1", "/Users/dev/gridops-ft-kyaw", "Fix the daypart call columns rebuild", .busy, "", ageSec: 45),
             fake("2", "/Users/dev/grc-power-tools", "Review macropad idea for Power Tools", .needsPermission, "Bash: scripts/bundle.sh", ageSec: 12),
             fake("3", "/Users/dev/libre-crm-cci", "I need to make a CRM for CCI", .idle, "", ageSec: 300),
             fake("4", "/Users/dev/grc-todo", "", .error, "rate_limit", ageSec: 660),
-        ]
+            fake("5", "/Users/dev/gridops-ft-njaw", "Reconcile the corr-index blanks", .idle, "", ageSec: 90_000),
+        ])
         let v = AgentPadView(dark: dark)
         v.configure(sessions: sessions, dark: dark, hotkeyName: "Option + Shift", hooksInstalled: true)
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
