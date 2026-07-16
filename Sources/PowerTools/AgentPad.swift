@@ -14,6 +14,7 @@ final class AgentPad: NSObject {
         case focus, prompt, cycleMode, interrupt, accept, deny
         case setModel(String)   // sends "/model <alias>" into the session
         case modelPicker        // focuses the session and opens /model (effort lives there)
+        case modelMenu          // the ✱ row button — handled in the view (pops the menu)
     }
 
     private var panel: NSPanel?
@@ -22,8 +23,11 @@ final class AgentPad: NSObject {
     private var hotkeyName = ""
     private var hooksInstalled = false
     private var savedTopLeft: NSPoint?
-    /// Re-render every 30s so the "2m ago" ages and stale states stay honest.
+    /// Re-render every 10s so the "2m ago" ages and stale states stay honest.
     private var refreshTimer: Timer?
+    /// Fired on that same tick — the controller re-runs discovery so IDE tab
+    /// states (the log-derived attention dots) stay current while the pad is up.
+    var onRefresh: (() -> Void)?
     private var sessions: [ClaudeSession] = []
     private var onAction: ((ClaudeSession, Action) -> Void)?
 
@@ -39,8 +43,12 @@ final class AgentPad: NSObject {
         buildPanel(on: screen)
         render(on: screen)
         refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in if let self, self.isVisible { self.render() } }
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isVisible else { return }
+                self.render()
+                self.onRefresh?()
+            }
         }
     }
 
@@ -220,7 +228,7 @@ final class AgentPadView: NSView {
         switch state {
         case .busy: return NSColor(srgbRed: 0.25, green: 0.55, blue: 0.95, alpha: 1)
         case .idle: return NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)
-        case .needsPermission, .needsInput: return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+        case .unseen, .needsPermission, .needsInput: return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
         case .error: return NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
         }
     }
@@ -236,7 +244,7 @@ final class AgentPadView: NSView {
             return [("✓", .accept, NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)),
                     ("✕", .deny, NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1))]
         }
-        return [("✎", .prompt, nil), ("⇆", .cycleMode, nil), ("■", .interrupt, nil)]
+        return [("✱", .modelMenu, nil), ("✎", .prompt, nil), ("⇆", .cycleMode, nil), ("■", .interrupt, nil)]
     }
 
     private func buttonRect(_ row: Int, _ index: Int, count: Int) -> NSRect {
@@ -290,7 +298,8 @@ final class AgentPadView: NSView {
             }
             path.fill()
             // Attention ring for the states worth glancing at.
-            if session.state == .needsPermission || session.state == .needsInput || session.state == .error {
+            if session.state == .needsPermission || session.state == .needsInput
+                || session.state == .unseen || session.state == .error {
                 Self.stateColor(session.state).setStroke()
                 path.lineWidth = 1.5
                 path.stroke()
@@ -346,7 +355,7 @@ final class AgentPadView: NSView {
             }
         }
 
-        let hint = "click = focus · right-click = model/effort · hold \(hotkeyName.isEmpty ? "hotkey" : hotkeyName) + J" as NSString
+        let hint = "click = focus · ✱ = model/effort · hold \(hotkeyName.isEmpty ? "hotkey" : hotkeyName) + J" as NSString
         let hintAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim.withAlphaComponent(0.35),
         ]
@@ -374,7 +383,9 @@ final class AgentPadView: NSView {
         for (i, session) in sessions.enumerated() {
             let btns = buttons(for: session)
             for bi in btns.indices where buttonRect(i, bi, count: btns.count).insetBy(dx: -2, dy: -2).contains(p) {
-                onRowAction?(i, btns[bi].action)
+                // The model button pops a menu, which needs the click event —
+                // route it through the menu path instead of the action path.
+                if case .modelMenu = btns[bi].action { onRowMenu?(i, event) } else { onRowAction?(i, btns[bi].action) }
                 return
             }
             if rowRect(i).contains(p) {

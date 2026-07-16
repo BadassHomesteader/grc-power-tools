@@ -23,6 +23,7 @@ struct ClaudeSession: Codable {
     enum State: String, Codable {
         case busy             // a turn is running
         case idle             // finished, waiting for input
+        case unseen           // finished while the user wasn't looking (the IDE tab's orange dot)
         case needsPermission  // a permission dialog is on screen
         case needsInput       // Claude asked a question / sat idle
         case error            // the turn died (rate limit, billing, …)
@@ -31,6 +32,7 @@ struct ClaudeSession: Codable {
             switch self {
             case .busy: return "working…"
             case .idle: return "idle"
+            case .unseen: return "done — unseen"
             case .needsPermission: return "needs permission"
             case .needsInput: return "needs input"
             case .error: return "failed"
@@ -126,7 +128,7 @@ final class ClaudeSessionRegistry {
         }
     }
 
-    private func applyDiscovery(procs: [ClaudeDiscovery.Proc], tabs: [(id: String, title: String)]) {
+    private func applyDiscovery(procs: [ClaudeDiscovery.Proc], tabs: [ClaudeDiscovery.IDETab]) {
         for proc in procs {
             // cwd "/" is the extension's utility process, not a chat session.
             if proc.cwd == "/" { continue }
@@ -154,15 +156,6 @@ final class ClaudeSessionRegistry {
             sessions[id] = s
         }
 
-        // Tab titles from the IDE extension log are canonical — they're what
-        // the user actually sees in the tab strip; overwrite heuristic labels.
-        for (sid, title) in tabs {
-            if var s = sessions[sid], s.label != title {
-                s.label = title
-                sessions[sid] = s
-            }
-        }
-
         // Placeholder adoption: an IDE-hosted process can't reveal its session
         // id, but the log knows which tabs exist. Pair the newest placeholders
         // with the most recently active unclaimed tabs — if a pairing is ever
@@ -179,6 +172,37 @@ final class ClaudeSessionRegistry {
             s.id = tab.id
             s.label = tab.title
             sessions.removeValue(forKey: ph.id)
+            sessions[tab.id] = s
+        }
+
+        // Tab titles from the IDE extension log are canonical — they're what
+        // the user actually sees in the tab strip; overwrite heuristic labels.
+        // The same log stream drives the tab's attention dot (waiting_input),
+        // which the hooks don't always surface — apply it when it's newer than
+        // what the hooks last told us. Runs after adoption so fresh swaps get
+        // their state too.
+        for tab in tabs {
+            guard var s = sessions[tab.id] else { continue }
+            if s.label != tab.title { s.label = tab.title }
+            // Effective state: the session-state line, overlaid by the newer
+            // tab-strip flags (pending permission dialog / unseen completion).
+            var mapped: ClaudeSession.State?
+            var at = tab.at
+            switch tab.state {
+            case "running": mapped = .busy
+            case "waiting_input": mapped = .needsInput
+            case "idle": mapped = .idle
+            default: break
+            }
+            if let flagsAt = tab.flagsAt, flagsAt >= (at ?? .distantPast) {
+                if tab.pendingPerms { mapped = .needsPermission; at = flagsAt }
+                else if tab.unseen { mapped = .unseen; at = flagsAt }
+            }
+            if let mapped, let at, at > s.stateChanged, mapped != s.state {
+                s.state = mapped
+                s.detail = ""
+                s.stateChanged = at
+            }
             sessions[tab.id] = s
         }
 
@@ -402,12 +426,25 @@ enum ClaudeDiscovery {
         }
     }
 
-    /// Canonical tab titles: the IDE extension logs `rename_session` /
-    /// `update_session_state` webview messages carrying sessionId + the exact
-    /// tab title. Returned oldest→newest by last appearance, so callers can
-    /// pair the most recent tabs first. Covers Antigravity + VS Code + Cursor.
-    nonisolated static func ideTabSessions() -> [(id: String, title: String)] {
-        var titles: [String: String] = [:]
+    struct IDETab {
+        let id: String
+        let title: String
+        var state: String = ""   // running / idle / waiting_input ("" = unknown)
+        var at: Date?            // log-line timestamp of the last state we saw
+        /// The tab-strip attention dot: `rename_tab` flags (matched by title
+        /// prefix — those lines carry no sessionId).
+        var unseen = false
+        var pendingPerms = false
+        var flagsAt: Date?
+    }
+
+    /// Canonical tab titles AND states: the IDE extension logs `rename_session`
+    /// / `update_session_state` webview messages carrying sessionId, the exact
+    /// tab title, and the state driving the tab's attention dot. Returned
+    /// oldest→newest by last appearance, so callers can pair the most recent
+    /// tabs first. Covers Antigravity + VS Code + Cursor.
+    nonisolated static func ideTabSessions() -> [IDETab] {
+        var tabs: [String: IDETab] = [:]
         var order: [String] = []
         let fm = FileManager.default
         let appSupport = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
@@ -428,23 +465,52 @@ enum ClaudeDiscovery {
                     let data = (try? fh.readToEnd()) ?? Data()
                     try? fh.close()
                     for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+                        // rename_tab drives the tab-strip attention dot but has
+                        // no sessionId — pair by (truncated) title prefix.
+                        if line.contains("\"rename_tab\"") {
+                            guard let raw = Self.titleRegex.capture(line),
+                                  let tabTitle = try? JSONDecoder().decode(String.self, from: Data("\"\(raw)\"".utf8))
+                            else { continue }
+                            let prefix = tabTitle.hasSuffix("…") ? String(tabTitle.dropLast()) : tabTitle
+                            guard !prefix.isEmpty,
+                                  let key = tabs.first(where: { $0.value.title.hasPrefix(prefix) })?.key
+                            else { continue }
+                            tabs[key]?.unseen = line.contains("\"hasUnseenCompletion\":true")
+                            tabs[key]?.pendingPerms = line.contains("\"hasPendingPermissions\":true")
+                            tabs[key]?.flagsAt = Self.lineTime.date(from: String(line.prefix(23)))
+                            continue
+                        }
                         guard line.contains("rename_session") || line.contains("update_session_state"),
                               let sid = Self.sidRegex.capture(line),
                               let raw = Self.titleRegex.capture(line),
                               let title = try? JSONDecoder().decode(String.self, from: Data("\"\(raw)\"".utf8)),
                               !title.isEmpty else { continue }
-                        titles[sid] = title
+                        var tab = tabs[sid] ?? IDETab(id: sid, title: title)
+                        tab = IDETab(id: sid, title: title, state: tab.state, at: tab.at,
+                                     unseen: tab.unseen, pendingPerms: tab.pendingPerms, flagsAt: tab.flagsAt)
+                        if line.contains("update_session_state"), let state = Self.stateRegex.capture(line) {
+                            tab.state = state
+                            tab.at = Self.lineTime.date(from: String(line.prefix(23)))
+                        }
+                        tabs[sid] = tab
                         order.removeAll { $0 == sid }
                         order.append(sid)
                     }
                 }
             }
         }
-        return order.map { ($0, titles[$0] ?? "") }
+        return order.compactMap { tabs[$0] }
     }
 
     nonisolated private static let sidRegex = try! NSRegularExpression(pattern: #""sessionId":"([0-9a-fA-F-]{36})""#)
     nonisolated private static let titleRegex = try! NSRegularExpression(pattern: #""title":"((?:[^"\\]|\\.)*)""#)
+    nonisolated private static let stateRegex = try! NSRegularExpression(pattern: #""state":"([a-z_]+)""#)
+    nonisolated private static let lineTime: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"   // the exthost log's line prefix
+        return f
+    }()
 
     nonisolated fileprivate static func runLines(_ path: String, _ args: [String]) -> [String] {
         let p = Process()

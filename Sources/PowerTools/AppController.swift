@@ -254,6 +254,7 @@ final class AppController {
             }
             claudeRegistry.loadPersisted()      // survive our own restarts
             claudeRegistry.refreshDiscovered()  // find sessions that predate us
+            agentPad.onRefresh = { [weak self] in self?.claudeRegistry.refreshDiscovered() }
         }
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
     }
@@ -752,6 +753,8 @@ final class AppController {
             ClaudeInjector.send(session, text: "/model") { [weak self] err in
                 if let err { self?.overlay.showError("Couldn't open the picker — \(err)") }
             }
+        case .modelMenu:
+            break   // consumed in the view — the ✱ button pops the menu itself
         }
     }
 
