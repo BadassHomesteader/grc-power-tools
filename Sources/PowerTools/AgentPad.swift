@@ -192,7 +192,7 @@ final class AgentPadView: NSView {
     private var hoveredCloseRow: Int?
     private var pressedRow: Int?
 
-    private static let width: CGFloat = 240
+    private static let width: CGFloat = 224
     private static let pad: CGFloat = 10
     private static let headerH: CGFloat = 30
     private static let rowH: CGFloat = 68
@@ -262,7 +262,7 @@ final class AgentPadView: NSView {
 
     private func buttonRect(_ row: Int, _ index: Int) -> NSRect {
         let r = rowRect(row)
-        let x = r.minX + 26 + CGFloat(index) * (Self.btnW + 4)
+        let x = r.minX + 10 + CGFloat(index) * (Self.btnW + 4)
         return NSRect(x: x, y: r.maxY - Self.btnH - 6, width: Self.btnW, height: Self.btnH)
     }
 
@@ -326,14 +326,11 @@ final class AgentPadView: NSView {
                 path.stroke()
             }
 
-            // Status dot + project name.
-            let dot = NSRect(x: r.minX + 10, y: r.minY + 12, width: 8, height: 8)
-            Self.stateColor(session.state).setFill()
-            NSBezierPath(ovalIn: dot).fill()
+            // Title — the row tint itself is the status indicator.
             let btns = buttons(for: session)
             let textMaxX = r.maxX - 10
             (session.displayTitle as NSString).draw(
-                in: NSRect(x: r.minX + 26, y: r.minY + 6, width: rowCloseRect(i).minX - 4 - (r.minX + 26), height: 16),
+                in: NSRect(x: r.minX + 10, y: r.minY + 6, width: rowCloseRect(i).minX - 4 - (r.minX + 10), height: 16),
                 withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg,
                                  .paragraphStyle: truncating])
 
@@ -362,7 +359,7 @@ final class AgentPadView: NSView {
                 line2 = "\(session.state.label) · \(d)"
             }
             (line2 as NSString).draw(
-                in: NSRect(x: r.minX + 26, y: r.minY + 24, width: textMaxX - (r.minX + 26), height: 14),
+                in: NSRect(x: r.minX + 10, y: r.minY + 24, width: textMaxX - (r.minX + 10), height: 14),
                 withAttributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: dim,
                                  .paragraphStyle: truncating])
 
