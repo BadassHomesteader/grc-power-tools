@@ -693,6 +693,11 @@ enum ClaudeInjector {
     }
 
     /// Bring the session's terminal tab/window to the front.
+    /// IDEs to fall back to when a session carries no usable host info —
+    /// "just open my IDE, I'll find the session" (first running one wins).
+    private static let fallbackIDEs = ["com.google.antigravity-ide", "com.microsoft.VSCode",
+                                       "com.todesktop.230313mzl4w4u92" /* Cursor */]
+
     static func focus(_ s: ClaudeSession) {
         if s.hostBundleID == "com.apple.Terminal", !s.tty.isEmpty {
             runAppleScript(selectTerminalTabScript(tty: s.tty)) { _ in }
@@ -702,9 +707,27 @@ enum ClaudeInjector {
         if app == nil, !s.hostBundleID.isEmpty {
             app = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == s.hostBundleID }
         }
+        if app == nil {
+            app = NSWorkspace.shared.runningApplications.first {
+                fallbackIDEs.contains($0.bundleIdentifier ?? "")
+            }
+            log("agentpad: focus \(s.projectName) — no host (pid \(s.hostPID), bundle '\(s.hostBundleID)'), falling back to \(app?.bundleIdentifier ?? "nothing")")
+        }
         guard let app else { return }
         raiseWindow(titledWith: s.projectName, in: app.processIdentifier)
-        app.activate()
+        // Launch-services open, not peer activation: reliable from a
+        // background app, and a no-op-safe "bring it forward" when running.
+        guard let url = app.bundleURL else {
+            let ok = app.activate()
+            log("agentpad: focus \(s.projectName) → activate \(app.bundleIdentifier ?? "?") = \(ok)")
+            return
+        }
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: cfg) { _, err in
+            log("agentpad: focus \(s.projectName) → open \(app.bundleIdentifier ?? "?") \(err.map { "FAILED: \($0.localizedDescription)" } ?? "ok")")
+            if err != nil { DispatchQueue.main.async { _ = app.activate() } }
+        }
     }
 
     /// Bring the IDE window whose title carries this workspace folder to the

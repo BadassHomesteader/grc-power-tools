@@ -29,6 +29,51 @@ final class AgentPad: NSObject {
     /// drops back to the strip. ✕ / hotkey dismiss resets to full.
     private var miniPreferred = false
     private var miniActive = false
+
+    /// Docking: drop the pad near a corner or edge midpoint and it snaps
+    /// there; every re-render (mini↔full, row-count changes) re-anchors to
+    /// the same spot until the user drags it away again.
+    enum DockAnchor: CaseIterable {
+        case topLeft, topMid, topRight, midLeft, midRight, bottomLeft, bottomMid, bottomRight
+    }
+    private var dockAnchor: DockAnchor?
+    private static let snapDistance: CGFloat = 96
+    private static let dockMargin: CGFloat = 12
+
+    private static func anchorOrigin(_ a: DockAnchor, size: NSSize, in vf: NSRect) -> NSPoint {
+        let m = dockMargin
+        let x: CGFloat, y: CGFloat
+        switch a {
+        case .topLeft, .midLeft, .bottomLeft: x = vf.minX + m
+        case .topMid, .bottomMid: x = vf.midX - size.width / 2
+        case .topRight, .midRight, .bottomRight: x = vf.maxX - m - size.width
+        }
+        switch a {
+        case .topLeft, .topMid, .topRight: y = vf.maxY - m - size.height
+        case .midLeft, .midRight: y = vf.midY - size.height / 2
+        case .bottomLeft, .bottomMid, .bottomRight: y = vf.minY + m
+        }
+        return NSPoint(x: x, y: y)
+    }
+
+    /// After a drag: snap to the nearest anchor when dropped close enough,
+    /// otherwise stay free-floating.
+    private func snapAfterDrag() {
+        guard let panel, let vf = (panel.screen ?? NSScreen.main)?.visibleFrame else { return }
+        let size = panel.frame.size
+        var best: (anchor: DockAnchor, origin: NSPoint, dist: CGFloat)?
+        for anchor in DockAnchor.allCases {
+            let o = Self.anchorOrigin(anchor, size: size, in: vf)
+            let d = hypot(panel.frame.origin.x - o.x, panel.frame.origin.y - o.y)
+            if best == nil || d < best!.dist { best = (anchor, o, d) }
+        }
+        if let best, best.dist <= Self.snapDistance {
+            dockAnchor = best.anchor
+            panel.setFrame(NSRect(origin: best.origin, size: size), display: true, animate: true)
+        } else {
+            dockAnchor = nil
+        }
+    }
     /// Re-render every 10s so the "2m ago" ages and stale states stay honest.
     private var refreshTimer: Timer?
     /// Fired on that same tick — the controller re-runs discovery so IDE tab
@@ -122,6 +167,7 @@ final class AgentPad: NSObject {
             self.miniActive = true
             self.render()
         }
+        view.onDragEnd = { [weak self] in self?.snapAfterDrag() }
         let win = NSPanel(contentRect: NSRect(origin: .zero, size: view.fittingSize),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         win.isOpaque = false
@@ -196,6 +242,15 @@ final class AgentPad: NSObject {
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
 
+        // Docked: pin to the anchor for whatever size this render came out at,
+        // so the mini strip parks in the same corner as the full pad.
+        if let dockAnchor, let vf = (screen ?? panel.screen ?? NSScreen.main)?.visibleFrame {
+            let origin = Self.anchorOrigin(dockAnchor, size: size, in: vf)
+            savedTopLeft = nil
+            panel.setFrame(NSRect(origin: origin, size: size), display: true)
+            return
+        }
+
         // Same top-left anchoring as MacroPad so re-renders don't move the pad.
         let topLeft: NSPoint
         if let saved = savedTopLeft {
@@ -226,6 +281,7 @@ final class AgentPadView: NSView {
     var onMinimize: (() -> Void)?
     var onExpand: (() -> Void)?
     var onCollapse: (() -> Void)?
+    var onDragEnd: (() -> Void)?
 
     private var sessions: [ClaudeSession] = []
     private var dark: Bool
@@ -328,9 +384,9 @@ final class AgentPadView: NSView {
         return [("✱", .modelMenu, nil), ("✎", .prompt, nil), ("⇆", .cycleMode, nil), ("■", .interrupt, nil)]
     }
 
-    private func buttonRect(_ row: Int, _ index: Int) -> NSRect {
+    private func buttonRect(_ row: Int, _ index: Int, count: Int) -> NSRect {
         let r = rowRect(row)
-        let x = r.minX + 10 + CGFloat(index) * (Self.btnW + 4)
+        let x = r.maxX - 8 - CGFloat(count - index) * Self.btnW - CGFloat(count - 1 - index) * 4
         return NSRect(x: x, y: r.maxY - Self.btnH - 6, width: Self.btnW, height: Self.btnH)
     }
 
@@ -496,7 +552,7 @@ final class AgentPadView: NSView {
 
             // Action buttons.
             for (bi, btn) in btns.enumerated() where showsActions(i) {
-                let br = buttonRect(i, bi)
+                let br = buttonRect(i, bi, count: btns.count)
                 let bPath = NSBezierPath(roundedRect: br, xRadius: 5, yRadius: 5)
                 let isHover = hoveredButton?.row == i && hoveredButton?.index == bi
                 if let tint = btn.tint {
@@ -549,7 +605,13 @@ final class AgentPadView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        if mini { window?.performDrag(with: event); return }
+        // performDrag tracks synchronously until mouse-up, so drag-end (and
+        // dock snapping) follows it directly.
+        if mini {
+            window?.performDrag(with: event)
+            onDragEnd?()
+            return
+        }
         let p = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -4, dy: -4).contains(p) { onClose?(); return }
         if minimizeRect.insetBy(dx: -4, dy: -4).contains(p) { onMinimize?(); return }
@@ -559,7 +621,7 @@ final class AgentPadView: NSView {
                 return
             }
             let btns = buttons(for: session)
-            for bi in btns.indices where showsActions(i) && buttonRect(i, bi).insetBy(dx: -2, dy: -2).contains(p) {
+            for bi in btns.indices where showsActions(i) && buttonRect(i, bi, count: btns.count).insetBy(dx: -2, dy: -2).contains(p) {
                 // The model button pops a menu, which needs the click event —
                 // route it through the menu path instead of the action path.
                 if case .modelMenu = btns[bi].action { onRowMenu?(i, event) } else { onRowAction?(i, btns[bi].action) }
@@ -577,6 +639,7 @@ final class AgentPadView: NSView {
             }
         }
         window?.performDrag(with: event)
+        onDragEnd?()
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -597,7 +660,7 @@ final class AgentPadView: NSView {
             // other rows once the cursor is on them.
             if session.state == .needsPermission || newRow == i {
                 let btns = buttons(for: session)
-                for bi in btns.indices where buttonRect(i, bi).contains(p) {
+                for bi in btns.indices where buttonRect(i, bi, count: btns.count).contains(p) {
                     newButton = (i, bi)
                 }
             }

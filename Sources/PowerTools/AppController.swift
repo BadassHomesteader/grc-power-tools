@@ -719,6 +719,7 @@ final class AppController {
     private func handleAgentPadAction(_ session: ClaudeSession, _ action: AgentPad.Action) {
         switch action {
         case .focus:
+            log("agentpad: row click → focus \(session.projectName) [\(session.id.prefix(8))]")
             ClaudeInjector.focus(session)
             overlay.showResult("→ \(session.projectName)")
         case .accept:
