@@ -96,11 +96,17 @@ final class ClaudeSessionRegistry {
     }
 
     func loadPersisted() {
+        if let data = try? Data(contentsOf: Self.dismissedURL),
+           let list = try? JSONDecoder().decode([String].self, from: data) {
+            dismissed = list
+        }
         guard let data = try? Data(contentsOf: Self.persistURL),
               let list = try? JSONDecoder().decode([ClaudeSession].self, from: data) else { return }
         // Skip placeholders persisted by older builds that predate the "/"
         // utility-process filter.
-        for s in list where !(s.id.hasPrefix("pid-") && s.cwd == "/") { sessions[s.id] = s }
+        for s in list where !dismissed.contains(s.id) && !(s.id.hasPrefix("pid-") && s.cwd == "/") {
+            sessions[s.id] = s
+        }
         pruneDead()
         onChange?(ordered)
     }
@@ -109,6 +115,32 @@ final class ClaudeSessionRegistry {
         if let data = try? JSONEncoder().encode(ordered) {
             try? data.write(to: Self.persistURL, options: .atomic)
         }
+    }
+
+    // MARK: Closed rows — a closed session stays hidden even though discovery
+    // can still see its process; only a fresh hook event (the chat actually
+    // speaking again) re-admits it.
+
+    private var dismissed: [String] = []
+
+    private static var dismissedURL: URL {
+        Config.appSupportDir.appendingPathComponent("agent-dismissed.json")
+    }
+
+    private func persistDismissed() {
+        if let data = try? JSONEncoder().encode(dismissed) {
+            try? data.write(to: Self.dismissedURL, options: .atomic)
+        }
+    }
+
+    func dismissSession(_ id: String) {
+        sessions.removeValue(forKey: id)
+        dismissed.removeAll { $0 == id }
+        dismissed.append(id)
+        if dismissed.count > 100 { dismissed.removeFirst(dismissed.count - 100) }
+        persistDismissed()
+        persist()
+        onChange?(ordered)
     }
 
     /// Sweep running `claude` processes and add any the hooks haven't reported
@@ -142,6 +174,7 @@ final class ClaudeSessionRegistry {
                 id = only.stem
                 label = Self.titleFromTranscript(only.path) ?? ""
             }
+            if dismissed.contains(id) { continue }
             var s = ClaudeSession(id: id)
             s.cwd = proc.cwd
             s.claudePID = proc.pid
@@ -161,7 +194,7 @@ final class ClaudeSessionRegistry {
         // with the most recently active unclaimed tabs — if a pairing is ever
         // wrong, the row self-corrects on that session's next hook event.
         let terminalHosts = ["com.apple.Terminal", "com.googlecode.iterm2"]
-        var unclaimed = tabs.reversed().filter { sessions[$0.id] == nil }
+        var unclaimed = tabs.reversed().filter { sessions[$0.id] == nil && !dismissed.contains($0.id) }
         let placeholders = sessions.values
             .filter { $0.id.hasPrefix("pid-") && !terminalHosts.contains($0.hostBundleID) }
             .sorted { $0.started > $1.started }
@@ -216,6 +249,12 @@ final class ClaudeSessionRegistry {
         guard let event = obj["event"] as? String else { return }
         let payload = obj["payload"] as? [String: Any] ?? [:]
         guard let sid = payload["session_id"] as? String, !sid.isEmpty else { return }
+
+        // The chat spoke — if the user had closed its row, it earns it back.
+        if let idx = dismissed.firstIndex(of: sid) {
+            dismissed.remove(at: idx)
+            persistDismissed()
+        }
 
         if event == "SessionEnd" {
             sessions.removeValue(forKey: sid)

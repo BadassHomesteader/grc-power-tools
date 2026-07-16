@@ -12,6 +12,7 @@ import Cocoa
 final class AgentPad: NSObject {
     enum Action {
         case focus, prompt, cycleMode, interrupt, accept, deny
+        case closeChat          // row ✕ — drop a stale chat from the pad
         case setModel(String)   // sends "/model <alias>" into the session
         case modelPicker        // focuses the session and opens /model (effort lives there)
         case modelMenu          // the ✱ row button — handled in the view (pops the menu)
@@ -123,6 +124,10 @@ final class AgentPad: NSObject {
         let picker = NSMenuItem(title: "Model & Effort Picker…", action: #selector(menuOpenPicker(_:)), keyEquivalent: "")
         picker.target = self
         menu.addItem(picker)
+        menu.addItem(.separator())
+        let close = NSMenuItem(title: "Close Chat", action: #selector(menuCloseChat(_:)), keyEquivalent: "")
+        close.target = self
+        menu.addItem(close)
         if let view = padView {
             menu.popUp(positioning: nil, at: view.convert(event.locationInWindow, from: nil), in: view)
         }
@@ -136,6 +141,11 @@ final class AgentPad: NSObject {
     @objc private func menuOpenPicker(_ sender: NSMenuItem) {
         guard let session = menuSession else { return }
         onAction?(session, .modelPicker)
+    }
+
+    @objc private func menuCloseChat(_ sender: NSMenuItem) {
+        guard let session = menuSession else { return }
+        onAction?(session, .closeChat)
     }
 
     private func render(on screen: NSScreen? = nil) {
@@ -165,7 +175,8 @@ final class AgentPad: NSObject {
     }
 }
 
-/// The pad canvas: header + one two-line row per session with action buttons.
+/// The pad canvas: header + one three-line row per session (title, state,
+/// action buttons), each row tinted with its status color.
 /// Same palette and drawing style as MacroPadView so it reads as one system.
 final class AgentPadView: NSView {
     var onRowAction: ((Int, AgentPad.Action) -> Void)?
@@ -178,15 +189,16 @@ final class AgentPadView: NSView {
     private var hooksInstalled = true
     private var hoveredRow: Int?
     private var hoveredButton: (row: Int, index: Int)?
+    private var hoveredCloseRow: Int?
     private var pressedRow: Int?
 
-    private static let width: CGFloat = 320
+    private static let width: CGFloat = 240
     private static let pad: CGFloat = 10
     private static let headerH: CGFloat = 30
-    private static let rowH: CGFloat = 46
+    private static let rowH: CGFloat = 68
     private static let gap: CGFloat = 5
     private static let emptyH: CGFloat = 64
-    private static let footerH: CGFloat = 17
+    private static let footerH: CGFloat = 30
     private static let btnW: CGFloat = 26
     private static let btnH: CGFloat = 20
 
@@ -203,6 +215,7 @@ final class AgentPadView: NSView {
         self.hooksInstalled = hooksInstalled
         hoveredRow = nil
         hoveredButton = nil
+        hoveredCloseRow = nil
         pressedRow = nil
         needsDisplay = true
     }
@@ -238,7 +251,7 @@ final class AgentPadView: NSView {
                width: Self.width - Self.pad * 2, height: Self.rowH)
     }
 
-    /// Buttons for row `i`, right-aligned and vertically centered in the row.
+    /// Buttons for row `i`, left-aligned on their own line under the text.
     private func buttons(for session: ClaudeSession) -> [(glyph: String, action: AgentPad.Action, tint: NSColor?)] {
         if session.state == .needsPermission {
             return [("✓", .accept, NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)),
@@ -247,13 +260,19 @@ final class AgentPadView: NSView {
         return [("✱", .modelMenu, nil), ("✎", .prompt, nil), ("⇆", .cycleMode, nil), ("■", .interrupt, nil)]
     }
 
-    private func buttonRect(_ row: Int, _ index: Int, count: Int) -> NSRect {
+    private func buttonRect(_ row: Int, _ index: Int) -> NSRect {
         let r = rowRect(row)
-        let x = r.maxX - 8 - CGFloat(count - index) * Self.btnW - CGFloat(count - 1 - index) * 4
-        return NSRect(x: x, y: r.midY - Self.btnH / 2, width: Self.btnW, height: Self.btnH)
+        let x = r.minX + 26 + CGFloat(index) * (Self.btnW + 4)
+        return NSRect(x: x, y: r.maxY - Self.btnH - 6, width: Self.btnW, height: Self.btnH)
     }
 
     private var closeRect: NSRect { NSRect(x: Self.width - Self.pad - 18, y: Self.pad + 2, width: 18, height: 18) }
+
+    /// The per-row ✕ (close a stale chat), top-right corner of the row.
+    private func rowCloseRect(_ i: Int) -> NSRect {
+        let r = rowRect(i)
+        return NSRect(x: r.maxX - 22, y: r.minY + 5, width: 16, height: 16)
+    }
 
     private static func age(_ date: Date) -> String {
         let s = Int(-date.timeIntervalSinceNow)
@@ -289,12 +308,14 @@ final class AgentPadView: NSView {
         for (i, session) in sessions.enumerated() {
             let r = rowRect(i)
             let path = NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8)
+            // The whole row wears its status color; hover/press just deepen it.
+            let rowColor = Self.stateColor(session.state)
             if i == pressedRow {
-                accent.withAlphaComponent(0.5).setFill()
+                rowColor.withAlphaComponent(0.5).setFill()
             } else if i == hoveredRow && hoveredButton == nil {
-                accent.withAlphaComponent(0.2).setFill()
+                rowColor.withAlphaComponent(0.3).setFill()
             } else {
-                (dark ? NSColor.white : .black).withAlphaComponent(0.06).setFill()
+                rowColor.withAlphaComponent(0.15).setFill()
             }
             path.fill()
             // Attention ring for the states worth glancing at.
@@ -310,11 +331,22 @@ final class AgentPadView: NSView {
             Self.stateColor(session.state).setFill()
             NSBezierPath(ovalIn: dot).fill()
             let btns = buttons(for: session)
-            let textMaxX = buttonRect(i, 0, count: btns.count).minX - 8
+            let textMaxX = r.maxX - 10
             (session.displayTitle as NSString).draw(
-                in: NSRect(x: r.minX + 26, y: r.minY + 6, width: textMaxX - (r.minX + 26), height: 16),
+                in: NSRect(x: r.minX + 26, y: r.minY + 6, width: rowCloseRect(i).minX - 4 - (r.minX + 26), height: 16),
                 withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg,
                                  .paragraphStyle: truncating])
+
+            // Row ✕ — close a stale chat.
+            let cr = rowCloseRect(i)
+            let closeColor: NSColor = hoveredCloseRow == i
+                ? NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1) : dim.withAlphaComponent(0.4)
+            let closeGlyph = "✕" as NSString
+            let closeAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: closeColor]
+            let closeSize = closeGlyph.size(withAttributes: closeAttrs)
+            closeGlyph.draw(at: NSPoint(x: cr.midX - closeSize.width / 2, y: cr.midY - closeSize.height / 2),
+                            withAttributes: closeAttrs)
 
             // Second line: state · age · project (the project folder moves down
             // here once the title is the prompt; tty tag disambiguates twins).
@@ -336,7 +368,7 @@ final class AgentPadView: NSView {
 
             // Action buttons.
             for (bi, btn) in btns.enumerated() {
-                let br = buttonRect(i, bi, count: btns.count)
+                let br = buttonRect(i, bi)
                 let bPath = NSBezierPath(roundedRect: br, xRadius: 5, yRadius: 5)
                 let isHover = hoveredButton?.row == i && hoveredButton?.index == bi
                 if let tint = btn.tint {
@@ -355,13 +387,19 @@ final class AgentPadView: NSView {
             }
         }
 
-        let hint = "click = focus · ✱ = model/effort · hold \(hotkeyName.isEmpty ? "hotkey" : hotkeyName) + J" as NSString
         let hintAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim.withAlphaComponent(0.35),
         ]
-        let hintSize = hint.size(withAttributes: hintAttrs)
-        hint.draw(at: NSPoint(x: bounds.midX - hintSize.width / 2, y: bounds.height - Self.pad - 12),
-                  withAttributes: hintAttrs)
+        // Two lines — the one-liner doesn't fit the narrow pad.
+        let hints = ["click = focus · ✱ = model/effort",
+                     "hold \(hotkeyName.isEmpty ? "hotkey" : hotkeyName) + J"]
+        for (hi, line) in hints.enumerated() {
+            let hint = line as NSString
+            let hintSize = hint.size(withAttributes: hintAttrs)
+            hint.draw(at: NSPoint(x: bounds.midX - hintSize.width / 2,
+                                  y: bounds.height - Self.pad - 25 + CGFloat(hi) * 13),
+                      withAttributes: hintAttrs)
+        }
     }
 
     private var truncating: NSParagraphStyle {
@@ -381,8 +419,12 @@ final class AgentPadView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -4, dy: -4).contains(p) { onClose?(); return }
         for (i, session) in sessions.enumerated() {
+            if rowCloseRect(i).insetBy(dx: -3, dy: -3).contains(p) {
+                onRowAction?(i, .closeChat)
+                return
+            }
             let btns = buttons(for: session)
-            for bi in btns.indices where buttonRect(i, bi, count: btns.count).insetBy(dx: -2, dy: -2).contains(p) {
+            for bi in btns.indices where buttonRect(i, bi).insetBy(dx: -2, dy: -2).contains(p) {
                 // The model button pops a menu, which needs the click event —
                 // route it through the menu path instead of the action path.
                 if case .modelMenu = btns[bi].action { onRowMenu?(i, event) } else { onRowAction?(i, btns[bi].action) }
@@ -413,16 +455,20 @@ final class AgentPadView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         var newRow: Int?
         var newButton: (row: Int, index: Int)?
+        var newClose: Int?
         for (i, session) in sessions.enumerated() {
             let btns = buttons(for: session)
-            for bi in btns.indices where buttonRect(i, bi, count: btns.count).contains(p) {
+            for bi in btns.indices where buttonRect(i, bi).contains(p) {
                 newButton = (i, bi)
             }
+            if rowCloseRect(i).insetBy(dx: -3, dy: -3).contains(p) { newClose = i }
             if rowRect(i).contains(p) { newRow = i }
         }
-        if newRow != hoveredRow || newButton?.row != hoveredButton?.row || newButton?.index != hoveredButton?.index {
+        if newRow != hoveredRow || newButton?.row != hoveredButton?.row || newButton?.index != hoveredButton?.index
+            || newClose != hoveredCloseRow {
             hoveredRow = newRow
             hoveredButton = newButton
+            hoveredCloseRow = newClose
             needsDisplay = true
         }
     }
@@ -430,6 +476,7 @@ final class AgentPadView: NSView {
     override func mouseExited(with event: NSEvent) {
         hoveredRow = nil
         hoveredButton = nil
+        hoveredCloseRow = nil
         needsDisplay = true
     }
 

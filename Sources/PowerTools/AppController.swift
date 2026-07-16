@@ -741,6 +741,9 @@ final class AppController {
             }
         case .prompt:
             openAgentPrompt(session)
+        case .closeChat:
+            claudeRegistry.dismissSession(session.id)
+            overlay.showResult("Closed · \(session.projectName)")
         case .setModel(let alias):
             ClaudeInjector.send(session, text: "/model \(alias)") { [weak self] err in
                 if let err { self?.overlay.showError("Model switch failed — \(err)") }
