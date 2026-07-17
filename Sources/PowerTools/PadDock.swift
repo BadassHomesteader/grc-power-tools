@@ -4,7 +4,7 @@ import Cocoa
 /// panel near a corner or edge midpoint and it snaps there; the owning pad
 /// re-anchors on every re-render so size changes (mini↔full, row growth) stay
 /// parked in the same spot until the user drags the pad away again.
-enum PadDock: CaseIterable {
+enum PadDock: String, CaseIterable, Codable {
     case topLeft, topMid, topRight, midLeft, midRight, bottomLeft, bottomMid, bottomRight
 
     static let snapDistance: CGFloat = 96
@@ -37,5 +37,112 @@ enum PadDock: CaseIterable {
         }
         guard let best, best.dist <= snapDistance else { return nil }
         return (best.anchor, best.origin)
+    }
+}
+
+/// Where a pad was last left — dock anchor or free-float top-left — persisted
+/// to pad-placement.json so placement survives app restarts (in-memory-only
+/// placement meant every update/relaunch silently reset pads to their spawn
+/// corner). Keyed per pad ("macro", "agent").
+struct PadPlacement: Codable {
+    var anchor: PadDock?
+    var x: CGFloat?
+    var y: CGFloat?
+
+    private static var url: URL { Config.appSupportDir.appendingPathComponent("pad-placement.json") }
+
+    static func load(_ key: String) -> PadPlacement? {
+        guard let data = try? Data(contentsOf: url),
+              let all = try? JSONDecoder().decode([String: PadPlacement].self, from: data) else { return nil }
+        return all[key]
+    }
+
+    static func save(_ key: String, anchor: PadDock?, topLeft: NSPoint?) {
+        var all = (try? Data(contentsOf: url))
+            .flatMap { try? JSONDecoder().decode([String: PadPlacement].self, from: $0) } ?? [:]
+        all[key] = PadPlacement(anchor: anchor, x: topLeft?.x, y: topLeft?.y)
+        if let data = try? JSONEncoder().encode(all) { try? data.write(to: url, options: .atomic) }
+    }
+}
+
+/// Drag-time dock UI (Window-Org style): while a pad is being dragged, a
+/// pass-through overlay marks the eight snap anchors; the anchor that would
+/// catch the drop lights up and a dashed ghost previews exactly where the pad
+/// will land. Purely visual — it ignores the mouse and vanishes on drop.
+@MainActor
+final class PadDockOverlay {
+    private var window: NSWindow?
+    private var view: PadDockOverlayView?
+
+    func update(padFrame: NSRect, on screen: NSScreen, dark: Bool) {
+        let vf = screen.visibleFrame
+        if window == nil {
+            let win = NSWindow(contentRect: vf, styleMask: .borderless, backing: .buffered, defer: false)
+            win.isOpaque = false
+            win.backgroundColor = .clear
+            // One notch under the pads so the dragged pad always stays on top.
+            win.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue - 1)
+            win.hasShadow = false
+            win.ignoresMouseEvents = true
+            win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            let v = PadDockOverlayView()
+            win.contentView = v
+            window = win
+            view = v
+            win.orderFrontRegardless()
+        }
+        window?.setFrame(vf, display: false)
+        view?.configure(vf: vf, padFrame: padFrame, dark: dark)
+    }
+
+    func hide() {
+        window?.orderOut(nil)
+        window = nil
+        view = nil
+    }
+}
+
+/// The overlay canvas. Bottom-left coordinates matching the screen's
+/// visibleFrame (the window is sized to it), so anchor math maps 1:1.
+final class PadDockOverlayView: NSView {
+    private var vf = NSRect.zero
+    private var padFrame = NSRect.zero
+    private var dark = true
+
+    func configure(vf: NSRect, padFrame: NSRect, dark: Bool) {
+        self.vf = vf
+        self.padFrame = padFrame
+        self.dark = dark
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard vf.width > 0 else { return }
+        let active = PadDock.nearest(to: padFrame.origin, size: padFrame.size, in: vf)?.anchor
+        let accent = NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1)
+        let base = dark ? NSColor.white : NSColor.black
+        let markerSize = NSSize(width: 34, height: 34)
+        for anchor in PadDock.allCases {
+            let o = anchor.origin(for: markerSize, in: vf)
+            let r = NSRect(origin: NSPoint(x: o.x - vf.minX, y: o.y - vf.minY), size: markerSize)
+            let path = NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8)
+            (anchor == active ? accent.withAlphaComponent(0.85) : base.withAlphaComponent(0.18)).setFill()
+            path.fill()
+            (anchor == active ? accent : base.withAlphaComponent(0.4)).setStroke()
+            path.lineWidth = anchor == active ? 2 : 1
+            path.stroke()
+        }
+        // Dashed ghost of the landing rect for the anchor that would catch.
+        if let active {
+            let o = active.origin(for: padFrame.size, in: vf)
+            let ghost = NSRect(origin: NSPoint(x: o.x - vf.minX, y: o.y - vf.minY), size: padFrame.size)
+            let path = NSBezierPath(roundedRect: ghost, xRadius: 14, yRadius: 14)
+            accent.withAlphaComponent(0.12).setFill()
+            path.fill()
+            accent.setStroke()
+            path.lineWidth = 2
+            path.setLineDash([6, 4], count: 2, phase: 0)
+            path.stroke()
+        }
     }
 }

@@ -364,6 +364,161 @@ case "macropad-preview":
         }
     }
 
+case "macropad-live-test":
+    // Dock + mini geometry diagnostic: presents a REAL pad, walks it through
+    // drop points (left-edge dead zone, exact left anchor, right spawn), snaps,
+    // and toggles mini via a synthesized click on the header "–" — printing the
+    // panel frame after every step. No real mouse needed.
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        // The harness snaps/persists for real — shield the user's live
+        // placement file and put it back on the way out.
+        let placementURL = Config.appSupportDir.appendingPathComponent("pad-placement.json")
+        let placementBackup = try? Data(contentsOf: placementURL)
+        func finish(_ code: Int32) -> Never {
+            if let placementBackup { try? placementBackup.write(to: placementURL, options: .atomic) }
+            else { try? FileManager.default.removeItem(at: placementURL) }
+            exit(code)
+        }
+        let front = NSWorkspace.shared.frontmostApplication
+        let buttons = ["Invoices", "Projects", "Receipts", "Travel"]
+            .map { Config.MacroButton(title: $0, chord: "cmd+shift+m", text: $0, pressReturn: true) }
+        let profile = Config.MacroProfile(bundleID: front?.bundleIdentifier ?? "com.apple.finder",
+                                          name: front?.localizedName ?? "Finder", buttons: buttons)
+        guard let screen = NSScreen.main else { finish(1) }
+        let vf = screen.visibleFrame
+        let pad = MacroPad()
+        pad.present(profiles: [profile], dark: true, screen: screen, hotkeyName: "test",
+                    frontApp: front, onAction: { _, _ in })
+        func pump(_ s: Double = 0.25) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+        pump()
+        guard let panel = app.windows.compactMap({ $0 as? NSPanel })
+                .first(where: { $0.contentView is MacroPadView }),
+              let view = panel.contentView as? MacroPadView else { print("NO PANEL"); finish(1) }
+        func report(_ tag: String) {
+            let f = panel.frame
+            let side = f.midX < vf.midX ? "LEFT" : "RIGHT"
+            print("\(tag): origin=(\(Int(f.minX)),\(Int(f.minY))) size=\(Int(f.width))x\(Int(f.height)) \(side)  [vf x \(Int(vf.minX))…\(Int(vf.maxX))]")
+        }
+        func synth(_ type: NSEvent.EventType, at pView: NSPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: view.convert(pView, to: nil), modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime,
+                               windowNumber: panel.windowNumber, context: nil,
+                               eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        // Header "–" center in flipped view coords (width 220: x = 220-10-62+9).
+        func clickMinimize() { view.mouseDown(with: synth(.leftMouseDown, at: NSPoint(x: 157, y: 21))); pump() }
+        func hoverStrip() { view.mouseMoved(with: synth(.mouseMoved, at: NSPoint(x: 14, y: 14))); pump() }
+        func leave() { view.mouseExited(with: synth(.mouseMoved, at: NSPoint(x: -30, y: -30))); pump() }
+        report("1 present (expect RIGHT spawn)")
+
+        // 2: drop in the LEFT-EDGE DEAD ZONE (midway between topLeft and midLeft
+        // anchors) — is there a snap, and where does mini go?
+        var size = panel.frame.size
+        let deadY = ((vf.midY - size.height / 2) + (vf.maxY - 12 - size.height)) / 2
+        panel.setFrame(NSRect(origin: NSPoint(x: vf.minX + 14, y: deadY), size: size), display: true)
+        pad.snapAfterDrag(); pump()
+        report("2 drop left dead-zone + snap")
+        clickMinimize()
+        report("3 minimize after dead-zone drop (expect LEFT)")
+        hoverStrip()
+        report("4 hover-peek (expect LEFT)")
+        clickMinimize()   // □ while peeking → pin full
+        report("5 pin full")
+
+        // 6: drop EXACTLY on the midLeft anchor, snap, minimize.
+        size = panel.frame.size
+        panel.setFrame(NSRect(origin: NSPoint(x: vf.minX + 12, y: vf.midY - size.height / 2),
+                              size: size), display: true)
+        pad.snapAfterDrag(); pump()
+        report("6 drop at midLeft anchor + snap")
+        clickMinimize()
+        report("7 minimize while docked LEFT (expect LEFT)")
+        hoverStrip()
+        report("8 hover-peek while docked (expect LEFT)")
+        leave()
+        report("9 mouse-exit re-collapse (expect LEFT)")
+        hoverStrip(); clickMinimize()
+        report("10 pin full again")
+
+        // 11: small adjust-drag near the RIGHT spawn (12px from midRight) —
+        // does an accidental micro-drag silently dock midRight?
+        size = panel.frame.size
+        panel.setFrame(NSRect(origin: NSPoint(x: vf.maxX - size.width - 24, y: vf.midY - size.height / 2),
+                              size: size), display: true)
+        pad.snapAfterDrag(); pump()
+        report("11 micro-drag near right spawn + snap")
+        // 12: now drag LEFT into the dead zone (user 'moves it to the left').
+        panel.setFrame(NSRect(origin: NSPoint(x: vf.minX + 14, y: deadY), size: size), display: true)
+        pad.snapAfterDrag(); pump()
+        report("12 drag to left dead-zone + snap")
+        clickMinimize()
+        report("13 minimize (expect LEFT)")
+
+        // 14: REAL synthetic drag through the manual-drag path (mouseDown →
+        // mouseDragged → mouseUp on the view) onto the midLeft anchor —
+        // exercises overlay show/update/hide + snap + persistence.
+        hoverStrip(); clickMinimize()   // back to pinned full
+        size = panel.frame.size
+        let grabView = NSPoint(x: 110, y: size.height - 12)   // footer empty spot
+        view.mouseDown(with: synth(.leftMouseDown, at: grabView))
+        let grabWin = view.convert(grabView, to: nil)
+        let target = NSPoint(x: vf.minX + 20, y: vf.midY - size.height / 2 + 30)  // near midLeft, within 96
+        let o = panel.frame.origin
+        let dragLoc = NSPoint(x: grabWin.x + target.x - o.x, y: grabWin.y + target.y - o.y)
+        view.mouseDragged(with: NSEvent.mouseEvent(with: .leftMouseDragged, location: dragLoc,
+                                                   modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                   windowNumber: panel.windowNumber, context: nil,
+                                                   eventNumber: 0, clickCount: 1, pressure: 1)!)
+        pump(0.1)
+        let overlayUp = app.windows.contains { $0.ignoresMouseEvents && $0.frame == vf }
+        print("14 mid-drag: overlay \(overlayUp ? "VISIBLE" : "MISSING (expected VISIBLE)")")
+        view.mouseUp(with: NSEvent.mouseEvent(with: .leftMouseUp, location: dragLoc,
+                                              modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: panel.windowNumber, context: nil,
+                                              eventNumber: 0, clickCount: 1, pressure: 1)!)
+        pump()
+        report("15 dropped near midLeft via real drag path (expect snap to x=12)")
+        let overlayGone = !app.windows.contains { $0.ignoresMouseEvents && $0.frame == vf && $0.isVisible }
+        print("16 after drop: overlay \(overlayGone ? "hidden" : "STILL UP (expected hidden)")")
+
+        // 17: restart simulation — a FRESH MacroPad instance must restore the
+        // left dock from pad-placement.json.
+        pad.dismiss(); pump()
+        let pad2 = MacroPad()
+        pad2.present(profiles: [profile], dark: true, screen: screen, hotkeyName: "test",
+                     frontApp: front, onAction: { _, _ in })
+        pump()
+        if let panel2 = app.windows.compactMap({ $0 as? NSPanel })
+            .first(where: { $0.contentView is MacroPadView && $0.isVisible }) {
+            let f = panel2.frame
+            let side = f.midX < vf.midX ? "LEFT" : "RIGHT"
+            print("17 fresh instance after restart: origin=(\(Int(f.minX)),\(Int(f.minY))) \(side) (expect LEFT dock x=12)")
+        } else {
+            print("17 fresh instance: NO PANEL")
+        }
+        pad2.dismiss()
+        finish(0)
+    }
+
+case "dockoverlay-preview":
+    // Offscreen render of the drag-time dock-target overlay (fake 1440x900
+    // screen, pad held near the midLeft anchor → left-mid marker lit + ghost).
+    let out = args.count >= 2 ? args[1] : "dockoverlay-preview.png"
+    let dark = !args.contains("light")
+    MainActor.assumeIsolated {
+        let vf = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let v = PadDockOverlayView()
+        v.frame = vf
+        v.configure(vf: vf, padFrame: NSRect(x: 30, y: 320, width: 220, height: 202), dark: dark)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
 case "agentpad-preview":
     // Offscreen render of the Agent Pad for design checks (fake sessions in
     // every state; second row hovered). Flags: "light", "mini" (traffic strip).

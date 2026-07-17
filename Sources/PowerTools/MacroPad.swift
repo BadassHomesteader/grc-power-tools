@@ -36,8 +36,11 @@ final class MacroPad {
     private var miniActive = false
     /// Docking: drop the pad near a corner or edge midpoint and it snaps
     /// there; every re-render (mini↔full, profile swaps) re-anchors to the
-    /// same spot until the user drags it away again. Geometry in PadDock.
+    /// same spot until the user drags it away again. Geometry in PadDock;
+    /// placement persists across restarts via PadPlacement.
     private var dockAnchor: PadDock?
+    private let dockOverlay = PadDockOverlay()
+    private static let placementKey = "macro"
     private var suggestTask: Task<Void, Never>?
     private var suggestTimer: Timer?
     /// Generation counter: a scan may only touch shared state (suggestTask,
@@ -82,13 +85,26 @@ final class MacroPad {
             currentBundleID = app.bundleIdentifier
             currentAppName = app.localizedName ?? "App"
         }
+        // First present after launch: restore where the user last left the pad
+        // (dock anchor or free-float corner) — placement survives restarts.
+        if panel == nil, dockAnchor == nil, savedTopLeft == nil,
+           let saved = PadPlacement.load(Self.placementKey) {
+            dockAnchor = saved.anchor
+            if saved.anchor == nil, let x = saved.x, let y = saved.y {
+                savedTopLeft = NSPoint(x: x, y: y)
+            }
+        }
         buildPanel(on: screen)
         render(on: screen)   // render ends with notifyState()
         startSuggestTimer()
     }
 
     func dismiss() {
-        if let panel { savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY) }
+        if let panel {
+            savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+            PadPlacement.save(Self.placementKey, anchor: dockAnchor, topLeft: savedTopLeft)
+        }
+        dockOverlay.hide()
         invalidateScan()
         suggestTimer?.invalidate()
         suggestTimer = nil
@@ -102,8 +118,10 @@ final class MacroPad {
     }
 
     /// After a drag: snap to the nearest anchor when dropped close enough,
-    /// otherwise stay free-floating.
-    private func snapAfterDrag() {
+    /// otherwise stay free-floating; either way the placement is persisted.
+    /// Internal (not private) so the macropad-live-test harness can invoke it
+    /// without a real mouse drag.
+    func snapAfterDrag() {
         guard let panel, let vf = (panel.screen ?? NSScreen.main)?.visibleFrame else { return }
         if let hit = PadDock.nearest(to: panel.frame.origin, size: panel.frame.size, in: vf) {
             dockAnchor = hit.anchor
@@ -111,6 +129,8 @@ final class MacroPad {
         } else {
             dockAnchor = nil
         }
+        PadPlacement.save(Self.placementKey, anchor: dockAnchor,
+                          topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY))
     }
 
     /// Cancel any in-flight scan and retire its generation so its cleanup /
@@ -177,7 +197,14 @@ final class MacroPad {
             self.miniActive = true
             self.render(preservingHighlights: true)
         }
-        view.onDragEnd = { [weak self] in self?.snapAfterDrag() }
+        view.onDragMoved = { [weak self] in
+            guard let self, let panel = self.panel, let screen = panel.screen ?? NSScreen.main else { return }
+            self.dockOverlay.update(padFrame: panel.frame, on: screen, dark: self.dark)
+        }
+        view.onDragEnd = { [weak self] in
+            self?.dockOverlay.hide()
+            self?.snapAfterDrag()
+        }
         let win = NSPanel(contentRect: NSRect(origin: .zero, size: view.fittingSize),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         win.isOpaque = false
@@ -367,7 +394,37 @@ final class MacroPadView: NSView {
     var onMinimize: (() -> Void)?
     var onExpand: (() -> Void)?
     var onCollapse: (() -> Void)?
+    var onDragMoved: (() -> Void)?
     var onDragEnd: (() -> Void)?
+
+    /// Manual drag (instead of performDrag, which blocks until mouse-up and
+    /// gives no positions) so the dock overlay can live-update mid-drag.
+    /// Grab point in window coords; each drag event moves the window by the
+    /// cursor's offset from it.
+    private var dragGrab: NSPoint?
+    private var dragDidMove = false
+
+    fileprivate func beginDrag(_ event: NSEvent) {
+        dragGrab = event.locationInWindow
+        dragDidMove = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let grab = dragGrab, let window else { return }
+        dragDidMove = true
+        let o = window.frame.origin
+        window.setFrameOrigin(NSPoint(x: o.x + event.locationInWindow.x - grab.x,
+                                      y: o.y + event.locationInWindow.y - grab.y))
+        onDragMoved?()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard dragGrab != nil else { return }
+        dragGrab = nil
+        // A plain click on empty space is not a drop — only a real move snaps.
+        if dragDidMove { onDragEnd?() }
+        dragDidMove = false
+    }
     var suggested: Set<Int> = [] { didSet { needsDisplay = true } }
     var scanning = false { didSet { needsDisplay = true } }
 
@@ -578,11 +635,8 @@ final class MacroPadView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        // performDrag tracks synchronously until mouse-up, so drag-end (and
-        // dock snapping) follows it directly.
         if mini {
-            window?.performDrag(with: event)
-            onDragEnd?()
+            beginDrag(event)
             return
         }
         let p = convert(event.locationInWindow, from: nil)
@@ -594,8 +648,7 @@ final class MacroPadView: NSView {
             onTap?(i)
             return
         }
-        window?.performDrag(with: event)   // anywhere else moves the pad
-        onDragEnd?()
+        beginDrag(event)   // anywhere else moves the pad
     }
 
     override func mouseMoved(with event: NSEvent) {
