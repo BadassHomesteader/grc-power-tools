@@ -46,6 +46,8 @@ final class HotkeyMonitor {
         case macroPad                     // hold + B — toggle the per-app macro pad
         case macroPadDigit(Int)           // hold + 1…9/0 while the pad is open — fire that button
         case agentPad                     // hold + J — toggle the Claude Code session pad
+        case cheatSheet                   // hold + Q — toggle the hotkey cheat sheet
+        case powerRing                    // hold + right-click — radial menu at the cursor
     }
 
     var handler: ((Callback) -> Void)?
@@ -123,6 +125,9 @@ final class HotkeyMonitor {
     /// Set once an arrow/Return moves a window this hold, so release ends the
     /// window session instead of dispatching a dictation.
     private var windowMode = false
+    /// A leader right-click was swallowed for the Power Ring — its paired
+    /// rightMouseUp must be swallowed too (apps must never see an orphan up).
+    private var ringSwallowUp = false
 
     private static let kVK_Function: Int64 = 63
     private static let kVK_RightOption: Int64 = 61
@@ -145,6 +150,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_B: Int64 = 11
     private static let kVK_ANSI_J: Int64 = 38
     private static let kVK_ANSI_3: Int64 = 20
+    private static let kVK_ANSI_Q: Int64 = 12
     private static let kVK_Tab: Int64 = 48
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
@@ -165,7 +171,9 @@ final class HotkeyMonitor {
         let mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.keyUp.rawValue) |
-            (1 << CGEventType.flagsChanged.rawValue)
+            (1 << CGEventType.flagsChanged.rawValue) |
+            (1 << CGEventType.rightMouseDown.rawValue) |   // leader + right-click = Power Ring
+            (1 << CGEventType.rightMouseUp.rawValue)
 
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
@@ -242,6 +250,24 @@ final class HotkeyMonitor {
 
         // Pass through events we synthesized (paste Cmd+V).
         if event.getIntegerValueField(.eventSourceUserData) == kSyntheticEventMagic {
+            return Unmanaged.passUnretained(event)
+        }
+
+        // Leader + right-click = Power Ring (radial menu at the cursor). The
+        // down is swallowed so no context menu opens underneath, and so is its
+        // paired up; windowMode makes the leader release end quietly.
+        if type == .rightMouseDown {
+            guard held else { return Unmanaged.passUnretained(event) }
+            windowMode = true
+            ringSwallowUp = true
+            dispatch(.powerRing)
+            return nil
+        }
+        if type == .rightMouseUp {
+            if ringSwallowUp {
+                ringSwallowUp = false
+                return nil
+            }
             return Unmanaged.passUnretained(event)
         }
 
@@ -498,6 +524,18 @@ final class HotkeyMonitor {
                 windowMode = true
                 swallowedKeyUps.insert(keyCode)
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.agentPad) }
+                return nil
+            case Self.kVK_ANSI_Q:
+                // Hotkey cheat sheet — same rules as B/J: a user-assigned Quick
+                // Capture connection on Q wins, auto-repeat must not re-toggle.
+                if let connId = connectionLeader(for: keyCode) {
+                    log("hotkey: connection leader armed (\(connId))")
+                    pending = .quickCapture(connId); swallowedKeyUps.insert(keyCode)
+                    return nil
+                }
+                windowMode = true
+                swallowedKeyUps.insert(keyCode)
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.cheatSheet) }
                 return nil
             case Self.kVK_ANSI_3:
                 // Grid draw mode. Enter windowMode so release ends the session (no

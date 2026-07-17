@@ -257,7 +257,7 @@ final class WindowSwitcher {
         // frontmost attribute is honored for Accessibility-trusted apps.
         let axApp = AXUIElementCreateApplication(entry.pid)
         AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
-        app.activate(options: [.activateIgnoringOtherApps])
+        app.activate()
         log("switcher: → \(app.localizedName ?? "pid \(entry.pid)") window \(entry.windowID)")
         return true
     }

@@ -40,14 +40,16 @@ enum PadDock: String, CaseIterable, Codable {
     }
 }
 
-/// Where a pad was last left — dock anchor or free-float top-left — persisted
-/// to pad-placement.json so placement survives app restarts (in-memory-only
-/// placement meant every update/relaunch silently reset pads to their spawn
-/// corner). Keyed per pad ("macro", "agent").
+/// Where a pad was last left — dock anchor or free-float top-left, plus the
+/// mini (traffic-light strip) preference — persisted to pad-placement.json so
+/// it all survives app restarts (in-memory-only placement meant every
+/// update/relaunch silently reset pads to their spawn corner, full-size).
+/// Keyed per pad ("macro", "agent").
 struct PadPlacement: Codable {
     var anchor: PadDock?
     var x: CGFloat?
     var y: CGFloat?
+    var mini: Bool?
 
     private static var url: URL { Config.appSupportDir.appendingPathComponent("pad-placement.json") }
 
@@ -57,10 +59,10 @@ struct PadPlacement: Codable {
         return all[key]
     }
 
-    static func save(_ key: String, anchor: PadDock?, topLeft: NSPoint?) {
+    static func save(_ key: String, anchor: PadDock?, topLeft: NSPoint?, mini: Bool = false) {
         var all = (try? Data(contentsOf: url))
             .flatMap { try? JSONDecoder().decode([String: PadPlacement].self, from: $0) } ?? [:]
-        all[key] = PadPlacement(anchor: anchor, x: topLeft?.x, y: topLeft?.y)
+        all[key] = PadPlacement(anchor: anchor, x: topLeft?.x, y: topLeft?.y, mini: mini)
         if let data = try? JSONEncoder().encode(all) { try? data.write(to: url, options: .atomic) }
     }
 }

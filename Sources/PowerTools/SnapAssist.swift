@@ -46,9 +46,11 @@ final class SnapAssist {
 
         // Don't leave a focus-stealing overlay up forever if the user walks away.
         timeout = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
-            guard self?.window != nil else { return }
-            self?.dismiss()
-            onCancel()
+            Task { @MainActor in
+                guard let self, self.window != nil else { return }
+                self.dismiss()
+                onCancel()
+            }
         }
     }
 

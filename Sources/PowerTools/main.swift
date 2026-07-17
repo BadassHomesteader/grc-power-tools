@@ -175,7 +175,7 @@ case "findmouse-preview":
         print("wrote \(out)")
     }
 
-case "advpaste-preview":
+case "advpaste-preview", "advancedpaste-preview":
     let out = args.count >= 2 ? args[1] : "advpaste-preview.png"
     let dark = !(args.count >= 3 && args[2] == "light")
     MainActor.assumeIsolated {
@@ -184,17 +184,6 @@ case "advpaste-preview":
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
         v.cacheDisplay(in: v.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) { try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)") }
-    }
-
-case "advancedpaste-preview":
-    let out = args.count >= 2 ? args[1] : "ap.png"
-    let dark = !(args.count >= 3 && args[2] == "light")
-    MainActor.assumeIsolated {
-        let v = AdvancedPasteView(clipboard: "The quarterly numbers came in and honestly they look rough compared to last year, we should regroup.", dark: dark)
-        v.frame = NSRect(origin: .zero, size: v.fittingSize)
-        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
-        v.cacheDisplay(in: v.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
     }
 
 case "quickcapture-preview":
@@ -209,17 +198,6 @@ case "quickcapture-preview":
         if let data = rep.representation(using: .png, properties: [:]) {
             try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
         }
-    }
-
-case "findmouse-preview":
-    let out = args.count >= 2 ? args[1] : "fm.png"
-    MainActor.assumeIsolated {
-        let v = FindMouseView()
-        v.frame = NSRect(x: 0, y: 0, width: 1000, height: 680)
-        v.point = NSPoint(x: 600, y: 400); v.alpha = 1; v.converge = 0.55
-        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
-        v.cacheDisplay(in: v.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
     }
 
 case "snapassist-preview":
@@ -500,6 +478,59 @@ case "macropad-live-test":
         }
         pad2.dismiss()
         finish(0)
+    }
+
+case "cheatsheet-preview":
+    // Offscreen render of the hold+Q hotkey cheat sheet.
+    let out = args.count >= 2 ? args[1] : "cheatsheet-preview.png"
+    let dark = !args.contains("light")
+    MainActor.assumeIsolated {
+        let v = HotkeyCheatSheetView(dark: dark, hotkeyName: "Option + Shift",
+                                     connections: [(key: "N", name: "Todo")])
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
+case "powerring-preview":
+    // Offscreen render of the Power Ring (third sector hovered).
+    let out = args.count >= 2 ? args[1] : "powerring-preview.png"
+    let dark = !args.contains("light")
+    MainActor.assumeIsolated {
+        let actions: [PowerRing.Action] = [
+            ("⌖", "Screen Text"), ("✂", "Screenshot"), ("☰", "Clipboard"), ("⎘", "Paste As"),
+            ("✱", "Agent Pad"), ("▦", "Macro Pad"), ("◉", "Color"), ("▷", "Read Aloud"),
+        ].map { g, t in .init(glyph: g, title: t) {} }
+        let v = PowerRingView(actions: actions, dark: dark)
+        v.frame = NSRect(origin: .zero, size: PowerRingView.canvas)
+        v.previewState(hover: 2)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
+case "permissiontoast-preview":
+    // Offscreen render of a permission toast card.
+    let out = args.count >= 2 ? args[1] : "permissiontoast-preview.png"
+    let dark = !args.contains("light")
+    MainActor.assumeIsolated {
+        var s = ClaudeSession(id: "prev")
+        s.cwd = "/Users/dev/grc-power-tools"
+        s.label = "Ship the Power Ring release"
+        s.state = .needsPermission
+        s.detail = "Bash: scripts/bundle.sh --install && git push origin main"
+        let v = PermissionToastView(session: s, dark: dark)
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
     }
 
 case "dockoverlay-preview":

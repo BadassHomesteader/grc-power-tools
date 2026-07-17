@@ -100,8 +100,8 @@ enum WindowManager {
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focused) == .success,
-              let win = focused else { return nil }
-        return (win as! AXUIElement)
+              let win = focused, CFGetTypeID(win) == AXUIElementGetTypeID() else { return nil }
+        return (win as! AXUIElement)   // type-checked above; CF has no conditional cast
     }
 
     private static func targetScreen(_ window: AXUIElement) -> NSScreen? {

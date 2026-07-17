@@ -26,7 +26,7 @@ final class AgentPad: NSObject {
     private var savedTopLeft: NSPoint?
     /// Traffic-light mode: the header "–" collapses the pad to a strip of
     /// status squares; hovering the strip peeks the full pad, leaving it
-    /// drops back to the strip. ✕ / hotkey dismiss resets to full.
+    /// drops back to the strip. Sticky: survives dismiss and restarts.
     private var miniPreferred = false
     private var miniActive = false
 
@@ -48,8 +48,7 @@ final class AgentPad: NSObject {
         } else {
             dockAnchor = nil
         }
-        PadPlacement.save(Self.placementKey, anchor: dockAnchor,
-                          topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY))
+        persistPlacement()
     }
     /// Re-render every 10s so the "2m ago" ages and stale states stay honest.
     private var refreshTimer: Timer?
@@ -60,6 +59,9 @@ final class AgentPad: NSObject {
     private var onAction: ((ClaudeSession, Action) -> Void)?
 
     var isVisible: Bool { panel != nil }
+    /// Collapsed to the traffic-light strip (no ✓/✕ rows visible) — the
+    /// permission toasts key off this.
+    var isMini: Bool { miniActive }
 
     /// Triage order: blocked sessions first, then everything else by how fresh
     /// its state is — the pad exists to surface whoever needs the user now.
@@ -94,6 +96,8 @@ final class AgentPad: NSObject {
             if saved.anchor == nil, let x = saved.x, let y = saved.y {
                 savedTopLeft = NSPoint(x: x, y: y)
             }
+            miniPreferred = saved.mini ?? false
+            miniActive = miniPreferred
         }
         buildPanel(on: screen)
         render(on: screen)
@@ -110,7 +114,7 @@ final class AgentPad: NSObject {
     func dismiss() {
         if let panel {
             savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
-            PadPlacement.save(Self.placementKey, anchor: dockAnchor, topLeft: savedTopLeft)
+            persistPlacement()
         }
         dockOverlay.hide()
         refreshTimer?.invalidate()
@@ -118,8 +122,13 @@ final class AgentPad: NSObject {
         panel?.orderOut(nil)
         panel = nil
         padView = nil
-        miniPreferred = false
-        miniActive = false
+    }
+
+    private func persistPlacement() {
+        guard let panel else { return }
+        PadPlacement.save(Self.placementKey, anchor: dockAnchor,
+                          topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY),
+                          mini: miniPreferred)
     }
 
     /// Live update from the registry (hook events land while the pad is open).
@@ -148,6 +157,7 @@ final class AgentPad: NSObject {
             self.miniPreferred.toggle()
             self.miniActive = self.miniPreferred
             self.render()
+            self.persistPlacement()
         }
         view.onExpand = { [weak self] in
             guard let self, self.miniActive else { return }

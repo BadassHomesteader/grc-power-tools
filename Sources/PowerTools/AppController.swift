@@ -51,6 +51,9 @@ final class AppController {
     private let readAloud = ReadAloud()
     private let grabAndMove = GrabAndMove()
     private let macroPad = MacroPad()
+    private let cheatSheet = HotkeyCheatSheet()
+    private let powerRing = PowerRing()
+    private let permissionToast = PermissionToast()
     private let agentPad = AgentPad()
     private let claudeRegistry = ClaudeSessionRegistry()
     private let hookServer = ClaudeHookServer()
@@ -190,6 +193,10 @@ final class AppController {
                 self.fireMacroPadDigit(idx)
             case .agentPad:
                 self.toggleAgentPad()
+            case .cheatSheet:
+                self.toggleCheatSheet()
+            case .powerRing:
+                self.togglePowerRing()
             }
         }
         guard monitor.start() else {
@@ -248,6 +255,7 @@ final class AppController {
             claudeRegistry.onChange = { [weak self] sessions in
                 guard let self else { return }
                 self.agentPad.updateSessions(sessions, hooksInstalled: ClaudeHooksInstaller.isInstalled())
+                self.updatePermissionToasts(sessions)
             }
             if !hookServer.start(port: config.agentPadPort) {
                 log("controller: Agent Pad server couldn't bind 127.0.0.1:\(config.agentPadPort)")
@@ -696,9 +704,59 @@ final class AppController {
     /// session panel. Non-activating like the macro pad, so clicking a row's
     /// buttons leaves the user's app focused unless the action itself focuses
     /// a terminal.
+    /// hold + Q: toggle the hotkey cheat sheet.
+    func toggleCheatSheet() {
+        interruptDictation()
+        overlay.hide()
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        let conns = config.connections
+            .filter { !$0.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { (key: $0.leaderKey, name: $0.name) }
+        cheatSheet.toggle(dark: config.appearance.isDark, screen: screen,
+                          hotkeyName: config.hotkey.displayName, connections: conns)
+    }
+
+    /// hold + right-click: the Power Ring at the cursor.
+    func togglePowerRing() {
+        interruptDictation()
+        overlay.hide()
+        if powerRing.isVisible { powerRing.dismiss(); return }
+        powerRing.present(at: NSEvent.mouseLocation, dark: config.appearance.isDark, actions: [
+            .init(glyph: "⌖", title: "Screen Text") { [weak self] in self?.captureScreenText() },
+            .init(glyph: "✂", title: "Screenshot") { [weak self] in self?.captureScreenshot(search: false) },
+            .init(glyph: "☰", title: "Clipboard") { [weak self] in self?.openClipboardHistory() },
+            .init(glyph: "⎘", title: "Paste As") { [weak self] in self?.openAdvancedPaste() },
+            .init(glyph: "✱", title: "Agent Pad") { [weak self] in self?.toggleAgentPad() },
+            .init(glyph: "▦", title: "Macro Pad") { [weak self] in self?.toggleMacroPad() },
+            .init(glyph: "◉", title: "Color") { [weak self] in self?.pickColor() },
+            .init(glyph: "▷", title: "Read Aloud") { [weak self] in self?.readScreenText() },
+        ])
+    }
+
+    /// Toast waiting permissions whenever the Agent Pad can't show its ✓/✕
+    /// rows itself (closed or collapsed to the strip); clear them the moment
+    /// they resolve or the full pad is up.
+    private func updatePermissionToasts(_ sessions: [ClaudeSession]) {
+        guard config.agentPad else { return }
+        let padShowing = agentPad.isVisible && !agentPad.isMini
+        let waiting = padShowing ? [] : sessions.filter { $0.state == .needsPermission }
+        for s in waiting {
+            permissionToast.present(session: s, dark: config.appearance.isDark,
+                onApprove: { [weak self] in self?.handleAgentPadAction(s, .accept) },
+                onDeny: { [weak self] in self?.handleAgentPadAction(s, .deny) })
+        }
+        permissionToast.sync(waitingIds: Set(waiting.map(\.id)))
+    }
+
     func toggleAgentPad() {
         interruptDictation()
-        if agentPad.isVisible { agentPad.dismiss(); return }
+        if agentPad.isVisible {
+            agentPad.dismiss()
+            updatePermissionToasts(claudeRegistry.ordered)   // pad gone — surface waiting ✓/✕
+            return
+        }
         guard config.agentPad else {
             overlay.showError("Agent Pad is off — enable agentPad in config.json")
             return
@@ -714,6 +772,7 @@ final class AppController {
             hotkeyName: config.hotkey.displayName, hooksInstalled: ClaudeHooksInstaller.isInstalled(),
             onAction: { [weak self] session, action in self?.handleAgentPadAction(session, action) }
         )
+        updatePermissionToasts(claudeRegistry.ordered)   // full pad shows its own ✓/✕ now
     }
 
     private func handleAgentPadAction(_ session: ClaudeSession, _ action: AgentPad.Action) {
@@ -1262,17 +1321,16 @@ final class AppController {
     /// after a timeout), so a synthesized keystroke isn't polluted by the hotkey.
     private func afterModifiersClear(timeout: TimeInterval = 0.8, _ action: @escaping () -> Void) {
         let deadline = Date().addingTimeInterval(timeout)
-        func poll() {
-            let f = CGEventSource.flagsState(.combinedSessionState)
-            let held = f.contains(.maskShift) || f.contains(.maskCommand)
-                    || f.contains(.maskControl) || f.contains(.maskAlternate)
-            if !held || Date() >= deadline {
-                action()
-            } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(25), execute: poll)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            while true {
+                let f = CGEventSource.flagsState(.combinedSessionState)
+                let held = f.contains(.maskShift) || f.contains(.maskCommand)
+                        || f.contains(.maskControl) || f.contains(.maskAlternate)
+                if !held || Date() >= deadline { action(); return }
+                try? await Task.sleep(nanoseconds: 25_000_000)
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(20), execute: poll)
     }
 
     /// Open (or focus) the AI chat window. Optionally seed it with a message and send.

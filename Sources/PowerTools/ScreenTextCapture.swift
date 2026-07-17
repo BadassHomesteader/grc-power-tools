@@ -41,8 +41,7 @@ enum ScreenCapture {
             log("ocr: recognition failed: \(error)")
             return ""
         }
-        let obs = (request.results ?? []).compactMap { $0 as? VNRecognizedTextObservation }
-        return reconstruct(obs)
+        return reconstruct(request.results ?? [])
     }
 
     private struct Fragment { let text: String; let x: CGFloat; let y: CGFloat; let h: CGFloat }

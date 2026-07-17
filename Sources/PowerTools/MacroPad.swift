@@ -31,7 +31,7 @@ final class MacroPad {
     /// Traffic-light mode (same discipline as AgentPad): the header "–"
     /// collapses the pad to a strip of squares — one per macro, lit when its
     /// keywords are on screen — hovering the strip peeks the full pad, leaving
-    /// it drops back to the strip. ✕ / hotkey dismiss resets to full.
+    /// it drops back to the strip. Sticky: survives dismiss and restarts.
     private var miniPreferred = false
     private var miniActive = false
     /// Docking: drop the pad near a corner or edge midpoint and it snaps
@@ -93,6 +93,8 @@ final class MacroPad {
             if saved.anchor == nil, let x = saved.x, let y = saved.y {
                 savedTopLeft = NSPoint(x: x, y: y)
             }
+            miniPreferred = saved.mini ?? false
+            miniActive = miniPreferred
         }
         buildPanel(on: screen)
         render(on: screen)   // render ends with notifyState()
@@ -102,7 +104,7 @@ final class MacroPad {
     func dismiss() {
         if let panel {
             savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
-            PadPlacement.save(Self.placementKey, anchor: dockAnchor, topLeft: savedTopLeft)
+            persistPlacement()
         }
         dockOverlay.hide()
         invalidateScan()
@@ -112,9 +114,14 @@ final class MacroPad {
         panel?.orderOut(nil)
         panel = nil
         padView = nil
-        miniPreferred = false
-        miniActive = false
         notifyState()
+    }
+
+    private func persistPlacement() {
+        guard let panel else { return }
+        PadPlacement.save(Self.placementKey, anchor: dockAnchor,
+                          topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY),
+                          mini: miniPreferred)
     }
 
     /// After a drag: snap to the nearest anchor when dropped close enough,
@@ -129,8 +136,7 @@ final class MacroPad {
         } else {
             dockAnchor = nil
         }
-        PadPlacement.save(Self.placementKey, anchor: dockAnchor,
-                          topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY))
+        persistPlacement()
     }
 
     /// Cancel any in-flight scan and retire its generation so its cleanup /
@@ -186,6 +192,7 @@ final class MacroPad {
             self.miniPreferred.toggle()
             self.miniActive = self.miniPreferred
             self.render(preservingHighlights: true)
+            self.persistPlacement()
         }
         view.onExpand = { [weak self] in
             guard let self, self.miniActive else { return }
