@@ -8,6 +8,9 @@ import Cocoa
 final class HotkeyCheatSheet {
     private var panel: NSPanel?
     var isVisible: Bool { panel != nil }
+    /// Fired on every show/hide (✕ included) — the hotkey tap mirrors this so
+    /// a plain Esc can close the sheet.
+    var onVisibility: ((Bool) -> Void)?
 
     func toggle(dark: Bool, screen: NSScreen, hotkeyName: String,
                 connections: [(key: String, name: String)]) {
@@ -30,11 +33,14 @@ final class HotkeyCheatSheet {
         win.contentView = view
         panel = win
         win.orderFrontRegardless()
+        onVisibility?(true)
     }
 
     func dismiss() {
-        panel?.orderOut(nil)
-        panel = nil
+        guard let panel else { return }
+        panel.orderOut(nil)
+        self.panel = nil
+        onVisibility?(false)
     }
 }
 
@@ -81,6 +87,7 @@ final class HotkeyCheatSheetView: NSView {
                 ("J", "Agent Pad (Claude Code)"),
                 ("r-click", "Power Ring"),
                 ("Q", "this cheat sheet"),
+                ("esc", "close this sheet"),
             ]),
         ]
         if !connections.isEmpty {

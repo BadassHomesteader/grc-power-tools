@@ -195,6 +195,8 @@ final class AppController {
                 self.toggleAgentPad()
             case .cheatSheet:
                 self.toggleCheatSheet()
+            case .cheatSheetClose:
+                self.cheatSheet.dismiss()
             case .powerRing:
                 self.togglePowerRing()
             }
@@ -217,6 +219,10 @@ final class AppController {
         macroPad.onStateChanged = { [weak self] visible, buttonCount in
             self?.hotkey?.macroPadVisible = visible
             self?.hotkey?.macroPadButtonCount = buttonCount
+        }
+        // The tap mirrors sheet visibility so a plain Esc can close it.
+        cheatSheet.onVisibility = { [weak self] visible in
+            self?.hotkey?.cheatSheetVisible = visible
         }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main

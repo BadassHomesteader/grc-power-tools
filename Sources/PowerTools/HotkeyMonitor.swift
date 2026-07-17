@@ -47,6 +47,7 @@ final class HotkeyMonitor {
         case macroPadDigit(Int)           // hold + 1…9/0 while the pad is open — fire that button
         case agentPad                     // hold + J — toggle the Claude Code session pad
         case cheatSheet                   // hold + Q — toggle the hotkey cheat sheet
+        case cheatSheetClose              // Esc while the sheet is up — close it
         case powerRing                    // hold + right-click — radial menu at the cursor
     }
 
@@ -71,6 +72,9 @@ final class HotkeyMonitor {
     /// digits WITH a mapped button fire it instead of their usual chords
     /// (3 stays the grid unless the pad actually has a third button).
     var macroPadVisible = false
+    /// True while the hold+Q cheat sheet is up (same discipline) — a plain
+    /// Esc then closes it instead of reaching the frontmost app.
+    var cheatSheetVisible = false
     /// Buttons in the pad's current profile — digits ≥ this pass through.
     var macroPadButtonCount = 0
 
@@ -365,6 +369,15 @@ final class HotkeyMonitor {
             dispatch(.cycleCancel)
             return nil
         }
+        // Plain Esc while the cheat sheet is up → close it (swallowed so the
+        // frontmost app's dialogs don't also close). Leader-held Esc keeps its
+        // cancel meaning — the sheet closes there too (leader block below).
+        if cheatSheetVisible, !held, type == .keyDown, keyCode == Self.kVK_Escape,
+           flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).isEmpty {
+            swallowedKeyUps.insert(keyCode)
+            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.cheatSheetClose) }
+            return nil
+        }
         // Arrows while cycling move the strip highlight (Windows Alt-Tab style):
         // ←/→ step, ↑/↓ jump rows. Only inside a session — a plain ⌘←/⌘→ keeps
         // its stock line-start/line-end meaning. Auto-repeat allowed (scrubbing).
@@ -436,6 +449,7 @@ final class HotkeyMonitor {
             switch keyCode {
             case Self.kVK_Escape:
                 interrupted = true; swallowedKeyUps.insert(keyCode)
+                if cheatSheetVisible { dispatch(.cheatSheetClose) }
                 dispatch(.cancel)
                 return nil // swallow so it doesn't close the user's dialogs
             case Self.kVK_ANSI_T:
