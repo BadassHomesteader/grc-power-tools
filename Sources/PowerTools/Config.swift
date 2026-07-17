@@ -312,6 +312,10 @@ struct Config: Codable {
     /// AND a hook re-install (the port is baked into the settings.json entries).
     var agentPad: Bool = true
     var agentPadPort: Int = 8377
+    /// Power Ring: hold hotkey + right-click → radial menu. Slots are catalog
+    /// ids, clockwise from the top (see PowerRingCatalog).
+    var powerRing: Bool = true
+    var powerRingSlots: [String] = PowerRingCatalog.defaultSlots
 
     var hotkey: Hotkey = .optionShift
     var polish: PolishMode = .apple
@@ -393,6 +397,7 @@ struct Config: Codable {
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs
         case agentPad, agentPadPort
+        case powerRing, powerRingSlots
         case pronunciations
     }
 
@@ -447,6 +452,8 @@ struct Config: Codable {
         macroPadStepDelayMs = field(.macroPadStepDelayMs, 350)
         agentPad = field(.agentPad, true)
         agentPadPort = field(.agentPadPort, 8377)
+        powerRing = field(.powerRing, true)
+        powerRingSlots = field(.powerRingSlots, PowerRingCatalog.defaultSlots)
         pronunciations = field(.pronunciations, [:])
     }
 

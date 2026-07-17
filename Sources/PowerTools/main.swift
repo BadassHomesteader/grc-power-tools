@@ -496,14 +496,13 @@ case "cheatsheet-preview":
     }
 
 case "powerring-preview":
-    // Offscreen render of the Power Ring (third sector hovered).
+    // Offscreen render of the Power Ring (default slots, third slot hovered).
     let out = args.count >= 2 ? args[1] : "powerring-preview.png"
     let dark = !args.contains("light")
     MainActor.assumeIsolated {
-        let actions: [PowerRing.Action] = [
-            ("⌖", "Screen Text"), ("✂", "Screenshot"), ("☰", "Clipboard"), ("⎘", "Paste As"),
-            ("✱", "Agent Pad"), ("▦", "Macro Pad"), ("◉", "Color"), ("▷", "Read Aloud"),
-        ].map { g, t in .init(glyph: g, title: t) {} }
+        let actions: [PowerRing.Action] = PowerRingCatalog.defaultSlots.compactMap { id in
+            PowerRingCatalog.entry(id).map { .init(glyph: $0.glyph, title: $0.title) {} }
+        }
         let v = PowerRingView(actions: actions, dark: dark)
         v.frame = NSRect(origin: .zero, size: PowerRingView.canvas)
         v.previewState(hover: 2)

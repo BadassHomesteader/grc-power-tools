@@ -84,6 +84,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let macroFoldersView = NSTextView()
     private let macroPadStatus = NSTextField(labelWithString: " ")
 
+    // Power Ring: one popup per slot, tag = slot index (clockwise from top).
+    private let powerRingCheck = NSButton(checkboxWithTitle: "Power Ring — hold hotkey + right-click for a radial menu at the cursor", target: nil, action: nil)
+    private var ringSlotPopups: [NSPopUpButton] = []
+
     // Macro Pad: general per-app profile & button editor (any app, any chord).
     private var macroProfiles: [Config.MacroProfile] = []
     private let macroProfilePopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -168,6 +172,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         launchLoginCheck.action = #selector(toggleLaunchLogin)
         snapAssistCheck.target = self
         snapAssistCheck.action = #selector(snapAssistToggled)
+        powerRingCheck.target = self
+        powerRingCheck.action = #selector(powerRingToggled)
+        for i in 0..<8 {
+            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+            for entry in PowerRingCatalog.all { popup.addItem(withTitle: entry.title) }
+            popup.tag = i
+            popup.target = self
+            popup.action = #selector(ringSlotChanged(_:))
+            ringSlotPopups.append(popup)
+        }
         windowPaletteCheck.target = self
         windowPaletteCheck.action = #selector(windowPaletteToggled)
         clipboardHistoryCheck.target = self
@@ -199,6 +213,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             ("Dictionary", "character.book.closed", dictionaryTab),
             ("Connections", "link", connectionsTab),
             ("Macro Pad", "square.grid.2x2", macroPadTab),
+            ("Power Ring", "circle.grid.3x3", powerRingTab),
             ("Permissions", "checkmark.shield", permissionsTab),
         ]
 
@@ -999,6 +1014,38 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         ])
     }
 
+    private func powerRingTab() -> NSView {
+        let note = NSTextField(labelWithString: "Design the ring: eight slots, clockwise from the top. Hold the hotkey and right-click anywhere to open it — labels are always visible, click a circle (or anywhere in its slice) to fire.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.lineBreakMode = .byWordWrapping
+        note.preferredMaxLayoutWidth = 500
+        let slotNames = ["Top", "Top right", "Right", "Bottom right",
+                         "Bottom", "Bottom left", "Left", "Top left"]
+        let rows = zip(slotNames, ringSlotPopups).map { formRow($0.0, $0.1) }
+        return vstack([
+            section("Power Ring", [powerRingCheck, note] + rows, width: 540),
+        ])
+    }
+
+    @objc private func powerRingToggled() {
+        config.powerRing = (powerRingCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func ringSlotChanged(_ sender: NSPopUpButton) {
+        let i = sender.tag
+        let sel = sender.indexOfSelectedItem
+        guard i >= 0, i < 8, sel >= 0, sel < PowerRingCatalog.all.count else { return }
+        var slots = config.powerRingSlots
+        while slots.count < 8 { slots.append(PowerRingCatalog.defaultSlots[slots.count % PowerRingCatalog.defaultSlots.count]) }
+        slots[i] = PowerRingCatalog.all[sel].id
+        config.powerRingSlots = slots
+        config.save()
+        onConfigChange(config)
+    }
+
     private func permissionsTab() -> NSView {
         statusStack.orientation = .vertical
         statusStack.alignment = .leading
@@ -1077,6 +1124,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         claudeKeyField.placeholderString = Keychain.has("claude") ? "•••••• saved — paste to replace" : "sk-ant-…"
         openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
         macroPadCheck.state = config.macroPad ? .on : .off
+        powerRingCheck.state = config.powerRing ? .on : .off
+        for (i, popup) in ringSlotPopups.enumerated() {
+            let id = i < config.powerRingSlots.count ? config.powerRingSlots[i]
+                                                     : PowerRingCatalog.defaultSlots[i]
+            if let idx = PowerRingCatalog.all.firstIndex(where: { $0.id == id }) {
+                popup.selectItem(at: idx)
+            }
+        }
         let outlook = config.macroPadProfiles.first { $0.bundleID.caseInsensitiveCompare("com.microsoft.Outlook") == .orderedSame }
         // Only the folder-move buttons belong in the editor — a custom button
         // listed here would be converted into a bogus folder on save.

@@ -31,6 +31,7 @@ final class AppController {
             grabAndMove.update(enabled: config.grabAndMove, modifiers: config.grabMoveModifiers.flags)
             macroPad.update(enabled: config.macroPad, profiles: config.macroPadProfiles,
                             dark: config.appearance.isDark)
+            hotkey?.powerRingEnabled = config.powerRing
         }
     }
 
@@ -213,6 +214,7 @@ final class AppController {
         monitor.finderBackspaceUp = config.finderBackspaceUp
         monitor.finderDeleteTrash = config.finderDeleteTrash
         monitor.taskManagerShortcut = config.taskManagerShortcut
+        monitor.powerRingEnabled = config.powerRing
         monitor.finderFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
         // The tap only intercepts leader-digits while the pad is shown, and
         // only for digits that map to a real button of the current profile.
@@ -724,21 +726,40 @@ final class AppController {
                           hotkeyName: config.hotkey.displayName, connections: conns)
     }
 
-    /// hold + right-click: the Power Ring at the cursor.
+    /// hold + right-click: the Power Ring at the cursor, slots from config
+    /// (Settings ▸ Power Ring designs them).
     func togglePowerRing() {
         interruptDictation()
         overlay.hide()
+        guard config.powerRing else { return }
         if powerRing.isVisible { powerRing.dismiss(); return }
-        powerRing.present(at: NSEvent.mouseLocation, dark: config.appearance.isDark, actions: [
-            .init(glyph: "⌖", title: "Screen Text") { [weak self] in self?.captureScreenText() },
-            .init(glyph: "✂", title: "Screenshot") { [weak self] in self?.captureScreenshot(search: false) },
-            .init(glyph: "☰", title: "Clipboard") { [weak self] in self?.openClipboardHistory() },
-            .init(glyph: "⎘", title: "Paste As") { [weak self] in self?.openAdvancedPaste() },
-            .init(glyph: "✱", title: "Agent Pad") { [weak self] in self?.toggleAgentPad() },
-            .init(glyph: "▦", title: "Macro Pad") { [weak self] in self?.toggleMacroPad() },
-            .init(glyph: "◉", title: "Color") { [weak self] in self?.pickColor() },
-            .init(glyph: "▷", title: "Read Aloud") { [weak self] in self?.readScreenText() },
-        ])
+        let actions = config.powerRingSlots.compactMap { id -> PowerRing.Action? in
+            guard let entry = PowerRingCatalog.entry(id), let run = ringRun(id) else { return nil }
+            return .init(glyph: entry.glyph, title: entry.title, run: run)
+        }
+        powerRing.present(at: NSEvent.mouseLocation, dark: config.appearance.isDark, actions: actions)
+    }
+
+    /// Catalog id → the action it fires. Additions here need a PowerRingCatalog
+    /// entry (and vice versa) or the slot silently drops out of the ring.
+    private func ringRun(_ id: String) -> (() -> Void)? {
+        switch id {
+        case "screenText": return { [weak self] in self?.captureScreenText() }
+        case "screenshot": return { [weak self] in self?.captureScreenshot(search: false) }
+        case "search": return { [weak self] in self?.captureScreenshot(search: true) }
+        case "clipboard": return { [weak self] in self?.openClipboardHistory() }
+        case "pasteAs": return { [weak self] in self?.openAdvancedPaste() }
+        case "readAloud": return { [weak self] in self?.readScreenText() }
+        case "color": return { [weak self] in self?.pickColor() }
+        case "findMouse": return { [weak self] in self?.findMouse.flash() }
+        case "newDoc": return { [weak self] in self?.openNewDocMenu() }
+        case "grid": return { [weak self] in self?.openGrid() }
+        case "palette": return { [weak self] in self?.openWindowPalette() }
+        case "macroPad": return { [weak self] in self?.toggleMacroPad() }
+        case "agentPad": return { [weak self] in self?.toggleAgentPad() }
+        case "cheatSheet": return { [weak self] in self?.toggleCheatSheet() }
+        default: return nil
+        }
     }
 
     /// Toast waiting permissions whenever the Agent Pad can't show its ✓/✕

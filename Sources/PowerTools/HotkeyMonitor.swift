@@ -75,6 +75,9 @@ final class HotkeyMonitor {
     /// True while the hold+Q cheat sheet is up (same discipline) — a plain
     /// Esc then closes it instead of reaching the frontmost app.
     var cheatSheetVisible = false
+    /// Power Ring feature flag (same discipline) — when off, a leader-held
+    /// right-click passes through untouched.
+    var powerRingEnabled = true
     /// Buttons in the pad's current profile — digits ≥ this pass through.
     var macroPadButtonCount = 0
 
@@ -261,7 +264,7 @@ final class HotkeyMonitor {
         // down is swallowed so no context menu opens underneath, and so is its
         // paired up; windowMode makes the leader release end quietly.
         if type == .rightMouseDown {
-            guard held else { return Unmanaged.passUnretained(event) }
+            guard held, powerRingEnabled else { return Unmanaged.passUnretained(event) }
             windowMode = true
             ringSwallowUp = true
             dispatch(.powerRing)
