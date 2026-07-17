@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Walkthrough — Power Tools</title>
+<meta name="description" content="A 3-minute guided walkthrough of Power Tools — the PowerToys of macOS. Animated demos with voice-over: dictation, window snapping, ⌘Tab, clipboard history, OCR, Macro Pad and more.">
+<meta property="og:title" content="Power Tools — 3-minute walkthrough">
+<meta property="og:description" content="Watch the PowerToys of macOS in action: one hotkey, a whole toolbox. Animated walkthrough with voice-over.">
+<meta property="og:image" content="assets/icon.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://powertools.geeksare.cool/walkthrough.html">
+<link rel="canonical" href="https://powertools.geeksare.cool/walkthrough.html">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/fonts/fonts.css">
+<style>
+  :root{
+    --bg:#f6f7f3; --card:#fbfcf9; --panel:#edefe8; --ink:#0a0c0f; --muted:#565962;
+    --line:rgba(12,14,17,.16); --line-soft:rgba(12,14,17,.08);
+    --accent:#3b82f6; --lime:#c8fa4b;
+    --fd:"Bricolage Grotesque","Archivo",sans-serif;
+    --fb:"Archivo",system-ui,sans-serif;
+    --fm:"Space Mono",ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{overflow-x:hidden}
+  img{max-width:100%;height:auto;display:block}
+  body{
+    margin:0; color:var(--ink); background:var(--bg);
+    font:16.5px/1.62 var(--fb); -webkit-font-smoothing:antialiased;
+    background-image:
+      linear-gradient(rgba(12,14,17,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(12,14,17,.035) 1px, transparent 1px);
+    background-size:66px 66px;
+  }
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 40px}
+
+  .bracket{position:fixed;width:22px;height:22px;z-index:5;pointer-events:none;opacity:.5}
+  .bracket.tl{top:16px;left:16px;border-top:1.5px solid var(--ink);border-left:1.5px solid var(--ink)}
+  .bracket.tr{top:16px;right:16px;border-top:1.5px solid var(--ink);border-right:1.5px solid var(--ink)}
+  .bracket.bl{bottom:16px;left:16px;border-bottom:1.5px solid var(--ink);border-left:1.5px solid var(--ink)}
+  .bracket.br{bottom:16px;right:16px;border-bottom:1.5px solid var(--ink);border-right:1.5px solid var(--ink)}
+
+  nav{display:flex;align-items:center;justify-content:space-between;padding:26px 0 0}
+  nav .brand{font:700 12.5px/1 var(--fm);letter-spacing:.16em;text-transform:uppercase;display:flex;align-items:center;gap:9px}
+  nav .brand::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ink)}
+  nav .links{display:flex;gap:26px;font:400 12px/1 var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  nav .links a:hover{color:var(--ink)}
+  @media (max-width:640px){nav .links{display:none}}
+
+  .eyebrow{font:400 12px/1 var(--fm);letter-spacing:.2em;text-transform:uppercase;color:var(--muted);display:inline-flex;align-items:center;gap:9px;margin:0 0 18px}
+  .eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent)}
+  .head{padding:58px 0 34px}
+  .head h1{font-family:var(--fd);font-weight:800;font-size:clamp(38px,6.4vw,72px);line-height:.96;letter-spacing:-.03em;margin:0 0 16px}
+  .hl{background:var(--ink);color:var(--bg);padding:0 .1em;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+  .head p{max-width:560px;color:#2a2d34;margin:0}
+
+  .pill{display:inline-flex;align-items:center;gap:10px;border-radius:999px;font:700 12.5px/1 var(--fm);letter-spacing:.1em;text-transform:uppercase;padding:17px 26px;transition:transform .14s ease,background .14s ease,color .14s ease;cursor:pointer;border:0}
+  .pill-dark{background:var(--ink);color:var(--bg)}
+  .pill-dark:hover{transform:translateY(-2px)}
+  .pill-out{border:1.5px solid var(--ink);color:var(--ink);background:transparent}
+  .pill-out:hover{background:var(--ink);color:var(--bg)}
+  kbd{font:700 11.5px/1 var(--fm);background:var(--panel);border:1px solid var(--line-soft);border-radius:6px;padding:3px 6px;color:var(--ink);letter-spacing:.02em}
+
+  /* ---------- player chrome ---------- */
+  .player{margin:8px 0 0}
+  .slate{display:flex;align-items:center;justify-content:space-between;gap:14px;font:700 11.5px/1 var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+  .slate .t{color:var(--ink)}
+  .slate .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--lime);border:1px solid rgba(12,14,17,.25);margin-right:8px;vertical-align:1px}
+
+  .stage-frame{border:1px solid var(--line);background:var(--card);border-radius:16px;overflow:hidden;box-shadow:0 30px 60px -30px rgba(12,14,17,.35)}
+  .stage{position:relative;aspect-ratio:16/10;background:#e9ebe4;container-type:inline-size;overflow:hidden;user-select:none;-webkit-user-select:none}
+  .stage::before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(12,14,17,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(12,14,17,.04) 1px,transparent 1px);background-size:7cqw 7cqw}
+  .mbar{position:absolute;top:0;left:0;right:0;height:4.6cqw;background:rgba(251,252,249,.9);border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:2.2cqw;padding:0 2.6cqw;font:700 1.7cqw/1 var(--fm);letter-spacing:.12em;color:var(--muted);z-index:1}
+  .mbar .apple{width:1.9cqw;height:1.9cqw;border-radius:50%;background:var(--ink)}
+  .mbar .right{margin-left:auto;display:flex;gap:2cqw;align-items:center}
+
+  .paused .stage *{animation-play-state:paused !important}
+
+  /* start / end overlays */
+  .cover{position:absolute;inset:0;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2.6cqw;background:rgba(246,247,243,.86);backdrop-filter:blur(4px);transition:opacity .35s ease}
+  .cover.hide{opacity:0;pointer-events:none}
+  .cover .meta{font:400 1.9cqw/1.8 var(--fm);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);text-align:center}
+  .bigplay{display:inline-flex;align-items:center;gap:1.6cqw;background:var(--ink);color:var(--bg);border:0;border-radius:999px;font:700 2.2cqw/1 var(--fm);letter-spacing:.12em;text-transform:uppercase;padding:2.6cqw 4.4cqw;cursor:pointer;transition:transform .15s ease}
+  .bigplay:hover{transform:translateY(-2px) scale(1.02)}
+  .bigplay .tri{width:0;height:0;border-style:solid;border-width:1.2cqw 0 1.2cqw 2cqw;border-color:transparent transparent transparent var(--lime)}
+
+  /* scenes */
+  .scene{position:absolute;inset:0;top:4.6cqw;opacity:0;pointer-events:none}
+  .scene.on{opacity:1;pointer-events:auto}
+  .scene .abs{position:absolute}
+
+  /* shared mock pieces */
+  .krow{display:flex;gap:1.6cqw;align-items:flex-end}
+  .kcap{display:flex;align-items:center;justify-content:center;background:var(--card);border:1px solid var(--line);border-bottom-width:.55cqw;border-radius:1.2cqw;font:700 2.4cqw/1 var(--fm);color:var(--ink);width:9cqw;height:8cqw;box-shadow:0 .8cqw 1.6cqw rgba(12,14,17,.12)}
+  .kcap.wide{width:13cqw}
+  .kcap.sm{width:6.4cqw;height:6cqw;font-size:2cqw;border-radius:1cqw}
+  .press{animation:kpress 1.5s ease infinite}
+  @keyframes kpress{0%,100%{transform:translateY(0)}12%,60%{transform:translateY(.55cqw)}}
+  .held{transform:translateY(.55cqw);border-bottom-width:1px;background:var(--panel)}
+
+  .mwin{background:var(--card);border:1px solid var(--line);border-radius:1.4cqw;box-shadow:0 2cqw 4cqw rgba(12,14,17,.16);overflow:hidden}
+  .mwin .tb{height:3.4cqw;background:var(--panel);border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:.9cqw;padding:0 1.4cqw}
+  .mwin .tb i{width:1.2cqw;height:1.2cqw;border-radius:50%;background:#d7d9d1;border:1px solid var(--line-soft)}
+  .mwin .tb i:first-child{background:#f0b9b2}.mwin .tb i:nth-child(2){background:#f2dcae}.mwin .tb i:nth-child(3){background:#bfe0b6}
+  .mwin .tb b{font:700 1.5cqw/1 var(--fm);letter-spacing:.1em;color:var(--muted);margin-left:.6cqw;text-transform:uppercase}
+  .mwin .bd{padding:1.8cqw}
+  .tline{height:1.1cqw;border-radius:99px;background:var(--panel);margin:0 0 1.2cqw}
+  .tline.w60{width:60%}.tline.w80{width:80%}.tline.w45{width:45%}.tline.w70{width:70%}
+
+  /* keyframes carry explicit from/to and only touch transform+opacity;
+     positional centering uses the separate `translate:` property so it survives */
+  .fadein{opacity:0;animation:fin .5s ease forwards}
+  @keyframes fin{from{opacity:0}to{opacity:1}}
+  .rise{opacity:0;animation:rise .55s cubic-bezier(.2,.8,.2,1) forwards}
+  @keyframes rise{from{opacity:0;transform:translateY(2cqw)}to{opacity:1;transform:none}}
+  .popin{opacity:0;animation:pop .45s cubic-bezier(.2,.8,.2,1) forwards}
+  @keyframes pop{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
+
+  /* S1 intro */
+  .s1 .word{left:50%;top:13%;translate:-50% 0;width:100%;font-family:var(--fd);font-weight:800;font-size:8.4cqw;line-height:1.05;letter-spacing:-.03em;text-align:center}
+  .s1 .word .hl{padding:0 .12em}
+  .s1 .keys{left:50%;top:47%;translate:-50% 0}
+  .s1 .hint{left:50%;bottom:7%;translate:-50% 0;background:rgba(10,12,15,.92);color:#eceee8;border-radius:99px;padding:1.8cqw 3.2cqw;font:700 1.9cqw/1 var(--fm);letter-spacing:.12em;white-space:nowrap;box-shadow:0 2cqw 4cqw rgba(12,14,17,.3)}
+  .s1 .hint b{color:var(--lime)}
+  .s1 .hint{opacity:0;animation:rise .6s cubic-bezier(.2,.8,.2,1) 2.2s forwards}
+  .s1 .tagline{left:50%;top:64%;translate:-50% 0;font:400 2cqw/1.8 var(--fm);letter-spacing:.2em;text-transform:uppercase;color:var(--muted);opacity:0;animation:fin .6s ease 4.2s forwards}
+
+  /* S2 dictation */
+  .s2 .doc{left:14%;top:9%;width:52%}
+  .s2 .keys{right:6%;top:12%}
+  .s2 .ovl{left:50%;bottom:8%;translate:-50% 0;background:rgba(10,12,15,.94);border-radius:99px;display:flex;align-items:center;gap:1.6cqw;padding:1.9cqw 3.2cqw;box-shadow:0 2cqw 5cqw rgba(12,14,17,.35);opacity:0;animation:rise .5s ease .6s forwards}
+  .s2 .mic{width:2.4cqw;height:2.4cqw;border-radius:50%;background:var(--lime);animation:micpulse 1.2s ease 1s infinite}
+  @keyframes micpulse{0%,100%{box-shadow:0 0 0 0 rgba(200,250,75,.55)}55%{box-shadow:0 0 0 1.4cqw rgba(200,250,75,0)}}
+  .s2 .bars{display:flex;gap:.55cqw;align-items:center;height:3.4cqw}
+  .s2 .bars i{width:.6cqw;border-radius:99px;background:#eceee8;height:20%;animation:wave 1s ease-in-out infinite}
+  .s2 .bars i:nth-child(2n){animation-delay:.15s}.s2 .bars i:nth-child(3n){animation-delay:.3s}.s2 .bars i:nth-child(5n){animation-delay:.45s}
+  @keyframes wave{0%,100%{height:22%}50%{height:96%}}
+  .s2 .rel{color:#a7aaa2;font:700 1.6cqw/1 var(--fm);letter-spacing:.14em}
+  .s2 .typed span{display:inline-block;opacity:0;animation:fin .3s ease forwards;font:400 2cqw/1.7 var(--fb);color:var(--ink)}
+  .s2 .typed .strike{text-decoration:line-through;color:var(--muted)}
+  .s2 .caret{display:inline-block;width:.25cqw;height:2.2cqw;background:var(--accent);vertical-align:-.35cqw;animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  /* S3 snapping */
+  .s3 .desk{position:absolute;inset:0}
+  .s3 .winA{left:30%;top:16%;width:44%;height:56%;animation:snapA 13s cubic-bezier(.25,.9,.25,1) 1.2s forwards}
+  @keyframes snapA{
+    0%{left:30%;top:16%;width:44%;height:56%}
+    8%,20%{left:1.6%;top:3%;width:47%;height:92%}
+    28%,40%{left:1.6%;top:3%;width:31%;height:92%}
+    48%,60%{left:1.6%;top:3%;width:63%;height:92%}
+    70%,100%{left:1.6%;top:3%;width:47%;height:45%}
+  }
+  .s3 .winB{right:5%;top:26%;width:34%;height:44%;z-index:0}
+  .s3 .keys{right:3%;bottom:5%;z-index:3}
+  .s3 .karr{opacity:0}
+  .s3 .karr.a1{animation:kshow 2.2s ease 1.2s forwards}
+  .s3 .karr.a2{animation:kshow 2.2s ease 8.6s forwards}
+  @keyframes kshow{0%{opacity:0;transform:translateY(.55cqw)}10%,80%{opacity:1;transform:translateY(0)}15%,60%{transform:translateY(.55cqw)}100%{opacity:0}}
+  .s3 .ghosts{right:2%;top:52%;width:46%;display:flex;gap:2%;opacity:0;animation:fin .5s ease 11.8s forwards;z-index:2}
+  .s3 .ghosts .g{flex:1;aspect-ratio:16/11;border-radius:1.2cqw;border:1px dashed var(--line);background:rgba(251,252,249,.75)}
+  .s3 .ghosts .g.pick{animation:pickfill 1.6s cubic-bezier(.25,.9,.25,1) 13.4s forwards;border-style:solid}
+  @keyframes pickfill{40%{transform:scale(1.06)}100%{transform:scale(1.03);box-shadow:0 0 0 .35cqw var(--lime)}}
+  .s3 .lbl{left:3%;bottom:5.5%;z-index:4;font:700 1.7cqw/1.7 var(--fm);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);background:rgba(246,247,243,.9);border:1px solid var(--line-soft);border-radius:99px;padding:.9cqw 1.8cqw}
+  .s3 .lbl b{color:var(--ink)}
+
+  /* S4 palette */
+  .s4 .pal{left:50%;top:47%;translate:-50% -50%;background:rgba(251,252,249,.97);border:1px solid var(--line);border-radius:1.8cqw;box-shadow:0 3cqw 6cqw rgba(12,14,17,.25);padding:2.2cqw 2.6cqw;opacity:0;animation:pop .5s cubic-bezier(.2,.8,.2,1) .5s forwards}
+  .s4 .pal h5{margin:0 0 1cqw;font:700 1.5cqw/1 var(--fm);letter-spacing:.18em;color:var(--muted);text-transform:uppercase}
+  .s4 .row{display:flex;gap:1.2cqw;margin-bottom:1.8cqw}
+  .s4 .tgt{width:7.4cqw;height:5cqw;border:1px solid var(--line);border-radius:.8cqw;background:var(--card);position:relative;overflow:hidden}
+  .s4 .tgt i{position:absolute;background:var(--panel);border-radius:.3cqw;inset:12%}
+  .s4 .tgt.l i{right:52%}.s4 .tgt.r i{left:52%}.s4 .tgt.t i{bottom:52%}.s4 .tgt.c i{left:30%;right:30%}
+  .s4 .tgt.th1 i{right:64%}.s4 .tgt.th2 i{left:38%;right:38%}.s4 .tgt.q i{right:70%}
+  .s4 .hi{animation:palhi 6s steps(1) 1.6s infinite}
+  @keyframes palhi{0%,100%{box-shadow:0 0 0 .3cqw var(--lime);background:#fdfef8}25%{box-shadow:none;background:var(--card)}}
+  .s4 .row .tgt:nth-child(3).hi2{animation:palhi 6s steps(1) 3.1s infinite}
+  .s4 .grid9{display:grid;grid-template-columns:repeat(6,3.4cqw);grid-auto-rows:2.6cqw;gap:.5cqw}
+  .s4 .grid9 i{border:1px solid var(--line-soft);border-radius:.35cqw;background:var(--card)}
+  .s4 .grid9 i.sw{animation:sweep .01s linear forwards}
+  @keyframes sweep{to{background:var(--lime);border-color:var(--ink)}}
+  .s4 .chips{left:50%;bottom:6%;translate:-50% 0;display:flex;gap:1.2cqw;opacity:0;animation:rise .5s ease 12.5s forwards}
+  .s4 .chip{background:var(--ink);color:var(--bg);border-radius:99px;font:700 1.7cqw/1 var(--fm);letter-spacing:.12em;padding:1.2cqw 2.2cqw}
+  .s4 .chip b{color:var(--lime)}
+
+  /* S5 cmd-tab */
+  .s5{background:rgba(10,12,15,.0)}
+  .s5 .dim{position:absolute;inset:0;background:rgba(10,12,15,.45);opacity:0;animation:fin .5s ease .4s forwards}
+  .s5 .strip{left:50%;top:50%;translate:-50% -50%;display:flex;gap:1.6cqw;background:rgba(251,252,249,.96);border:1px solid var(--line);border-radius:1.8cqw;padding:2cqw;box-shadow:0 3cqw 7cqw rgba(12,14,17,.4);opacity:0;animation:pop .5s cubic-bezier(.2,.8,.2,1) .7s forwards}
+  .s5 .card{width:13.6cqw}
+  .s5 .card .th{aspect-ratio:16/10;border:1px solid var(--line);border-radius:1cqw;background:var(--card);padding:1cqw;position:relative}
+  .s5 .card .th::before{content:"";position:absolute;left:0;right:0;top:0;height:1.6cqw;background:var(--panel);border-radius:1cqw 1cqw 0 0}
+  .s5 .card .th .tline{margin-top:2.2cqw}
+  .s5 .card p{margin:.8cqw 0 0;font:700 1.4cqw/1.3 var(--fm);letter-spacing:.1em;color:var(--muted);text-transform:uppercase;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .s5 .card{border-radius:1.2cqw;padding:.5cqw}
+  .s5 .c1{animation:hi5 8s steps(1) 1.2s infinite}
+  .s5 .c2{animation:hi5 8s steps(1) 3.2s infinite}
+  .s5 .c3{animation:hi5 8s steps(1) 5.2s infinite}
+  @keyframes hi5{0%{box-shadow:none}12%,25%{box-shadow:0 0 0 .35cqw var(--accent)}26%,100%{box-shadow:none}}
+  .s5 .keys{left:50%;bottom:7%;translate:-50% 0;z-index:2}
+  .s5 .note{left:50%;top:12%;translate:-50% 0;color:#eceee8;font:700 1.9cqw/1.6 var(--fm);letter-spacing:.16em;text-transform:uppercase;opacity:0;animation:fin .5s ease 1.4s forwards;text-align:center}
+  .s5 .note b{color:var(--lime)}
+
+  /* S6 clipboard */
+  .s6 .hist{left:8%;top:8%;width:38%;background:rgba(251,252,249,.97);border:1px solid var(--line);border-radius:1.6cqw;box-shadow:0 2.5cqw 5cqw rgba(12,14,17,.22);padding:1.8cqw;opacity:0;animation:pop .5s ease .5s forwards}
+  .s6 h5{margin:0 0 1.2cqw;font:700 1.5cqw/1 var(--fm);letter-spacing:.18em;color:var(--muted);text-transform:uppercase}
+  .s6 .it{display:flex;align-items:center;gap:1.2cqw;border:1px solid var(--line-soft);border-radius:1cqw;padding:1.1cqw 1.3cqw;margin-bottom:1cqw;background:var(--card)}
+  .s6 .it .n{font:700 1.5cqw/1 var(--fm);color:var(--muted)}
+  .s6 .it .tx{flex:1}
+  .s6 .it .tline{margin:0}
+  .s6 .it.img .thumb{width:6cqw;height:3.6cqw;border-radius:.6cqw;background:linear-gradient(135deg,var(--lime),#9ed44a 60%,#6fae3f);border:1px solid var(--line-soft)}
+  .s6 .it.pick{animation:hi6 2.5s steps(1) 3.4s forwards}
+  @keyframes hi6{0%{box-shadow:none}20%,70%{box-shadow:0 0 0 .3cqw var(--accent)}100%{box-shadow:0 0 0 .3cqw var(--lime)}}
+  .s6 .doc6{right:6%;top:12%;width:40%}
+  .s6 .doc6 .pasted{height:1.1cqw;border-radius:99px;background:var(--lime);width:0;animation:grow 1s cubic-bezier(.2,.8,.2,1) 6s forwards}
+  @keyframes grow{to{width:70%}}
+  .s6 .ap{left:50%;bottom:6%;translate:-50% 0;display:flex;gap:1cqw;background:rgba(10,12,15,.94);border-radius:99px;padding:1.4cqw 1.8cqw;opacity:0;animation:rise .55s ease 9.5s forwards}
+  .s6 .ap b{font:700 1.6cqw/1 var(--fm);letter-spacing:.1em;color:#eceee8;background:rgba(255,255,255,.08);border-radius:99px;padding:1cqw 1.7cqw;text-transform:uppercase}
+  .s6 .ap b.on{background:var(--lime);color:var(--ink);animation:appulse 1.4s ease 11.5s}
+  @keyframes appulse{40%{transform:scale(1.12)}}
+
+  /* S7 OCR */
+  .s7 .doc7{left:10%;top:8%;width:46%}
+  .s7 .tbl{display:grid;grid-template-columns:repeat(3,1fr);gap:.6cqw;margin-top:1cqw}
+  .s7 .tbl i{height:1.6cqw;background:var(--panel);border-radius:.3cqw}
+  .s7 .marq{left:12%;top:16%;width:0;height:0;border:.35cqw dashed var(--ink);border-radius:.8cqw;animation:marq 2.2s cubic-bezier(.2,.8,.2,1) 1s forwards;background:rgba(200,250,75,.14)}
+  @keyframes marq{0%{width:0;height:0;opacity:0}15%{opacity:1}100%{width:42%;height:46%;opacity:1}}
+  .s7 .scan{left:12%;top:16%;width:42%;height:.5cqw;background:var(--lime);box-shadow:0 0 2cqw rgba(200,250,75,.9);opacity:0;animation:scan 1.6s ease 3.4s forwards}
+  @keyframes scan{0%{opacity:0;transform:translateY(0)}10%{opacity:1}100%{opacity:0;transform:translateY(11cqw)}}
+  .s7 .toast{left:31%;top:38%;translate:-50% 0;background:var(--ink);color:var(--bg);border-radius:99px;font:700 1.7cqw/1 var(--fm);letter-spacing:.12em;padding:1.3cqw 2.4cqw;opacity:0;animation:rise .5s ease 5.2s forwards;text-transform:uppercase}
+  .s7 .toast b{color:var(--lime)}
+  .s7 .side{right:6%;top:14%;width:26%;display:flex;flex-direction:column;gap:1.4cqw}
+  .s7 .srow{display:flex;align-items:center;gap:1.4cqw;background:var(--card);border:1px solid var(--line-soft);border-radius:1.2cqw;padding:1.3cqw 1.6cqw;opacity:0}
+  .s7 .srow .kcap.sm{flex:none}
+  .s7 .srow p{margin:0;font:700 1.5cqw/1.4 var(--fm);letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
+  .s7 .srow.r1{animation:rise .5s ease 8.5s forwards}
+  .s7 .srow.r2{animation:rise .5s ease 10.5s forwards}
+  .s7 .srow.r3{animation:rise .5s ease 11.5s forwards}
+
+  /* S8 macro pad + quick capture */
+  .s8 .pad{right:6%;top:9%;width:30%;background:rgba(251,252,249,.97);border:1px solid var(--line);border-radius:1.6cqw;box-shadow:0 2.5cqw 5cqw rgba(12,14,17,.22);padding:1.7cqw;opacity:0;animation:pop .5s ease .6s forwards}
+  .s8 .pad h5{margin:0 0 1.2cqw;font:700 1.4cqw/1 var(--fm);letter-spacing:.16em;color:var(--muted);text-transform:uppercase}
+  .s8 .pbtn{border:1px solid var(--line-soft);background:var(--card);border-radius:.9cqw;font:700 1.5cqw/1 var(--fm);letter-spacing:.08em;color:var(--ink);padding:1.2cqw;margin-bottom:.9cqw;text-align:left}
+  .s8 .pbtn.sug{border-color:var(--ink);animation:sug 1.8s ease 2.4s infinite}
+  @keyframes sug{0%,100%{box-shadow:none}45%{box-shadow:0 0 0 .35cqw var(--lime)}}
+  .s8 .mail{left:6%;top:9%;width:42%}
+  .s8 .qc{left:50%;bottom:8%;translate:-50% 0;width:56%;background:rgba(10,12,15,.95);border-radius:1.6cqw;box-shadow:0 2.5cqw 6cqw rgba(12,14,17,.4);padding:2cqw 2.4cqw;opacity:0;animation:rise .55s ease 8.8s forwards}
+  .s8 .qc .in{background:rgba(255,255,255,.08);border-radius:.9cqw;padding:1.3cqw 1.6cqw;font:400 1.9cqw/1 var(--fm);color:#eceee8;white-space:nowrap;overflow:hidden}
+  .s8 .qc .in span{opacity:0;animation:fin .12s ease forwards}
+  .s8 .qc .chips{display:flex;gap:1cqw;margin-top:1.2cqw}
+  .s8 .qc .qchip{font:700 1.4cqw/1 var(--fm);letter-spacing:.1em;border-radius:99px;padding:.9cqw 1.6cqw;background:rgba(200,250,75,.16);color:var(--lime);border:1px solid rgba(200,250,75,.4);opacity:0;text-transform:uppercase}
+  .s8 .qc .qchip.q1{animation:pop .35s ease 12.4s forwards}
+  .s8 .qc .qchip.q2{animation:pop .35s ease 12.9s forwards}
+  .s8 .qc .qchip.q3{animation:pop .35s ease 13.4s forwards}
+  .s8 .qc .sent{position:absolute;right:2cqw;top:2cqw;font:700 1.6cqw/1 var(--fm);color:var(--lime);letter-spacing:.14em;opacity:0;animation:fin .4s ease 15s forwards}
+
+  /* S9 close */
+  .s9 .icon{left:50%;top:18%;translate:-50% 0;width:13cqw;height:13cqw;border-radius:3cqw;overflow:hidden;box-shadow:0 2.5cqw 5cqw rgba(12,14,17,.25)}
+  .s9 .icon img{width:100%;height:100%;object-fit:cover}
+  .s9 .big{left:50%;top:44%;translate:-50% 0;font-family:var(--fd);font-weight:800;font-size:6.4cqw;letter-spacing:-.03em;white-space:nowrap;text-align:center}
+  .s9 .big em{font-style:normal;position:relative}
+  .s9 .big em::after{content:"";position:absolute;left:0;right:0;bottom:.2cqw;height:1.2cqw;background:var(--lime);z-index:-1;transform:scaleX(0);transform-origin:left;animation:underline 1s cubic-bezier(.2,.8,.2,1) 2.2s forwards}
+  @keyframes underline{to{transform:scaleX(1)}}
+  .s9 .keys{left:50%;top:60%;translate:-50% 0}
+  .s9 .meta9{left:50%;top:78%;translate:-50% 0;font:400 1.8cqw/1.9 var(--fm);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);text-align:center;white-space:nowrap}
+
+  /* caption + controls */
+  .capbar{display:flex;gap:18px;align-items:flex-start;justify-content:space-between;border:1px solid var(--line-soft);border-top:0;background:var(--card);border-radius:0 0 16px 16px;margin:-16px 0 0;padding:30px 26px 20px;position:relative;z-index:0}
+  .caption{max-width:720px;min-height:3.2em;color:#2a2d34;font-size:15.5px;line-height:1.6;margin:0}
+  .scount{font:700 12px/1.9 var(--fm);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);text-align:right;white-space:nowrap}
+  .scount .t{color:var(--ink)}
+
+  .controls{display:flex;align-items:center;gap:12px;margin-top:18px;flex-wrap:wrap}
+  .cbtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:999px;font:700 12px/1 var(--fm);letter-spacing:.1em;text-transform:uppercase;padding:13px 20px;cursor:pointer;border:1.5px solid var(--ink);background:transparent;color:var(--ink);transition:background .14s,color .14s,transform .14s}
+  .cbtn:hover{background:var(--ink);color:var(--bg)}
+  .cbtn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  .cbtn.primary:hover{transform:translateY(-2px)}
+  .prog{flex:1;display:flex;gap:5px;min-width:200px}
+  .seg{flex:1;height:5px;border-radius:99px;background:var(--panel);overflow:hidden;cursor:pointer;position:relative}
+  .seg i{display:block;height:100%;width:0;background:var(--ink)}
+  .seg.done i{width:100%}
+  .seg:hover{outline:1.5px solid var(--line)}
+
+  .chapters{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:34px}
+  .chap{display:flex;gap:12px;align-items:baseline;border:1px solid var(--line-soft);background:var(--card);border-radius:12px;padding:14px 16px;cursor:pointer;text-align:left;font-family:var(--fb);transition:border-color .14s,transform .14s}
+  .chap:hover{border-color:var(--ink);transform:translateY(-1px)}
+  .chap .n{font:700 11.5px/1 var(--fm);color:var(--accent);letter-spacing:.1em}
+  .chap .tt{font:700 14.5px/1.3 var(--fd);letter-spacing:-.01em}
+  .chap.now{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+  .chap.now .n{color:var(--ink)}
+  @media (max-width:860px){.chapters{grid-template-columns:1fr 1fr}}
+  @media (max-width:560px){.chapters{grid-template-columns:1fr}.capbar{flex-direction:column;gap:8px}.scount{text-align:left}}
+
+  .band{background:var(--ink);color:var(--bg);border-radius:22px;margin:88px 40px 0;padding:64px 8%;text-align:center;background-image:radial-gradient(600px 200px at 50% 0%, rgba(200,250,75,.12), transparent 70%)}
+  .band .label{font:700 12px/1 var(--fm);letter-spacing:.16em;text-transform:uppercase;color:var(--lime);display:flex;align-items:center;justify-content:center;gap:14px;margin:0 0 8px}
+  .band .label::before{content:"";width:26px;height:1.5px;background:var(--lime)}
+  .band h2{font-family:var(--fd);font-weight:800;font-size:clamp(28px,4.2vw,42px);letter-spacing:-.025em;line-height:1.02;color:var(--bg);margin:0 auto 26px;max-width:640px}
+  .band .pill-dark{background:var(--lime);color:var(--ink)}
+  @media (max-width:860px){.band{margin:72px 24px 0;padding:52px 24px}.wrap{padding:0 24px}}
+
+  footer{border-top:1px solid var(--line-soft);padding:44px 0 60px;margin-top:88px}
+  footer .row{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}
+  footer .links{display:flex;gap:24px;font:400 12px/1 var(--fm);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  footer .links a:hover{color:var(--ink)}
+  footer .fine{font:400 11.5px/1.7 var(--fm);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+
+  @media (prefers-reduced-motion:reduce){
+    .stage *{animation-duration:.001s !important;animation-delay:0s !important;animation-iteration-count:1 !important}
+  }
+</style>
+</head>
+<body>
+<div class="bracket tl"></div><div class="bracket tr"></div>
+<div class="bracket bl"></div><div class="bracket br"></div>
+
+<div class="wrap">
+  <nav>
+    <a class="brand" href="./">Power&nbsp;Tools</a>
+    <div class="links">
+      <a href="./#tools">Tools</a>
+      <a href="./#inside">Inside</a>
+      <a href="https://github.com/BadassHomesteader/grc-power-tools">GitHub</a>
+      <a href="https://github.com/BadassHomesteader/grc-power-tools/releases/latest/download/Power-Tools.dmg">Download</a>
+    </div>
+  </nav>
+
+  <header class="head">
+    <span class="eyebrow">Guided walkthrough · 9 scenes · ~3 min · sound on</span>
+    <h1>See it <span class="hl">work</span>.</h1>
+    <p>An animated tour with voice-over — every scene is one hotkey chord. Press play, or jump to a chapter below.</p>
+  </header>
+
+  <div class="player" id="player">
+    <div class="slate">
+      <span><span class="dot"></span>POWER&nbsp;TOOLS&nbsp;·&nbsp;WALKTHROUGH</span>
+      <span id="slateScene" class="t">SCENE&nbsp;01&nbsp;/&nbsp;09</span>
+    </div>
+
+    <div class="stage-frame">
+      <div class="stage" id="stage">
+        <div class="mbar"><span class="apple"></span><span>POWER&nbsp;TOOLS</span><span class="right"><span>⌥⇧ READY</span><span>9:41</span></span></div>
+
+        <!-- S1 -->
+        <div class="scene s1" data-s="0">
+          <div class="abs word rise">One hotkey,<br><span class="hl">a whole toolbox</span>.</div>
+          <div class="abs keys krow">
+            <div class="kcap wide press">⌥ option</div>
+            <div class="kcap wide press">⇧ shift</div>
+          </div>
+          <div class="abs hint">A <b>ai</b> · T <b>text</b> · W <b>palette</b> · H <b>clips</b> · B <b>pad</b> · ←→↑↓ <b>win</b> — or just speak</div>
+          <div class="abs tagline">RUNS ENTIRELY ON YOUR MAC</div>
+        </div>
+
+        <!-- S2 -->
+        <div class="scene s2" data-s="1">
+          <div class="abs doc mwin fadein"><div class="tb"><i></i><i></i><i></i><b>Notes</b></div><div class="bd">
+            <div class="tline w60"></div><div class="tline w80"></div><div class="tline w45"></div>
+            <p class="typed" style="margin:1.4cqw 0 0">
+              <span style="animation-delay:5.5s">Ship&nbsp;the&nbsp;update&nbsp;</span><span class="strike" style="animation-delay:6.3s">Tuesday</span><span style="animation-delay:7s">&nbsp;Wednesday,&nbsp;</span><span style="animation-delay:7.7s">then&nbsp;tell&nbsp;the&nbsp;team.</span><span class="caret" style="animation-delay:5.5s;opacity:1"></span>
+            </p>
+          </div></div>
+          <div class="abs keys krow"><div class="kcap wide held">⌥ option</div><div class="kcap wide held">⇧ shift</div></div>
+          <div class="abs ovl"><span class="mic"></span><span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="rel">RELEASE&nbsp;TO&nbsp;INSERT</span></div>
+        </div>
+
+        <!-- S3 -->
+        <div class="scene s3" data-s="2">
+          <div class="desk">
+            <div class="abs winB mwin"><div class="tb"><i></i><i></i><i></i><b>Mail</b></div><div class="bd"><div class="tline w70"></div><div class="tline w45"></div><div class="tline w60"></div></div></div>
+            <div class="abs winA mwin" style="z-index:1"><div class="tb"><i></i><i></i><i></i><b>Browser</b></div><div class="bd"><div class="tline w80"></div><div class="tline w60"></div><div class="tline w70"></div><div class="tline w45"></div></div></div>
+            <div class="abs ghosts"><div class="g"></div><div class="g pick"></div><div class="g"></div></div>
+            <div class="abs keys krow">
+              <div class="kcap sm karr a1">←</div>
+              <div class="kcap sm karr a2">↑</div>
+            </div>
+            <div class="abs lbl"><b>hold + ←</b> SNAP · TAP AGAIN ½ → ⅓ → ⅔ · <b>← ↑</b> CORNER · THEN SNAP ASSIST</div>
+          </div>
+        </div>
+
+        <!-- S4 -->
+        <div class="scene s4" data-s="3">
+          <div class="abs pal">
+            <h5>Snap palette — hold + W</h5>
+            <div class="row"><div class="tgt hi"><i></i></div><div class="tgt l"><i></i></div><div class="tgt c hi2"><i></i></div><div class="tgt r"><i></i></div><div class="tgt t"><i></i></div></div>
+            <div class="row"><div class="tgt th1"><i></i></div><div class="tgt th2 hi2"><i></i></div><div class="tgt q"><i></i></div><div class="tgt l"><i></i></div><div class="tgt r hi"><i></i></div></div>
+            <h5 style="margin-top:.6cqw">Mini-grid — drag to sketch</h5>
+            <div class="grid9" id="grid9"></div>
+          </div>
+          <div class="abs chips"><span class="chip"><b>S</b>&nbsp;SAVE&nbsp;LAYOUT</span><span class="chip"><b>A</b>&nbsp;MEETING</span><span class="chip"><b>B</b>&nbsp;DEEP&nbsp;WORK</span></div>
+        </div>
+
+        <!-- S5 -->
+        <div class="scene s5" data-s="4">
+          <div class="dim"></div>
+          <div class="abs note">EVERY <b>WINDOW</b> · NOT EVERY APP</div>
+          <div class="abs strip">
+            <div class="card c1"><div class="th"><div class="tline w70"></div><div class="tline w45"></div></div><p>Excel — Q3</p></div>
+            <div class="card c2"><div class="th"><div class="tline w60"></div><div class="tline w80"></div></div><p>Excel — Budget</p></div>
+            <div class="card c3"><div class="th"><div class="tline w80"></div><div class="tline w60"></div></div><p>Browser</p></div>
+            <div class="card"><div class="th"><div class="tline w45"></div><div class="tline w70"></div></div><p>Notes</p></div>
+            <div class="card"><div class="th"><div class="tline w70"></div><div class="tline w60"></div></div><p>Terminal</p></div>
+          </div>
+          <div class="abs keys krow"><div class="kcap wide held">⌘ cmd</div><div class="kcap sm press">⇥</div></div>
+        </div>
+
+        <!-- S6 -->
+        <div class="scene s6" data-s="5">
+          <div class="abs hist">
+            <h5>Clipboard history — hold + H</h5>
+            <div class="it"><span class="n">1</span><span class="tx"><span class="tline w80" style="display:block"></span></span></div>
+            <div class="it pick"><span class="n">2</span><span class="tx"><span class="tline w60" style="display:block"></span></span></div>
+            <div class="it img"><span class="n">3</span><span class="thumb"></span><span class="tx"><span class="tline w45" style="display:block"></span></span></div>
+            <div class="it"><span class="n">4</span><span class="tx"><span class="tline w70" style="display:block"></span></span></div>
+          </div>
+          <div class="abs doc6 mwin fadein"><div class="tb"><i></i><i></i><i></i><b>Doc</b></div><div class="bd"><div class="tline w70"></div><div class="tline w80"></div><div class="pasted"></div></div></div>
+          <div class="abs ap"><b>PLAIN</b><b class="on">SUMMARIZE</b><b>REWRITE</b><b>BULLETS</b><b>TRANSLATE</b></div>
+        </div>
+
+        <!-- S7 -->
+        <div class="scene s7" data-s="6">
+          <div class="abs doc7 mwin"><div class="tb"><i></i><i></i><i></i><b>Report&nbsp;PDF</b></div><div class="bd">
+            <div class="tline w80"></div><div class="tline w60"></div>
+            <div class="tbl"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          </div></div>
+          <div class="abs marq"></div>
+          <div class="abs scan"></div>
+          <div class="abs toast">TEXT&nbsp;+&nbsp;TABLE&nbsp;<b>COPIED</b></div>
+          <div class="abs side">
+            <div class="srow r1"><div class="kcap sm">R</div><p>Read aloud</p></div>
+            <div class="srow r2"><div class="kcap sm">S</div><p>Screenshot</p></div>
+            <div class="srow r3"><div class="kcap sm">G</div><p>Google Lens</p></div>
+          </div>
+        </div>
+
+        <!-- S8 -->
+        <div class="scene s8" data-s="7">
+          <div class="abs mail mwin fadein"><div class="tb"><i></i><i></i><i></i><b>Outlook</b></div><div class="bd"><div class="tline w60"></div><div class="tline w80"></div><div class="tline w70"></div><div class="tline w45"></div></div></div>
+          <div class="abs pad">
+            <h5>Macro pad — hold + B</h5>
+            <div class="pbtn">01 · Invoices ⏎</div>
+            <div class="pbtn sug">02 · Permits ⏎ ✦</div>
+            <div class="pbtn">03 · Field reports ⏎</div>
+            <div class="pbtn">04 · Archive ⏎</div>
+          </div>
+          <div class="abs qc">
+            <div class="sent">✓ SENT</div>
+            <div class="in"><span style="animation-delay:9.6s">call&nbsp;Rhett&nbsp;</span><span style="animation-delay:10.4s">tomorrow&nbsp;</span><span style="animation-delay:11.1s">p1&nbsp;</span><span style="animation-delay:11.7s">@calls</span></div>
+            <div class="chips"><span class="qchip q1">P1</span><span class="qchip q2">DUE&nbsp;TOMORROW</span><span class="qchip q3">@CALLS</span></div>
+          </div>
+        </div>
+
+        <!-- S9 -->
+        <div class="scene s9" data-s="8">
+          <div class="abs icon popin"><img src="assets/icon.png" alt="Power Tools icon"></div>
+          <div class="abs big rise" style="animation-delay:.4s">One hotkey, <em>a whole toolbox</em>.</div>
+          <div class="abs keys krow" style="animation-delay:.8s"><div class="kcap wide press">⌥ option</div><div class="kcap wide press">⇧ shift</div></div>
+          <div class="abs meta9">FREE · OPEN SOURCE · SIGNED &amp; NOTARIZED</div>
+        </div>
+
+        <!-- start cover -->
+        <div class="cover" id="cover">
+          <button class="bigplay" id="bigplay"><span class="tri"></span>PLAY&nbsp;THE&nbsp;WALKTHROUGH</button>
+          <div class="meta">9 SCENES · ~3 MINUTES · VOICE-OVER — SOUND ON</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="capbar">
+      <p class="caption" id="caption">Press play — the tour starts with the hotkey that runs everything.</p>
+      <div class="scount"><span class="t" id="scTitle">READY</span><br><span id="scNum">SCENE 01 / 09</span></div>
+    </div>
+
+    <div class="controls">
+      <button class="cbtn primary" id="btnPlay">▶ Play</button>
+      <button class="cbtn" id="btnPrev" title="Previous scene">←</button>
+      <button class="cbtn" id="btnNext" title="Next scene">→</button>
+      <div class="prog" id="prog"></div>
+      <button class="cbtn" id="btnMute" title="Mute">🔊</button>
+    </div>
+
+    <div class="chapters" id="chapters"></div>
+  </div>
+</div>
+
+<div class="band">
+  <p class="label">Liked what you saw?</p>
+  <h2>Hold Option + Shift on your own Mac in about a minute.</h2>
+  <a class="pill pill-dark" href="https://github.com/BadassHomesteader/grc-power-tools/releases/latest/download/Power-Tools.dmg">Download for Mac ↗</a>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <div class="links">
+        <a href="./">Home</a>
+        <a href="https://github.com/BadassHomesteader/grc-power-tools">GitHub</a>
+        <a href="https://github.com/BadassHomesteader/grc-power-tools/releases">Releases</a>
+      </div>
+      <div class="fine">Power Tools · runs on your Mac, not a cloud</div>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  'use strict';
+  var V='1';
+  var SCENES=[
+    {t:'One hotkey',cap:'This is Power Tools — the PowerToys of macOS. One hotkey, a whole toolbox. Hold Option and Shift and a hint strip appears: every tool is one tap away. The core tools run entirely on your Mac — no cloud, no account, no subscription.'},
+    {t:'Dictation',cap:'Hold the hotkey and just talk. A live waveform floats at the bottom of the screen while Apple’s on-device speech engine streams your words. Let go, and a polished transcript lands in whatever app has focus — filler words removed, self-corrections applied, punctuation fixed.'},
+    {t:'Window snapping',cap:'Hold the hotkey and tap an arrow: the focused window snaps to that side. Tap again to cycle ½ · ⅓ · ⅔. Chain two arrows for a corner — and right after a snap, Snap Assist offers your other windows to fill the empty space.'},
+    {t:'Snap palette',cap:'Hold + W opens the snap palette — halves, thirds, quarter columns, and a mini-grid you drag across to sketch any rectangle. Tap S to snapshot every window’s position as a saved layout: meeting mode, one keystroke.'},
+    {t:'⌘Tab, fixed',cap:'Hold ⌘ and you get a strip of live window thumbnails — every window, not every app. Two Excel windows are two entries. Tab or arrows move the highlight; release to switch.'},
+    {t:'Clipboard tools',cap:'Hold + H is the clipboard history macOS never shipped — recent copies, text and images, thumbnails included. Pick one and it pastes right where you were. Hold + P is Advanced Paste: plain text, summarize, rewrite, bullets, or translate.'},
+    {t:'Capture the screen',cap:'Hold + T, drag a region, and the recognized text is on your clipboard — tables come back ready for a spreadsheet. Hold + R reads a region aloud. S grabs a screenshot; G sends it to Google Lens. All on-device.'},
+    {t:'Pad & capture',cap:'Hold + B is the Macro Pad — an on-screen stream deck whose buttons file Outlook mail, swap profiles with the front app, and never steal focus. Hold + N is Quick Capture: dictate a line and it POSTs to your own todo app or webhook — priority, due date and context parsed as you type.'},
+    {t:'Get it',cap:'Free, open source, signed and notarized. Download the DMG, grant two permissions, and hold Option + Shift.'}
+  ];
+  var FALLBACK_S=26; // advance even if audio never loads
+  var stage=document.getElementById('stage');
+  var sceneEls=[].slice.call(stage.querySelectorAll('.scene'));
+  var cover=document.getElementById('cover');
+  var caption=document.getElementById('caption');
+  var scTitle=document.getElementById('scTitle');
+  var scNum=document.getElementById('scNum');
+  var slateScene=document.getElementById('slateScene');
+  var btnPlay=document.getElementById('btnPlay');
+  var btnMute=document.getElementById('btnMute');
+  var prog=document.getElementById('prog');
+  var chapters=document.getElementById('chapters');
+  var player=document.getElementById('player');
+
+  // mini-grid sweep cells (scene 4)
+  var g9=document.getElementById('grid9');
+  for(var i=0;i<18;i++){var c=document.createElement('i');
+    var col=i%6,row=(i/6)|0;
+    if(col<4&&row<3){c.className='sw';c.style.animationDelay=(7.5+col*0.22+row*0.5)+'s';}
+    g9.appendChild(c);}
+
+  var audios=SCENES.map(function(_,i){
+    var a=new Audio('assets/tour/0'+(i+1)+'.mp3?v='+V);
+    a.preload='auto';
+    return a;
+  });
+
+  var cur=-1, playing=false, started=false, fbTimer=null;
+  var segs=[];
+  SCENES.forEach(function(s,i){
+    var seg=document.createElement('div');seg.className='seg';seg.innerHTML='<i></i>';
+    seg.addEventListener('click',function(){go(i,true);});
+    prog.appendChild(seg);segs.push(seg);
+    var ch=document.createElement('button');ch.className='chap';
+    ch.innerHTML='<span class="n">'+String(i+1).padStart(2,'0')+'</span><span class="tt">'+s.t+'</span>';
+    ch.addEventListener('click',function(){go(i,true);player.scrollIntoView({behavior:'smooth',block:'start'});});
+    chapters.appendChild(ch);
+  });
+
+  function fmt(i){return 'SCENE '+String(i+1).padStart(2,'0')+' / 0'+SCENES.length;}
+
+  function stopAudio(){
+    if(cur>=0){var a=audios[cur];a.pause();try{a.currentTime=0;}catch(e){}}
+    if(fbTimer){clearTimeout(fbTimer);fbTimer=null;}
+  }
+
+  function go(i,userClick){
+    if(i<0)i=0;
+    if(i>=SCENES.length){finish();return;}
+    stopAudio();
+    cur=i;
+    sceneEls.forEach(function(el){el.classList.remove('on');});
+    // force reflow so re-adding the class restarts every CSS animation
+    void stage.offsetWidth;
+    sceneEls[i].classList.add('on');
+    caption.textContent=SCENES[i].cap;
+    scTitle.textContent=SCENES[i].t.toUpperCase();
+    scNum.textContent=fmt(i);slateScene.textContent=fmt(i);
+    segs.forEach(function(s,k){s.classList.toggle('done',k<i);if(k>=i)s.querySelector('i').style.width='0%';});
+    [].slice.call(chapters.children).forEach(function(c,k){c.classList.toggle('now',k===i);});
+    if(userClick||playing){playing=true;startAudio();}
+    updatePlayBtn();
+    if(started)cover.classList.add('hide');
+  }
+
+  function startAudio(){
+    var a=audios[cur];
+    player.classList.remove('paused');
+    var p=a.play();
+    if(p&&p.catch)p.catch(function(){ /* fall back to timer */ });
+    if(fbTimer)clearTimeout(fbTimer);
+    fbTimer=setTimeout(function(){ if(playing&&(a.paused||!a.duration)) next(); }, FALLBACK_S*1000);
+  }
+
+  function next(){go(cur+1);}
+  function finish(){
+    playing=false;stopAudio();
+    cover.classList.remove('hide');
+    cover.querySelector('.meta').textContent='THAT’S THE TOUR — REPLAY, OR GRAB THE DMG BELOW';
+    document.getElementById('bigplay').lastChild.textContent='REPLAY';
+    started=false;cur=-1;
+    segs.forEach(function(s){s.classList.add('done');});
+    updatePlayBtn();
+  }
+
+  audios.forEach(function(a,i){
+    a.addEventListener('ended',function(){ if(playing&&cur===i) setTimeout(function(){ if(playing&&cur===i) next(); },450); });
+    a.addEventListener('timeupdate',function(){
+      if(cur!==i||!a.duration)return;
+      segs[i].querySelector('i').style.width=(a.currentTime/a.duration*100)+'%';
+    });
+  });
+
+  function updatePlayBtn(){btnPlay.textContent=playing?'⏸ Pause':'▶ Play';}
+
+  function start(){started=true;cover.classList.add('hide');playing=true;go(0,true);}
+  document.getElementById('bigplay').addEventListener('click',start);
+
+  btnPlay.addEventListener('click',function(){
+    if(!started){start();return;}
+    if(playing){playing=false;audios[cur].pause();player.classList.add('paused');}
+    else{playing=false;player.classList.remove('paused');playing=true;
+      if(cur<0){go(0,true);}else{audios[cur].play();}}
+    updatePlayBtn();
+  });
+  document.getElementById('btnPrev').addEventListener('click',function(){go(Math.max(0,(cur<0?0:cur-1)),true);});
+  document.getElementById('btnNext').addEventListener('click',function(){go((cur<0?0:cur+1),true);});
+  btnMute.addEventListener('click',function(){
+    var m=!audios[0].muted;audios.forEach(function(a){a.muted=m;});
+    btnMute.textContent=m?'🔇':'🔊';
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
+    if(e.code==='Space'){e.preventDefault();btnPlay.click();}
+    else if(e.key==='ArrowRight'){document.getElementById('btnNext').click();}
+    else if(e.key==='ArrowLeft'){document.getElementById('btnPrev').click();}
+  });
+
+  // show scene 1 art (paused) behind the cover as a teaser
+  sceneEls[0].classList.add('on');
+})();
+</script>
+</body>
+</html>
