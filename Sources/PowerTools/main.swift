@@ -344,16 +344,19 @@ case "chat-preview":
 
 case "macropad-preview":
     // Offscreen render of the macro pad for design checks (sample profile,
-    // second button shown as a keyword-suggested match).
+    // second button shown as a keyword-suggested match). Flags: "light",
+    // "mini" (traffic strip).
     let out = args.count >= 2 ? args[1] : "macropad-preview.png"
-    let dark = !(args.count >= 3 && args[2] == "light")
+    let dark = !args.contains("light")
+    let mini = args.contains("mini")
     MainActor.assumeIsolated {
         let buttons = ["Invoices", "Projects", "Receipts", "Travel", "Newsletters", "Archive"]
             .map { Config.MacroButton(title: $0, chord: "cmd+shift+m", text: $0, pressReturn: true) }
         let v = MacroPadView(dark: dark)
-        v.configure(appName: "Microsoft Outlook", buttons: buttons, dark: dark, hotkeyName: "Option + Shift")
+        v.configure(appName: "Microsoft Outlook", buttons: buttons, dark: dark,
+                    hotkeyName: "Option + Shift", mini: mini)
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
-        v.previewState(hover: 4, suggested: [1])
+        v.previewState(hover: mini ? nil : 4, suggested: [1])
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
         v.cacheDisplay(in: v.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {

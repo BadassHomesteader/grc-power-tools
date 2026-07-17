@@ -28,6 +28,16 @@ final class MacroPad {
     /// Panel top-left, preserved across re-renders and off/on toggles so the
     /// pad stays where the user dragged it.
     private var savedTopLeft: NSPoint?
+    /// Traffic-light mode (same discipline as AgentPad): the header "–"
+    /// collapses the pad to a strip of squares — one per macro, lit when its
+    /// keywords are on screen — hovering the strip peeks the full pad, leaving
+    /// it drops back to the strip. ✕ / hotkey dismiss resets to full.
+    private var miniPreferred = false
+    private var miniActive = false
+    /// Docking: drop the pad near a corner or edge midpoint and it snaps
+    /// there; every re-render (mini↔full, profile swaps) re-anchors to the
+    /// same spot until the user drags it away again. Geometry in PadDock.
+    private var dockAnchor: PadDock?
     private var suggestTask: Task<Void, Never>?
     private var suggestTimer: Timer?
     /// Generation counter: a scan may only touch shared state (suggestTask,
@@ -86,7 +96,21 @@ final class MacroPad {
         panel?.orderOut(nil)
         panel = nil
         padView = nil
+        miniPreferred = false
+        miniActive = false
         notifyState()
+    }
+
+    /// After a drag: snap to the nearest anchor when dropped close enough,
+    /// otherwise stay free-floating.
+    private func snapAfterDrag() {
+        guard let panel, let vf = (panel.screen ?? NSScreen.main)?.visibleFrame else { return }
+        if let hit = PadDock.nearest(to: panel.frame.origin, size: panel.frame.size, in: vf) {
+            dockAnchor = hit.anchor
+            panel.setFrame(NSRect(origin: hit.origin, size: panel.frame.size), display: true, animate: true)
+        } else {
+            dockAnchor = nil
+        }
     }
 
     /// Cancel any in-flight scan and retire its generation so its cleanup /
@@ -135,6 +159,25 @@ final class MacroPad {
             self?.lastCapture = nil
             self?.refreshSuggestions()
         }
+        view.onMinimize = { [weak self] in
+            guard let self else { return }
+            // Toggle: from full → traffic lights; from a peeked pad (hover-
+            // expanded strip) → pin it back to full-time.
+            self.miniPreferred.toggle()
+            self.miniActive = self.miniPreferred
+            self.render(preservingHighlights: true)
+        }
+        view.onExpand = { [weak self] in
+            guard let self, self.miniActive else { return }
+            self.miniActive = false
+            self.render(preservingHighlights: true)
+        }
+        view.onCollapse = { [weak self] in
+            guard let self, self.miniPreferred, !self.miniActive else { return }
+            self.miniActive = true
+            self.render(preservingHighlights: true)
+        }
+        view.onDragEnd = { [weak self] in self?.snapAfterDrag() }
         let win = NSPanel(contentRect: NSRect(origin: .zero, size: view.fittingSize),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         win.isOpaque = false
@@ -151,15 +194,31 @@ final class MacroPad {
         win.orderFrontRegardless()
     }
 
-    private func render(on screen: NSScreen? = nil) {
+    private func render(on screen: NSScreen? = nil, preservingHighlights: Bool = false) {
         guard let panel, let view = padView else { return }
-        lastCapture = nil   // configure() clears highlights; force the next scan to re-OCR
+        // Mini↔full toggles keep the current OCR highlights (the strip's lit
+        // squares are why the user peeked); every other render clears them via
+        // configure() and forces the next scan to re-OCR.
+        let hits = preservingHighlights ? view.suggested : []
+        if !preservingHighlights { lastCapture = nil }
         var current: Config.MacroProfile?
         if let id = currentBundleID { current = profile(for: id) }
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
-                       buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName)
+                       buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName,
+                       mini: miniActive, peeking: miniPreferred && !miniActive)
+        view.suggested = hits
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
+
+        // Docked: pin to the anchor for whatever size this render came out at,
+        // so the mini strip parks in the same corner as the full pad.
+        if let dockAnchor, let vf = (screen ?? panel.screen ?? NSScreen.main)?.visibleFrame {
+            savedTopLeft = nil
+            panel.setFrame(NSRect(origin: dockAnchor.origin(for: size, in: vf), size: size), display: true)
+            refreshSuggestions()
+            notifyState()
+            return
+        }
 
         // Keep the top-left corner anchored so profile swaps don't make the pad
         // jump; first show defaults to the right edge of the screen.
@@ -305,12 +364,18 @@ final class MacroPadView: NSView {
     var onTap: ((Int) -> Void)?
     var onClose: (() -> Void)?
     var onRescan: (() -> Void)?
+    var onMinimize: (() -> Void)?
+    var onExpand: (() -> Void)?
+    var onCollapse: (() -> Void)?
+    var onDragEnd: (() -> Void)?
     var suggested: Set<Int> = [] { didSet { needsDisplay = true } }
     var scanning = false { didSet { needsDisplay = true } }
 
     private var appName = ""
     private var buttons: [Config.MacroButton] = []
     private var dark: Bool
+    private var mini = false
+    private var peeking = false   // hover-expanded from the strip; – becomes □
     private var hotkeyName = ""
     private var hovered: Int?
     private var pressed: Int?
@@ -322,6 +387,9 @@ final class MacroPadView: NSView {
     private static let gap: CGFloat = 5
     private static let emptyH: CGFloat = 52
     private static let footerH: CGFloat = 17
+    private static let sq: CGFloat = 14      // traffic-light square
+    private static let sqGap: CGFloat = 4
+    private static let miniPad: CGFloat = 7
 
     init(dark: Bool) {
         self.dark = dark
@@ -329,10 +397,13 @@ final class MacroPadView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(appName: String, buttons: [Config.MacroButton], dark: Bool, hotkeyName: String = "") {
+    func configure(appName: String, buttons: [Config.MacroButton], dark: Bool, hotkeyName: String = "",
+                   mini: Bool = false, peeking: Bool = false) {
         self.appName = appName
         self.buttons = buttons
         self.dark = dark
+        self.mini = mini
+        self.peeking = peeking
         self.hotkeyName = hotkeyName
         hovered = nil
         pressed = nil
@@ -346,6 +417,11 @@ final class MacroPadView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override var fittingSize: NSSize {
+        if mini {
+            let n = CGFloat(max(buttons.count, 1))
+            return NSSize(width: Self.miniPad * 2 + Self.sq,
+                          height: Self.miniPad * 2 + n * Self.sq + (n - 1) * Self.sqGap)
+        }
         let content = buttons.isEmpty
             ? Self.emptyH
             : CGFloat(buttons.count) * Self.btnH + CGFloat(buttons.count - 1) * Self.gap + Self.footerH
@@ -365,11 +441,44 @@ final class MacroPadView: NSView {
 
     private var closeRect: NSRect { NSRect(x: Self.width - Self.pad - 18, y: Self.pad + 2, width: 18, height: 18) }
     private var rescanRect: NSRect { NSRect(x: Self.width - Self.pad - 40, y: Self.pad + 2, width: 18, height: 18) }
+    private var minimizeRect: NSRect { NSRect(x: Self.width - Self.pad - 62, y: Self.pad + 2, width: 18, height: 18) }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSBezierPath(roundedRect: bounds, xRadius: 14, yRadius: 14).setClip()
+        NSBezierPath(roundedRect: bounds, xRadius: mini ? 9 : 14, yRadius: mini ? 9 : 14).setClip()
         bg.setFill()
         bounds.fill()
+
+        // Traffic lights: one square per macro, stacked in button order (same
+        // vertical axis as the full pad's buttons); a square lights up when its
+        // keywords are on screen, so the collapsed strip still signals a match.
+        if mini {
+            if buttons.isEmpty {
+                dim.withAlphaComponent(0.3).setFill()
+                NSBezierPath(roundedRect: NSRect(x: Self.miniPad, y: Self.miniPad,
+                                                 width: Self.sq, height: Self.sq),
+                             xRadius: 4, yRadius: 4).fill()
+                return
+            }
+            for i in buttons.indices {
+                let r = NSRect(x: Self.miniPad, y: Self.miniPad + CGFloat(i) * (Self.sq + Self.sqGap),
+                               width: Self.sq, height: Self.sq)
+                let path = NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4)
+                if i == pressed {
+                    accent.withAlphaComponent(0.95).setFill()
+                } else if suggested.contains(i) {
+                    accent.withAlphaComponent(0.4).setFill()
+                } else {
+                    (dark ? NSColor.white : .black).withAlphaComponent(0.12).setFill()
+                }
+                path.fill()
+                if suggested.contains(i) {
+                    accent.setStroke()
+                    path.lineWidth = 1.5
+                    path.stroke()
+                }
+            }
+            return
+        }
 
         (appName as NSString).draw(
             at: NSPoint(x: Self.pad + 4, y: Self.pad + 3),
@@ -381,6 +490,9 @@ final class MacroPadView: NSView {
         ]
         ("↻" as NSString).draw(in: rescanRect.offsetBy(dx: 3, dy: 1), withAttributes: glyphAttrs)
         ("✕" as NSString).draw(in: closeRect.offsetBy(dx: 3, dy: 1), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
+        // – collapses to traffic lights; □ (while peeking) pins full mode back.
+        ((peeking ? "□" : "–") as NSString).draw(in: minimizeRect.offsetBy(dx: 4, dy: 1), withAttributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
 
         if buttons.isEmpty {
@@ -466,18 +578,28 @@ final class MacroPadView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // performDrag tracks synchronously until mouse-up, so drag-end (and
+        // dock snapping) follows it directly.
+        if mini {
+            window?.performDrag(with: event)
+            onDragEnd?()
+            return
+        }
         let p = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -4, dy: -4).contains(p) { onClose?(); return }
         if rescanRect.insetBy(dx: -4, dy: -4).contains(p) { onRescan?(); return }
+        if minimizeRect.insetBy(dx: -4, dy: -4).contains(p) { onMinimize?(); return }
         if let i = buttons.indices.first(where: { buttonRect($0).contains(p) }) {
             flash(i)
             onTap?(i)
             return
         }
         window?.performDrag(with: event)   // anywhere else moves the pad
+        onDragEnd?()
     }
 
     override func mouseMoved(with event: NSEvent) {
+        if mini { onExpand?(); return }
         let p = convert(event.locationInWindow, from: nil)
         let h = buttons.indices.first { buttonRect($0).contains(p) }
         if h != hovered {
@@ -489,6 +611,7 @@ final class MacroPadView: NSView {
     override func mouseExited(with event: NSEvent) {
         hovered = nil
         needsDisplay = true
+        if !mini { onCollapse?() }   // no-op unless this pad lives in mini mode
     }
 
     override func updateTrackingAreas() {

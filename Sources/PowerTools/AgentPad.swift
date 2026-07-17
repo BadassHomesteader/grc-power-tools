@@ -32,44 +32,16 @@ final class AgentPad: NSObject {
 
     /// Docking: drop the pad near a corner or edge midpoint and it snaps
     /// there; every re-render (mini↔full, row-count changes) re-anchors to
-    /// the same spot until the user drags it away again.
-    enum DockAnchor: CaseIterable {
-        case topLeft, topMid, topRight, midLeft, midRight, bottomLeft, bottomMid, bottomRight
-    }
-    private var dockAnchor: DockAnchor?
-    private static let snapDistance: CGFloat = 96
-    private static let dockMargin: CGFloat = 12
-
-    private static func anchorOrigin(_ a: DockAnchor, size: NSSize, in vf: NSRect) -> NSPoint {
-        let m = dockMargin
-        let x: CGFloat, y: CGFloat
-        switch a {
-        case .topLeft, .midLeft, .bottomLeft: x = vf.minX + m
-        case .topMid, .bottomMid: x = vf.midX - size.width / 2
-        case .topRight, .midRight, .bottomRight: x = vf.maxX - m - size.width
-        }
-        switch a {
-        case .topLeft, .topMid, .topRight: y = vf.maxY - m - size.height
-        case .midLeft, .midRight: y = vf.midY - size.height / 2
-        case .bottomLeft, .bottomMid, .bottomRight: y = vf.minY + m
-        }
-        return NSPoint(x: x, y: y)
-    }
+    /// the same spot until the user drags it away again. Geometry in PadDock.
+    private var dockAnchor: PadDock?
 
     /// After a drag: snap to the nearest anchor when dropped close enough,
     /// otherwise stay free-floating.
     private func snapAfterDrag() {
         guard let panel, let vf = (panel.screen ?? NSScreen.main)?.visibleFrame else { return }
-        let size = panel.frame.size
-        var best: (anchor: DockAnchor, origin: NSPoint, dist: CGFloat)?
-        for anchor in DockAnchor.allCases {
-            let o = Self.anchorOrigin(anchor, size: size, in: vf)
-            let d = hypot(panel.frame.origin.x - o.x, panel.frame.origin.y - o.y)
-            if best == nil || d < best!.dist { best = (anchor, o, d) }
-        }
-        if let best, best.dist <= Self.snapDistance {
-            dockAnchor = best.anchor
-            panel.setFrame(NSRect(origin: best.origin, size: size), display: true, animate: true)
+        if let hit = PadDock.nearest(to: panel.frame.origin, size: panel.frame.size, in: vf) {
+            dockAnchor = hit.anchor
+            panel.setFrame(NSRect(origin: hit.origin, size: panel.frame.size), display: true, animate: true)
         } else {
             dockAnchor = nil
         }
@@ -248,9 +220,8 @@ final class AgentPad: NSObject {
         // Docked: pin to the anchor for whatever size this render came out at,
         // so the mini strip parks in the same corner as the full pad.
         if let dockAnchor, let vf = (screen ?? panel.screen ?? NSScreen.main)?.visibleFrame {
-            let origin = Self.anchorOrigin(dockAnchor, size: size, in: vf)
             savedTopLeft = nil
-            panel.setFrame(NSRect(origin: origin, size: size), display: true)
+            panel.setFrame(NSRect(origin: dockAnchor.origin(for: size, in: vf), size: size), display: true)
             return
         }
 
