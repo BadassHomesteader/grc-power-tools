@@ -381,10 +381,13 @@ final class AgentPadView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Mini strip: agent identity bar (3px) + gap beside each status square.
+    private static let miniBarSpan: CGFloat = 6
+
     override var fittingSize: NSSize {
         if mini {
             let n = CGFloat(max(sessions.count, 1))
-            return NSSize(width: Self.miniPad * 2 + Self.sq,
+            return NSSize(width: Self.miniPad * 2 + Self.miniBarSpan + Self.sq,
                           height: Self.miniPad * 2 + n * Self.sq + (n - 1) * Self.sqGap)
         }
         let content = sessions.isEmpty
@@ -471,16 +474,24 @@ final class AgentPadView: NSView {
         if mini {
             if sessions.isEmpty {
                 dim.withAlphaComponent(0.3).setFill()
-                NSBezierPath(roundedRect: NSRect(x: Self.miniPad, y: Self.miniPad,
+                NSBezierPath(roundedRect: NSRect(x: Self.miniPad + Self.miniBarSpan, y: Self.miniPad,
                                                  width: Self.sq, height: Self.sq),
                              xRadius: 4, yRadius: 4).fill()
                 return
             }
             for (i, session) in sessions.enumerated() {
-                let r = NSRect(x: Self.miniPad, y: Self.miniPad + CGFloat(i) * (Self.sq + Self.sqGap),
-                               width: Self.sq, height: Self.sq)
+                let y = Self.miniPad + CGFloat(i) * (Self.sq + Self.sqGap)
                 let stale = session.state == .idle
                     && session.stateChanged.timeIntervalSinceNow < -3600
+                // Same identity bar as the full rows, scaled to the square.
+                let agentBar = session.isCodex
+                    ? NSColor(srgbRed: 0.35, green: 0.45, blue: 1, alpha: 1)
+                    : NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+                agentBar.withAlphaComponent(stale ? 0.35 : 1).setFill()
+                NSBezierPath(roundedRect: NSRect(x: Self.miniPad, y: y + 1, width: 3, height: Self.sq - 2),
+                             xRadius: 1.5, yRadius: 1.5).fill()
+                let r = NSRect(x: Self.miniPad + Self.miniBarSpan, y: y,
+                               width: Self.sq, height: Self.sq)
                 Self.stateColor(session.state).withAlphaComponent(stale ? 0.35 : 0.9).setFill()
                 let path = NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4)
                 path.fill()
