@@ -200,6 +200,8 @@ final class AppController {
                 self.toggleCheatSheet()
             case .cheatSheetClose:
                 self.cheatSheet.dismiss()
+            case .powerRingClose:
+                self.powerRing.dismiss()
             case .powerRing:
                 self.togglePowerRing()
             }
@@ -224,9 +226,12 @@ final class AppController {
             self?.hotkey?.macroPadVisible = visible
             self?.hotkey?.macroPadButtonCount = buttonCount
         }
-        // The tap mirrors sheet visibility so a plain Esc can close it.
+        // The tap mirrors sheet/ring visibility so a plain Esc can close them.
         cheatSheet.onVisibility = { [weak self] visible in
             self?.hotkey?.cheatSheetVisible = visible
+        }
+        powerRing.onVisibility = { [weak self] visible in
+            self?.hotkey?.powerRingVisible = visible
         }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main

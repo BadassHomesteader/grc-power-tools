@@ -46,6 +46,9 @@ final class PowerRing {
     private var clickAway: Any?
     private var timeout: Timer?
     var isVisible: Bool { panel != nil }
+    /// Fired on every show/hide (all dismissal paths) — the hotkey tap
+    /// mirrors this so a plain Esc can close the ring.
+    var onVisibility: ((Bool) -> Void)?
 
     func present(at point: NSPoint, dark: Bool, actions: [Action]) {
         dismiss()
@@ -83,6 +86,7 @@ final class PowerRing {
         timeout = Timer.scheduledTimer(withTimeInterval: 8, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.dismiss() }
         }
+        onVisibility?(true)
     }
 
     func dismiss() {
@@ -90,8 +94,10 @@ final class PowerRing {
         timeout = nil
         if let clickAway { NSEvent.removeMonitor(clickAway) }
         clickAway = nil
-        panel?.orderOut(nil)
-        panel = nil
+        guard let panel else { return }
+        panel.orderOut(nil)
+        self.panel = nil
+        onVisibility?(false)
     }
 }
 

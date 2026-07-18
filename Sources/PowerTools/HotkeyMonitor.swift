@@ -49,6 +49,7 @@ final class HotkeyMonitor {
         case cheatSheet                   // hold + Q — toggle the hotkey cheat sheet
         case cheatSheetClose              // Esc while the sheet is up — close it
         case powerRing                    // hold + right-click — radial menu at the cursor
+        case powerRingClose               // Esc while the ring is up — close it
     }
 
     var handler: ((Callback) -> Void)?
@@ -78,6 +79,8 @@ final class HotkeyMonitor {
     /// Power Ring feature flag (same discipline) — when off, a leader-held
     /// right-click passes through untouched.
     var powerRingEnabled = true
+    /// True while the ring is up (same discipline) — plain Esc closes it.
+    var powerRingVisible = false
     /// Buttons in the pad's current profile — digits ≥ this pass through.
     var macroPadButtonCount = 0
 
@@ -372,13 +375,17 @@ final class HotkeyMonitor {
             dispatch(.cycleCancel)
             return nil
         }
-        // Plain Esc while the cheat sheet is up → close it (swallowed so the
-        // frontmost app's dialogs don't also close). Leader-held Esc keeps its
-        // cancel meaning — the sheet closes there too (leader block below).
-        if cheatSheetVisible, !held, type == .keyDown, keyCode == Self.kVK_Escape,
+        // Plain Esc while the cheat sheet or Power Ring is up → close them
+        // (swallowed so the frontmost app's dialogs don't also close).
+        // Leader-held Esc keeps its cancel meaning — they close there too
+        // (leader block below).
+        if cheatSheetVisible || powerRingVisible, !held, type == .keyDown, keyCode == Self.kVK_Escape,
            flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).isEmpty {
             swallowedKeyUps.insert(keyCode)
-            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.cheatSheetClose) }
+            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                if cheatSheetVisible { dispatch(.cheatSheetClose) }
+                if powerRingVisible { dispatch(.powerRingClose) }
+            }
             return nil
         }
         // Arrows while cycling move the strip highlight (Windows Alt-Tab style):
@@ -453,6 +460,7 @@ final class HotkeyMonitor {
             case Self.kVK_Escape:
                 interrupted = true; swallowedKeyUps.insert(keyCode)
                 if cheatSheetVisible { dispatch(.cheatSheetClose) }
+                if powerRingVisible { dispatch(.powerRingClose) }
                 dispatch(.cancel)
                 return nil // swallow so it doesn't close the user's dialogs
             case Self.kVK_ANSI_T:
