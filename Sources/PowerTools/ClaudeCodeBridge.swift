@@ -69,6 +69,12 @@ struct ClaudeSession: Codable {
 
     var displayTitle: String { label.isEmpty ? projectName : label }
 
+    /// Which agent produced this row — nil/"claude" = Claude Code, "codex" =
+    /// OpenAI Codex (watch-only rows derived from ~/.codex by CodexWatcher).
+    /// Optional so session files persisted by older builds still decode.
+    var kind: String? = nil
+    var isCodex: Bool { kind == "codex" }
+
     /// Short tty tag ("s003") to tell two sessions in the same project apart.
     var ttyTag: String {
         tty.hasPrefix("tty") ? String(tty.dropFirst(3)) : tty
@@ -84,8 +90,22 @@ final class ClaudeSessionRegistry {
     private var sessions: [String: ClaudeSession] = [:]
     var onChange: (([ClaudeSession]) -> Void)?
 
+    /// Rows contributed by non-Claude watchers (Codex today, Cursor next):
+    /// they ride the same pad/toast/dismiss pipeline, but their watcher owns
+    /// them — hook events, discovery, and pruning never touch them, and they
+    /// are not persisted (re-derived from disk on every refresh).
+    private var external: [String: ClaudeSession] = [:]
+
     var ordered: [ClaudeSession] {
-        sessions.values.sorted { $0.started < $1.started }
+        (Array(sessions.values) + Array(external.values)).sorted { $0.started < $1.started }
+    }
+
+    /// Replace all external rows of one kind ("codex", …). Dismissed ids stay
+    /// hidden until their thread is dismissed off the LRU by newer closes.
+    func setExternal(kind: String, _ rows: [ClaudeSession]) {
+        external = external.filter { $0.value.kind != kind }
+        for r in rows where !dismissed.contains(r.id) { external[r.id] = r }
+        onChange?(ordered)
     }
 
     // MARK: Persistence — the app restarts (updates, crashes) must not blank
@@ -112,7 +132,9 @@ final class ClaudeSessionRegistry {
     }
 
     private func persist() {
-        if let data = try? JSONEncoder().encode(ordered) {
+        // Claude rows only — external rows are re-derived from disk.
+        let own = sessions.values.sorted { $0.started < $1.started }
+        if let data = try? JSONEncoder().encode(own) {
             try? data.write(to: Self.persistURL, options: .atomic)
         }
     }
@@ -135,6 +157,7 @@ final class ClaudeSessionRegistry {
 
     func dismissSession(_ id: String) {
         sessions.removeValue(forKey: id)
+        external.removeValue(forKey: id)
         dismissed.removeAll { $0 == id }
         dismissed.append(id)
         if dismissed.count > 100 { dismissed.removeFirst(dismissed.count - 100) }

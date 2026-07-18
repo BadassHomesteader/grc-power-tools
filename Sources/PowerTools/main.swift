@@ -563,12 +563,15 @@ case "agentpad-preview":
             s.stateChanged = Date().addingTimeInterval(-ageSec)
             return s
         }
+        var codexRow = fake("codex-1", "/Users/dev/livevox", "Assess GridOps_Cal for refactors", .busy, "", ageSec: 30)
+        codexRow.kind = "codex"
         let sessions = AgentPad.triageSorted([
             fake("1", "/Users/dev/gridops-ft-kyaw", "Fix the daypart call columns rebuild", .busy, "", ageSec: 45),
             fake("2", "/Users/dev/grc-power-tools", "Review macropad idea for Power Tools", .needsPermission, "Bash: scripts/bundle.sh", ageSec: 12),
             fake("3", "/Users/dev/libre-crm-cci", "I need to make a CRM for CCI", .idle, "", ageSec: 300),
             fake("4", "/Users/dev/grc-todo", "", .error, "rate_limit", ageSec: 660),
             fake("5", "/Users/dev/gridops-ft-njaw", "Reconcile the corr-index blanks", .idle, "", ageSec: 90_000),
+            codexRow,
         ])
         let v = AgentPadView(dark: dark)
         v.configure(sessions: sessions, dark: dark, hotkeyName: "Option + Shift", hooksInstalled: true,
@@ -581,6 +584,15 @@ case "agentpad-preview":
             try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
         }
     }
+
+case "codex-scan-test":
+    // Live verification: print the rows CodexWatcher derives from the REAL
+    // ~/.codex store right now (title · state · age · cwd).
+    let snaps = CodexWatcher.scan()
+    for s in snaps {
+        print("\(s.id)  state=\(s.state.label)  changed=\(Int(-s.changed.timeIntervalSinceNow))s ago  cwd=\(s.cwd)  title=\(s.title.isEmpty ? "(untitled)" : s.title)")
+    }
+    print("\(snaps.count) codex row(s)")
 
 case "agentpad-server-test":
     // Smoke-test the hook pipeline without the UI: start the loopback server +

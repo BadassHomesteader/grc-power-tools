@@ -270,7 +270,11 @@ final class AppController {
             }
             claudeRegistry.loadPersisted()      // survive our own restarts
             claudeRegistry.refreshDiscovered()  // find sessions that predate us
-            agentPad.onRefresh = { [weak self] in self?.claudeRegistry.refreshDiscovered() }
+            agentPad.onRefresh = { [weak self] in
+            guard let self else { return }
+            self.claudeRegistry.refreshDiscovered()
+            CodexWatcher.refresh(into: self.claudeRegistry)
+        }
         }
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
     }
@@ -791,6 +795,7 @@ final class AppController {
         overlay.hide()
         claudeRegistry.pruneDead()
         claudeRegistry.refreshDiscovered()  // catch silent sessions on every open
+        CodexWatcher.refresh(into: claudeRegistry)
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
@@ -803,6 +808,22 @@ final class AppController {
     }
 
     private func handleAgentPadAction(_ session: ClaudeSession, _ action: AgentPad.Action) {
+        // Watch-only rows (Codex): focus and close are the whole surface —
+        // there is no injection channel into an Electron app.
+        if session.isCodex {
+            switch action {
+            case .focus:
+                log("agentpad: row click → focus codex \(session.displayTitle)")
+                CodexWatcher.focus()
+                overlay.showResult("→ \(session.displayTitle)")
+            case .closeChat:
+                claudeRegistry.dismissSession(session.id)
+                overlay.showResult("Closed · \(session.displayTitle)")
+            default:
+                break
+            }
+            return
+        }
         switch action {
         case .focus:
             log("agentpad: row click → focus \(session.projectName) [\(session.id.prefix(8))]")

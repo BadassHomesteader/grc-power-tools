@@ -206,6 +206,16 @@ final class AgentPad: NSObject {
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(.separator())
+        // Watch-only rows: no model switching or injection — just Close.
+        if session.isCodex {
+            let close = NSMenuItem(title: "Close Chat", action: #selector(menuCloseChat(_:)), keyEquivalent: "")
+            close.target = self
+            menu.addItem(close)
+            if let view = padView {
+                menu.popUp(positioning: nil, at: view.convert(event.locationInWindow, from: nil), in: view)
+            }
+            return
+        }
         for (title, alias) in [("Switch to Opus 4.8", "opus"),
                                ("Switch to Sonnet 5", "sonnet"),
                                ("Switch to Haiku 4.5", "haiku")] {
@@ -418,6 +428,9 @@ final class AgentPadView: NSView {
     /// Buttons for row `i` — hover reveals them in place of the state line;
     /// a waiting permission keeps ✓/✕ visible on its own (taller) row.
     private func buttons(for session: ClaudeSession) -> [(glyph: String, action: AgentPad.Action, tint: NSColor?)] {
+        // Watch-only agents (Codex): no remote control — the row is presence,
+        // state, and click-to-focus; hover reveals nothing.
+        if session.isCodex { return [] }
         if session.state == .needsPermission {
             return [("✓", .accept, NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)),
                     ("✕", .deny, NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1))]
@@ -483,14 +496,16 @@ final class AgentPadView: NSView {
 
         let titleAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg]
-        ("Claude Code" as NSString).draw(at: NSPoint(x: Self.pad + 4, y: Self.pad + 3), withAttributes: titleAttrs)
+        // The pad started Claude-only; with Codex (and Cursor next) it's a fleet.
+        let padTitle = sessions.contains(where: { $0.kind != nil && $0.kind != "claude" }) ? "Agents" : "Claude Code"
+        (padTitle as NSString).draw(at: NSPoint(x: Self.pad + 4, y: Self.pad + 3), withAttributes: titleAttrs)
         // Fleet state at a glance: total count, and how many are blocked on you.
         if !sessions.isEmpty {
             let attention = sessions.filter {
                 $0.state == .needsPermission || $0.state == .needsInput
                     || $0.state == .unseen || $0.state == .error
             }.count
-            var x = Self.pad + 4 + ("Claude Code" as NSString).size(withAttributes: titleAttrs).width + 6
+            var x = Self.pad + 4 + (padTitle as NSString).size(withAttributes: titleAttrs).width + 6
             var counts: [(String, NSColor)] = [("· \(sessions.count)", dim)]
             if attention > 0 {
                 counts.append(("· \(attention) need\(attention == 1 ? "s" : "") you",
@@ -575,6 +590,7 @@ final class AgentPadView: NSView {
             // Second line: state · age · project (the project folder moves down
             // here once the title is the prompt; tty tag disambiguates twins).
             var line2 = "\(session.state.label) · \(Self.age(session.stateChanged))"
+            if session.isCodex { line2 += " · codex" }
             if !session.label.isEmpty {
                 line2 += " · \(session.projectName)"
             } else if !session.ttyTag.isEmpty,
@@ -585,7 +601,9 @@ final class AgentPadView: NSView {
                 let d = session.detail.replacingOccurrences(of: "\n", with: " ")
                 line2 = "\(session.state.label) · \(d)"
             }
-            if session.state == .needsPermission || i != hoveredRow {
+            // Hover swaps this line for the buttons — except on rows that have
+            // none (watch-only agents), where it would just blank out.
+            if session.state == .needsPermission || i != hoveredRow || btns.isEmpty {
                 (line2 as NSString).draw(
                     in: NSRect(x: r.minX + 10, y: r.minY + 24, width: textMaxX - (r.minX + 10), height: 14),
                     withAttributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: dim,
