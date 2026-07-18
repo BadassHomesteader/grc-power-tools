@@ -69,11 +69,14 @@ struct ClaudeSession: Codable {
 
     var displayTitle: String { label.isEmpty ? projectName : label }
 
-    /// Which agent produced this row — nil/"claude" = Claude Code, "codex" =
-    /// OpenAI Codex (watch-only rows derived from ~/.codex by CodexWatcher).
+    /// Which agent produced this row — nil/"claude" = Claude Code; "codex" /
+    /// "cursor" = watch-only rows derived from those apps' on-disk state.
     /// Optional so session files persisted by older builds still decode.
     var kind: String? = nil
     var isCodex: Bool { kind == "codex" }
+    var isCursor: Bool { kind == "cursor" }
+    /// No injection channel (Electron hosts): row = presence + state + focus.
+    var isWatchOnly: Bool { isCodex || isCursor }
 
     /// Short tty tag ("s003") to tell two sessions in the same project apart.
     var ttyTag: String {

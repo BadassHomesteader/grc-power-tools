@@ -33,6 +33,7 @@ final class AppController {
                             dark: config.appearance.isDark)
             hotkey?.powerRingEnabled = config.powerRing
             if !config.agentPadCodex { claudeRegistry.setExternal(kind: "codex", []) }
+            if !config.agentPadCursor { claudeRegistry.setExternal(kind: "cursor", []) }
         }
     }
 
@@ -275,6 +276,7 @@ final class AppController {
             guard let self else { return }
             self.claudeRegistry.refreshDiscovered()
             if self.config.agentPadCodex { CodexWatcher.refresh(into: self.claudeRegistry) }
+            if self.config.agentPadCursor { CursorWatcher.refresh(into: self.claudeRegistry) }
         }
         }
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
@@ -800,6 +802,7 @@ final class AppController {
         claudeRegistry.pruneDead()
         claudeRegistry.refreshDiscovered()  // catch silent sessions on every open
         if config.agentPadCodex { CodexWatcher.refresh(into: claudeRegistry) }
+        if config.agentPadCursor { CursorWatcher.refresh(into: claudeRegistry) }
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
@@ -812,13 +815,13 @@ final class AppController {
     }
 
     private func handleAgentPadAction(_ session: ClaudeSession, _ action: AgentPad.Action) {
-        // Watch-only rows (Codex): focus and close are the whole surface —
-        // there is no injection channel into an Electron app.
-        if session.isCodex {
+        // Watch-only rows (Codex, Cursor): focus and close are the whole
+        // surface — there is no injection channel into an Electron app.
+        if session.isWatchOnly {
             switch action {
             case .focus:
-                log("agentpad: row click → focus codex \(session.displayTitle)")
-                CodexWatcher.focus()
+                log("agentpad: row click → focus \(session.kind ?? "?") \(session.displayTitle)")
+                if session.isCursor { CursorWatcher.focus() } else { CodexWatcher.focus() }
                 overlay.showResult("→ \(session.displayTitle)")
             case .closeChat:
                 claudeRegistry.dismissSession(session.id)

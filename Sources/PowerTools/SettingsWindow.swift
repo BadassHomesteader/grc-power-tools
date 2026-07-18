@@ -88,6 +88,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let agentPadCheck = NSButton(checkboxWithTitle: "Agent Pad — floating agent-session panel (hold hotkey + J, or menu bar)", target: nil, action: nil)
     private let agentToastsCheck = NSButton(checkboxWithTitle: "Permission toasts — Approve/Deny card top-right while the pad is closed", target: nil, action: nil)
     private let agentCodexCheck = NSButton(checkboxWithTitle: "Watch Codex — ChatGPT/Codex threads as rows (watch-only, click to focus)", target: nil, action: nil)
+    private let agentCursorCheck = NSButton(checkboxWithTitle: "Watch Cursor — cloud agents + Agents Window sessions (watch-only)", target: nil, action: nil)
     private let hooksStatus = NSTextField(labelWithString: " ")
 
     // Power Ring: one popup per slot, tag = slot index (clockwise from top).
@@ -186,6 +187,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         agentToastsCheck.action = #selector(agentToastsToggled)
         agentCodexCheck.target = self
         agentCodexCheck.action = #selector(agentCodexToggled)
+        agentCursorCheck.target = self
+        agentCursorCheck.action = #selector(agentCursorToggled)
         for i in 0..<8 {
             let popup = NSPopUpButton(frame: .zero, pullsDown: false)
             for entry in PowerRingCatalog.all { popup.addItem(withTitle: entry.title) }
@@ -1043,7 +1046,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         hooksStatus.lineBreakMode = .byWordWrapping
         hooksStatus.preferredMaxLayoutWidth = 500
         return vstack([
-            section("Agent Pad", [agentPadCheck, note, agentToastsCheck, agentCodexCheck], width: 540),
+            section("Agent Pad", [agentPadCheck, note, agentToastsCheck, agentCodexCheck, agentCursorCheck], width: 540),
             section("Claude Code hooks", [hooksRow, hooksStatus], width: 540),
         ])
     }
@@ -1068,6 +1071,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func agentCodexToggled() {
         config.agentPadCodex = (agentCodexCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func agentCursorToggled() {
+        config.agentPadCursor = (agentCursorCheck.state == .on)
         config.save()
         onConfigChange(config)
     }
@@ -1195,6 +1204,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         agentPadCheck.state = config.agentPad ? .on : .off
         agentToastsCheck.state = config.agentPadToasts ? .on : .off
         agentCodexCheck.state = config.agentPadCodex ? .on : .off
+        agentCursorCheck.state = config.agentPadCursor ? .on : .off
         refreshHooksStatus()
         powerRingCheck.state = config.powerRing ? .on : .off
         for (i, popup) in ringSlotPopups.enumerated() {

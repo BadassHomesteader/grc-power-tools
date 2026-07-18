@@ -207,7 +207,7 @@ final class AgentPad: NSObject {
         menu.addItem(header)
         menu.addItem(.separator())
         // Watch-only rows: no model switching or injection — just Close.
-        if session.isCodex {
+        if session.isWatchOnly {
             let close = NSMenuItem(title: "Close Chat", action: #selector(menuCloseChat(_:)), keyEquivalent: "")
             close.target = self
             menu.addItem(close)
@@ -430,10 +430,17 @@ final class AgentPadView: NSView {
 
     /// Buttons for row `i` — hover reveals them in place of the state line;
     /// a waiting permission keeps ✓/✕ visible on its own (taller) row.
+    /// Agent identity color — the left-edge bar in rows AND the strip.
+    static func agentColor(_ session: ClaudeSession) -> NSColor {
+        if session.isCodex { return NSColor(srgbRed: 0.35, green: 0.45, blue: 1, alpha: 1) }
+        if session.isCursor { return NSColor(srgbRed: 0.65, green: 0.4, blue: 0.95, alpha: 1) }
+        return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)   // Claude terracotta
+    }
+
     private func buttons(for session: ClaudeSession) -> [(glyph: String, action: AgentPad.Action, tint: NSColor?)] {
-        // Watch-only agents (Codex): no remote control — the row is presence,
-        // state, and click-to-focus; hover reveals nothing.
-        if session.isCodex { return [] }
+        // Watch-only agents (Codex, Cursor): no remote control — the row is
+        // presence, state, and click-to-focus; hover reveals nothing.
+        if session.isWatchOnly { return [] }
         if session.state == .needsPermission {
             return [("✓", .accept, NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)),
                     ("✕", .deny, NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1))]
@@ -484,10 +491,7 @@ final class AgentPadView: NSView {
                 let stale = session.state == .idle
                     && session.stateChanged.timeIntervalSinceNow < -3600
                 // Same identity bar as the full rows, scaled to the square.
-                let agentBar = session.isCodex
-                    ? NSColor(srgbRed: 0.35, green: 0.45, blue: 1, alpha: 1)
-                    : NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
-                agentBar.withAlphaComponent(stale ? 0.35 : 1).setFill()
+                Self.agentColor(session).withAlphaComponent(stale ? 0.35 : 1).setFill()
                 NSBezierPath(roundedRect: NSRect(x: Self.miniPad, y: y + 1, width: 3, height: Self.sq - 2),
                              xRadius: 1.5, yRadius: 1.5).fill()
                 let r = NSRect(x: Self.miniPad + Self.miniBarSpan, y: y,
@@ -580,11 +584,9 @@ final class AgentPadView: NSView {
             }
 
             // Agent identity: a solid left-edge bar — orange = Claude, blue =
-            // Codex — its own channel, separate from the row wash (= state).
-            let agentBar = session.isCodex
-                ? NSColor(srgbRed: 0.35, green: 0.45, blue: 1, alpha: 1)
-                : NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
-            agentBar.setFill()
+            // Codex, purple = Cursor — its own channel, separate from the row
+            // wash (= state).
+            Self.agentColor(session).setFill()
             NSBezierPath(roundedRect: NSRect(x: r.minX + 4, y: r.minY + 6, width: 3, height: r.height - 12),
                          xRadius: 1.5, yRadius: 1.5).fill()
 
@@ -610,7 +612,7 @@ final class AgentPadView: NSView {
             // Second line: state · age · project (the project folder moves down
             // here once the title is the prompt; tty tag disambiguates twins).
             var line2 = "\(session.state.label) · \(Self.age(session.stateChanged))"
-            line2 += session.isCodex ? " · codex" : " · claude"
+            line2 += " · \(session.kind ?? "claude")"
             if !session.label.isEmpty {
                 line2 += " · \(session.projectName)"
             } else if !session.ttyTag.isEmpty,

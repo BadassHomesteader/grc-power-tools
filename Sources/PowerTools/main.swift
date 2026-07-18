@@ -565,6 +565,8 @@ case "agentpad-preview":
         }
         var codexRow = fake("codex-1", "/Users/dev/livevox", "Assess GridOps_Cal for refactors", .busy, "", ageSec: 30)
         codexRow.kind = "codex"
+        var cursorRow = fake("cursor-1", "/dev/bees-bots-balance", "Chapter 2 improvements", .unseen, "cloud · ch02b-migrations", ageSec: 210)
+        cursorRow.kind = "cursor"
         let sessions = AgentPad.triageSorted([
             fake("1", "/Users/dev/gridops-ft-kyaw", "Fix the daypart call columns rebuild", .busy, "", ageSec: 45),
             fake("2", "/Users/dev/grc-power-tools", "Review macropad idea for Power Tools", .needsPermission, "Bash: scripts/bundle.sh", ageSec: 12),
@@ -572,6 +574,7 @@ case "agentpad-preview":
             fake("4", "/Users/dev/grc-todo", "", .error, "rate_limit", ageSec: 660),
             fake("5", "/Users/dev/gridops-ft-njaw", "Reconcile the corr-index blanks", .idle, "", ageSec: 90_000),
             codexRow,
+            cursorRow,
         ])
         let v = AgentPadView(dark: dark)
         v.configure(sessions: sessions, dark: dark, hotkeyName: "Option + Shift", hooksInstalled: true,
@@ -593,6 +596,18 @@ case "codex-scan-test":
         print("\(s.id)  state=\(s.state.label)  changed=\(Int(-s.changed.timeIntervalSinceNow))s ago  cwd=\(s.cwd)  title=\(s.title.isEmpty ? "(untitled)" : s.title)")
     }
     print("\(snaps.count) codex row(s)")
+
+case "cursor-scan-test":
+    // Live verification: print the rows CursorWatcher derives from the REAL
+    // Cursor store right now.
+    if let snaps = CursorWatcher.scan() {
+        for s in snaps {
+            print("\(s.id.prefix(40))  state=\(s.state.label)  changed=\(Int(-s.changed.timeIntervalSinceNow))s ago  cwd=\(s.cwd)  title=\(s.title)  detail=\(s.detail)")
+        }
+        print("\(snaps.count) cursor row(s)")
+    } else {
+        print("store unreadable (locked?)")
+    }
 
 case "agentpad-server-test":
     // Smoke-test the hook pipeline without the UI: start the loopback server +

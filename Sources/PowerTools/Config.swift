@@ -316,6 +316,8 @@ struct Config: Codable {
     var agentPadToasts: Bool = true
     /// Show Codex (ChatGPT app) threads as watch-only rows.
     var agentPadCodex: Bool = true
+    /// Show Cursor sessions (cloud agents + Agents Window) as watch-only rows.
+    var agentPadCursor: Bool = true
     /// Power Ring: hold hotkey + right-click → radial menu. Slots are catalog
     /// ids, clockwise from the top (see PowerRingCatalog).
     var powerRing: Bool = true
@@ -400,7 +402,7 @@ struct Config: Codable {
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs
-        case agentPad, agentPadPort, agentPadToasts, agentPadCodex
+        case agentPad, agentPadPort, agentPadToasts, agentPadCodex, agentPadCursor
         case powerRing, powerRingSlots
         case pronunciations
     }
@@ -458,6 +460,7 @@ struct Config: Codable {
         agentPadPort = field(.agentPadPort, 8377)
         agentPadToasts = field(.agentPadToasts, true)
         agentPadCodex = field(.agentPadCodex, true)
+        agentPadCursor = field(.agentPadCursor, true)
         powerRing = field(.powerRing, true)
         powerRingSlots = field(.powerRingSlots, PowerRingCatalog.defaultSlots)
         pronunciations = field(.pronunciations, [:])
