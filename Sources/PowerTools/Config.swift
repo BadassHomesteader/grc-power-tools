@@ -312,6 +312,10 @@ struct Config: Codable {
     /// AND a hook re-install (the port is baked into the settings.json entries).
     var agentPad: Bool = true
     var agentPadPort: Int = 8377
+    /// Approve/Deny card when a session needs permission and the pad is closed.
+    var agentPadToasts: Bool = true
+    /// Show Codex (ChatGPT app) threads as watch-only rows.
+    var agentPadCodex: Bool = true
     /// Power Ring: hold hotkey + right-click → radial menu. Slots are catalog
     /// ids, clockwise from the top (see PowerRingCatalog).
     var powerRing: Bool = true
@@ -396,7 +400,7 @@ struct Config: Codable {
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs
-        case agentPad, agentPadPort
+        case agentPad, agentPadPort, agentPadToasts, agentPadCodex
         case powerRing, powerRingSlots
         case pronunciations
     }
@@ -452,6 +456,8 @@ struct Config: Codable {
         macroPadStepDelayMs = field(.macroPadStepDelayMs, 350)
         agentPad = field(.agentPad, true)
         agentPadPort = field(.agentPadPort, 8377)
+        agentPadToasts = field(.agentPadToasts, true)
+        agentPadCodex = field(.agentPadCodex, true)
         powerRing = field(.powerRing, true)
         powerRingSlots = field(.powerRingSlots, PowerRingCatalog.defaultSlots)
         pronunciations = field(.pronunciations, [:])

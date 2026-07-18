@@ -84,6 +84,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let macroFoldersView = NSTextView()
     private let macroPadStatus = NSTextField(labelWithString: " ")
 
+    // Agent Pad
+    private let agentPadCheck = NSButton(checkboxWithTitle: "Agent Pad — floating agent-session panel (hold hotkey + J, or menu bar)", target: nil, action: nil)
+    private let agentToastsCheck = NSButton(checkboxWithTitle: "Permission toasts — Approve/Deny card top-right while the pad is closed", target: nil, action: nil)
+    private let agentCodexCheck = NSButton(checkboxWithTitle: "Watch Codex — ChatGPT/Codex threads as rows (watch-only, click to focus)", target: nil, action: nil)
+    private let hooksStatus = NSTextField(labelWithString: " ")
+
     // Power Ring: one popup per slot, tag = slot index (clockwise from top).
     private let powerRingCheck = NSButton(checkboxWithTitle: "Power Ring — hold hotkey + right-click for a radial menu at the cursor", target: nil, action: nil)
     private var ringSlotPopups: [NSPopUpButton] = []
@@ -174,6 +180,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         snapAssistCheck.action = #selector(snapAssistToggled)
         powerRingCheck.target = self
         powerRingCheck.action = #selector(powerRingToggled)
+        agentPadCheck.target = self
+        agentPadCheck.action = #selector(agentPadToggled)
+        agentToastsCheck.target = self
+        agentToastsCheck.action = #selector(agentToastsToggled)
+        agentCodexCheck.target = self
+        agentCodexCheck.action = #selector(agentCodexToggled)
         for i in 0..<8 {
             let popup = NSPopUpButton(frame: .zero, pullsDown: false)
             for entry in PowerRingCatalog.all { popup.addItem(withTitle: entry.title) }
@@ -213,6 +225,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             ("Dictionary", "character.book.closed", dictionaryTab),
             ("Connections", "link", connectionsTab),
             ("Macro Pad", "square.grid.2x2", macroPadTab),
+            ("Agent Pad", "terminal", agentPadTab),
             ("Power Ring", "circle.grid.3x3", powerRingTab),
             ("Permissions", "checkmark.shield", permissionsTab),
         ]
@@ -1014,6 +1027,61 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         ])
     }
 
+    private func agentPadTab() -> NSView {
+        let note = NSTextField(labelWithString: "Every live agent session as a row — working / idle / needs you. Click a row to focus it; ✓ ✕ answer Claude Code permission prompts; – collapses to a strip of status lights. Claude Code state arrives via hooks — install them once per machine.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.lineBreakMode = .byWordWrapping
+        note.preferredMaxLayoutWidth = 500
+        let installBtn = NSButton(title: "Install Hooks", target: self, action: #selector(installHooksTapped))
+        let removeBtn = NSButton(title: "Remove Hooks", target: self, action: #selector(removeHooksTapped))
+        for b in [installBtn, removeBtn] { b.bezelStyle = .rounded }
+        let hooksRow = NSStackView(views: [installBtn, removeBtn])
+        hooksRow.spacing = 8
+        hooksStatus.font = .systemFont(ofSize: 11)
+        hooksStatus.textColor = .secondaryLabelColor
+        hooksStatus.lineBreakMode = .byWordWrapping
+        hooksStatus.preferredMaxLayoutWidth = 500
+        return vstack([
+            section("Agent Pad", [agentPadCheck, note, agentToastsCheck, agentCodexCheck], width: 540),
+            section("Claude Code hooks", [hooksRow, hooksStatus], width: 540),
+        ])
+    }
+
+    private func refreshHooksStatus() {
+        hooksStatus.stringValue = ClaudeHooksInstaller.isInstalled()
+            ? "Hooks installed ✓ — sessions report live on port \(config.agentPadPort)."
+            : "Hooks not installed — Claude Code sessions won't appear on the pad until they are."
+    }
+
+    @objc private func agentPadToggled() {
+        config.agentPad = (agentPadCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func agentToastsToggled() {
+        config.agentPadToasts = (agentToastsCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func agentCodexToggled() {
+        config.agentPadCodex = (agentCodexCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func installHooksTapped() {
+        do { hooksStatus.stringValue = try ClaudeHooksInstaller.install(port: config.agentPadPort) }
+        catch { hooksStatus.stringValue = "Install failed — \(error.localizedDescription)" }
+    }
+
+    @objc private func removeHooksTapped() {
+        do { hooksStatus.stringValue = try ClaudeHooksInstaller.remove() }
+        catch { hooksStatus.stringValue = "Remove failed — \(error.localizedDescription)" }
+    }
+
     private func powerRingTab() -> NSView {
         let note = NSTextField(labelWithString: "Design the ring: eight slots, clockwise from the top. Hold the hotkey and right-click anywhere to open it — labels are always visible, click a circle (or anywhere in its slice) to fire.")
         note.font = .systemFont(ofSize: 11)
@@ -1124,6 +1192,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         claudeKeyField.placeholderString = Keychain.has("claude") ? "•••••• saved — paste to replace" : "sk-ant-…"
         openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
         macroPadCheck.state = config.macroPad ? .on : .off
+        agentPadCheck.state = config.agentPad ? .on : .off
+        agentToastsCheck.state = config.agentPadToasts ? .on : .off
+        agentCodexCheck.state = config.agentPadCodex ? .on : .off
+        refreshHooksStatus()
         powerRingCheck.state = config.powerRing ? .on : .off
         for (i, popup) in ringSlotPopups.enumerated() {
             let id = i < config.powerRingSlots.count ? config.powerRingSlots[i]

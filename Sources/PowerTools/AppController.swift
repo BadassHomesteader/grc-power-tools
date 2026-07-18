@@ -32,6 +32,7 @@ final class AppController {
             macroPad.update(enabled: config.macroPad, profiles: config.macroPadProfiles,
                             dark: config.appearance.isDark)
             hotkey?.powerRingEnabled = config.powerRing
+            if !config.agentPadCodex { claudeRegistry.setExternal(kind: "codex", []) }
         }
     }
 
@@ -273,7 +274,7 @@ final class AppController {
             agentPad.onRefresh = { [weak self] in
             guard let self else { return }
             self.claudeRegistry.refreshDiscovered()
-            CodexWatcher.refresh(into: self.claudeRegistry)
+            if self.config.agentPadCodex { CodexWatcher.refresh(into: self.claudeRegistry) }
         }
         }
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
@@ -770,7 +771,10 @@ final class AppController {
     /// rows itself (closed or collapsed to the strip); clear them the moment
     /// they resolve or the full pad is up.
     private func updatePermissionToasts(_ sessions: [ClaudeSession]) {
-        guard config.agentPad else { return }
+        guard config.agentPad, config.agentPadToasts else {
+            permissionToast.sync(waitingIds: [])
+            return
+        }
         let padShowing = agentPad.isVisible && !agentPad.isMini
         let waiting = padShowing ? [] : sessions.filter { $0.state == .needsPermission }
         for s in waiting {
@@ -789,13 +793,13 @@ final class AppController {
             return
         }
         guard config.agentPad else {
-            overlay.showError("Agent Pad is off — enable agentPad in config.json")
+            overlay.showError("Agent Pad is off — enable it in Settings ▸ Agent Pad")
             return
         }
         overlay.hide()
         claudeRegistry.pruneDead()
         claudeRegistry.refreshDiscovered()  // catch silent sessions on every open
-        CodexWatcher.refresh(into: claudeRegistry)
+        if config.agentPadCodex { CodexWatcher.refresh(into: claudeRegistry) }
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
