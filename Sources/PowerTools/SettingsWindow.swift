@@ -230,14 +230,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let sections: [(String, String, () -> NSView)] = [
             ("General", "gearshape", generalTab),
             ("Power Ring", "circle.grid.3x3", powerRingTab),
+            ("Windows", "macwindow", windowsTab),
             ("Dictation", "mic", dictationTab),
             ("Dictionary", "character.book.closed", dictionaryTab),
             ("AI", "sparkles", aiTab),
-            ("Windows", "macwindow", windowsTab),
             ("Keys", "keyboard", keysTab),
-            ("Connections", "link", connectionsTab),
             ("Macro Pad", "square.grid.2x2", macroPadTab),
             ("Agent Pad", "terminal", agentPadTab),
+            ("Connections", "link", connectionsTab),
             ("Permissions", "checkmark.shield", permissionsTab),
         ]
 
