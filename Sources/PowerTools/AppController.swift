@@ -284,6 +284,16 @@ final class AppController {
             if self.config.agentPadCursor { CursorWatcher.refresh(into: self.claudeRegistry) }
         }
         }
+        // Pads that were open when the app last quit (updates included) come
+        // back in their persisted dock/mini state.
+        if config.restorePads {
+            if config.macroPad, PadPlacement.load("macro")?.open == true, !macroPad.isVisible {
+                toggleMacroPad()
+            }
+            if config.agentPad, PadPlacement.load("agent")?.open == true, !agentPad.isVisible {
+                toggleAgentPad()
+            }
+        }
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
     }
 

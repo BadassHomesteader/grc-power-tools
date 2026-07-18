@@ -99,12 +99,13 @@ final class MacroPad {
         buildPanel(on: screen)
         render(on: screen)   // render ends with notifyState()
         startSuggestTimer()
+        persistPlacement()   // open=true — survives quits/deploys for launch restore
     }
 
     func dismiss() {
         if let panel {
             savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
-            persistPlacement()
+            persistPlacement(open: false)
         }
         dockOverlay.hide()
         invalidateScan()
@@ -117,11 +118,13 @@ final class MacroPad {
         notifyState()
     }
 
-    private func persistPlacement() {
+    /// open defaults true — every save except the user's explicit dismiss
+    /// happens while the pad is up, so a quit/deploy leaves open=true behind.
+    private func persistPlacement(open: Bool = true) {
         guard let panel else { return }
         PadPlacement.save(Self.placementKey, anchor: dockAnchor,
                           topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY),
-                          mini: miniPreferred)
+                          mini: miniPreferred, open: open)
     }
 
     /// After a drag: snap to the nearest anchor when dropped close enough,

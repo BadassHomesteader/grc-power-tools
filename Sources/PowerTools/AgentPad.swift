@@ -101,6 +101,7 @@ final class AgentPad: NSObject {
         }
         buildPanel(on: screen)
         render(on: screen)
+        persistPlacement()   // open=true — survives quits/deploys for launch restore
         refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -114,7 +115,7 @@ final class AgentPad: NSObject {
     func dismiss() {
         if let panel {
             savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
-            persistPlacement()
+            persistPlacement(open: false)
         }
         dockOverlay.hide()
         refreshTimer?.invalidate()
@@ -124,11 +125,13 @@ final class AgentPad: NSObject {
         padView = nil
     }
 
-    private func persistPlacement() {
+    /// open defaults true — every save except the user's explicit dismiss
+    /// happens while the pad is up, so a quit/deploy leaves open=true behind.
+    private func persistPlacement(open: Bool = true) {
         guard let panel else { return }
         PadPlacement.save(Self.placementKey, anchor: dockAnchor,
                           topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY),
-                          mini: miniPreferred)
+                          mini: miniPreferred, open: open)
     }
 
     /// Live update from the registry (hook events land while the pad is open).

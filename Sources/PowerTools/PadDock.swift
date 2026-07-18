@@ -50,6 +50,9 @@ struct PadPlacement: Codable {
     var x: CGFloat?
     var y: CGFloat?
     var mini: Bool?
+    /// Open at last save — app quit/deploy leaves it true, user dismiss
+    /// writes false; launch restores pads whose flag is still true.
+    var open: Bool?
 
     private static var url: URL { Config.appSupportDir.appendingPathComponent("pad-placement.json") }
 
@@ -59,10 +62,10 @@ struct PadPlacement: Codable {
         return all[key]
     }
 
-    static func save(_ key: String, anchor: PadDock?, topLeft: NSPoint?, mini: Bool = false) {
+    static func save(_ key: String, anchor: PadDock?, topLeft: NSPoint?, mini: Bool = false, open: Bool = false) {
         var all = (try? Data(contentsOf: url))
             .flatMap { try? JSONDecoder().decode([String: PadPlacement].self, from: $0) } ?? [:]
-        all[key] = PadPlacement(anchor: anchor, x: topLeft?.x, y: topLeft?.y, mini: mini)
+        all[key] = PadPlacement(anchor: anchor, x: topLeft?.x, y: topLeft?.y, mini: mini, open: open)
         if let data = try? JSONEncoder().encode(all) { try? data.write(to: url, options: .atomic) }
     }
 }

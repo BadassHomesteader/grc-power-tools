@@ -22,6 +22,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let snapSizesPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let gridSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let launchLoginCheck = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
+    private let restorePadsCheck = NSButton(checkboxWithTitle: "Reopen pads at launch — Macro/Agent Pads that were open come back", target: nil, action: nil)
     private let snapAssistCheck = NSButton(checkboxWithTitle: "Snap Assist — offer other windows to fill the gap after a snap", target: nil, action: nil)
     private let windowPaletteCheck = NSButton(checkboxWithTitle: "Snap palette (hold hotkey + W)", target: nil, action: nil)
     private let clipboardHistoryCheck = NSButton(checkboxWithTitle: "Clipboard history — hold hotkey + H to paste a recent copy or image", target: nil, action: nil)
@@ -177,6 +178,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         hotkeyNote.stringValue = " "
         launchLoginCheck.target = self
         launchLoginCheck.action = #selector(toggleLaunchLogin)
+        restorePadsCheck.target = self
+        restorePadsCheck.action = #selector(restorePadsToggled)
         snapAssistCheck.target = self
         snapAssistCheck.action = #selector(snapAssistToggled)
         powerRingCheck.target = self
@@ -369,7 +372,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         return vstack([
             section("How to use it", [helpLabel], width: 590),
-            section("General", [clipboardHistoryCheck, launchLoginCheck, buttons, version], width: 590),
+            section("General", [clipboardHistoryCheck, launchLoginCheck, restorePadsCheck, buttons, version], width: 590),
         ])
     }
 
@@ -1075,6 +1078,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         onConfigChange(config)
     }
 
+    @objc private func restorePadsToggled() {
+        config.restorePads = (restorePadsCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
     @objc private func agentCursorToggled() {
         config.agentPadCursor = (agentCursorCheck.state == .on)
         config.save()
@@ -1196,6 +1205,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         taskMgrCheck.state = config.taskManagerShortcut ? .on : .off
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        restorePadsCheck.state = config.restorePads ? .on : .off
         claudeModelField.stringValue = config.claudeModel
         openaiModelField.stringValue = config.openaiModel
         claudeKeyField.placeholderString = Keychain.has("claude") ? "•••••• saved — paste to replace" : "sk-ant-…"

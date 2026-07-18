@@ -318,6 +318,8 @@ struct Config: Codable {
     var agentPadCodex: Bool = true
     /// Show Cursor sessions (cloud agents + Agents Window) as watch-only rows.
     var agentPadCursor: Bool = true
+    /// Reopen pads that were open when the app last quit (updates included).
+    var restorePads: Bool = true
     /// Power Ring: hold hotkey + right-click → radial menu. Slots are catalog
     /// ids, clockwise from the top (see PowerRingCatalog).
     var powerRing: Bool = true
@@ -402,7 +404,7 @@ struct Config: Codable {
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs
-        case agentPad, agentPadPort, agentPadToasts, agentPadCodex, agentPadCursor
+        case agentPad, agentPadPort, agentPadToasts, agentPadCodex, agentPadCursor, restorePads
         case powerRing, powerRingSlots
         case pronunciations
     }
@@ -461,6 +463,7 @@ struct Config: Codable {
         agentPadToasts = field(.agentPadToasts, true)
         agentPadCodex = field(.agentPadCodex, true)
         agentPadCursor = field(.agentPadCursor, true)
+        restorePads = field(.restorePads, true)
         powerRing = field(.powerRing, true)
         powerRingSlots = field(.powerRingSlots, PowerRingCatalog.defaultSlots)
         pronunciations = field(.pronunciations, [:])
