@@ -222,17 +222,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         // Left-rail layout (Wispr-Flow style): a sidebar of sections on the left,
         // the selected section's scrollable content on the right.
+        // Ordered by day-to-day value, grouped by theme: the always-on panel
+        // surfaces first, then the dictation stack, then window/key utilities,
+        // setup last. (Not chronological-by-feature-birth like it used to be.)
         let sections: [(String, String, () -> NSView)] = [
             ("General", "gearshape", generalTab),
-            ("Dictation", "mic", dictationTab),
-            ("Keys", "keyboard", keysTab),
-            ("Windows", "macwindow", windowsTab),
-            ("AI", "sparkles", aiTab),
-            ("Dictionary", "character.book.closed", dictionaryTab),
-            ("Connections", "link", connectionsTab),
-            ("Macro Pad", "square.grid.2x2", macroPadTab),
             ("Agent Pad", "terminal", agentPadTab),
+            ("Macro Pad", "square.grid.2x2", macroPadTab),
             ("Power Ring", "circle.grid.3x3", powerRingTab),
+            ("Dictation", "mic", dictationTab),
+            ("Dictionary", "character.book.closed", dictionaryTab),
+            ("AI", "sparkles", aiTab),
+            ("Connections", "link", connectionsTab),
+            ("Windows", "macwindow", windowsTab),
+            ("Keys", "keyboard", keysTab),
             ("Permissions", "checkmark.shield", permissionsTab),
         ]
 
