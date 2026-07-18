@@ -22,6 +22,11 @@ enum CursorWatcher {
     private static let activeWindow: TimeInterval = 24 * 3600
     /// A record updated this recently is a running turn.
     private static let busyWindow: TimeInterval = 60
+    /// Cloud isUnread NEVER clears when the user reads the result (verified
+    /// live: still true 70min after completion, mid-viewing) — it's a
+    /// finished marker, not a seen-signal. Treat it as attention only while
+    /// the finish is fresh, then let the row settle to idle.
+    private static let unseenWindow: TimeInterval = 30 * 60
 
     struct Snapshot: Sendable {
         var id: String
@@ -114,7 +119,8 @@ enum CursorWatcher {
                     detail = "killed"
                 } else if Date().timeIntervalSince(updated) < busyWindow {
                     state = .busy
-                } else if a["isUnread"] as? Bool == true {
+                } else if a["isUnread"] as? Bool == true,
+                          Date().timeIntervalSince(updated) < unseenWindow {
                     state = .unseen
                 }
                 // The VM's workspaceRootPath is a generic "/workspace" — the
