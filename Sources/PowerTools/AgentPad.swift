@@ -568,11 +568,20 @@ final class AgentPadView: NSView {
                 path.stroke()
             }
 
+            // Agent identity: a solid left-edge bar — orange = Claude, blue =
+            // Codex — its own channel, separate from the row wash (= state).
+            let agentBar = session.isCodex
+                ? NSColor(srgbRed: 0.35, green: 0.45, blue: 1, alpha: 1)
+                : NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+            agentBar.setFill()
+            NSBezierPath(roundedRect: NSRect(x: r.minX + 4, y: r.minY + 6, width: 3, height: r.height - 12),
+                         xRadius: 1.5, yRadius: 1.5).fill()
+
             // Title — the row tint itself is the status indicator.
             let btns = buttons(for: session)
             let textMaxX = r.maxX - 10
             (session.displayTitle as NSString).draw(
-                in: NSRect(x: r.minX + 10, y: r.minY + 6, width: rowCloseRect(i).minX - 4 - (r.minX + 10), height: 16),
+                in: NSRect(x: r.minX + 13, y: r.minY + 6, width: rowCloseRect(i).minX - 4 - (r.minX + 13), height: 16),
                 withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg,
                                  .paragraphStyle: truncating])
 
@@ -590,7 +599,7 @@ final class AgentPadView: NSView {
             // Second line: state · age · project (the project folder moves down
             // here once the title is the prompt; tty tag disambiguates twins).
             var line2 = "\(session.state.label) · \(Self.age(session.stateChanged))"
-            if session.isCodex { line2 += " · codex" }
+            line2 += session.isCodex ? " · codex" : " · claude"
             if !session.label.isEmpty {
                 line2 += " · \(session.projectName)"
             } else if !session.ttyTag.isEmpty,
@@ -605,7 +614,7 @@ final class AgentPadView: NSView {
             // none (watch-only agents), where it would just blank out.
             if session.state == .needsPermission || i != hoveredRow || btns.isEmpty {
                 (line2 as NSString).draw(
-                    in: NSRect(x: r.minX + 10, y: r.minY + 24, width: textMaxX - (r.minX + 10), height: 14),
+                    in: NSRect(x: r.minX + 13, y: r.minY + 24, width: textMaxX - (r.minX + 13), height: 14),
                     withAttributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: dim,
                                      .paragraphStyle: truncating])
             }

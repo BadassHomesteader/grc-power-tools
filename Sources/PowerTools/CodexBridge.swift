@@ -64,13 +64,22 @@ enum CodexWatcher {
     }
 
     /// Bring the Codex host app forward (per-thread focus is impossible from
-    /// outside an Electron AX tree).
+    /// outside an Electron AX tree). NSRunningApplication.activate() is
+    /// DROPPED under cooperative activation when called from this background
+    /// app — openApplication(activates:) is the path that actually works
+    /// (same lesson as ClaudeInjector.focus, v1.19.7).
     @MainActor
     static func focus() {
-        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
-            app.activate()
-        } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        let url = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.bundleURL
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        guard let url else {
+            log("agentpad: focus codex — no app for \(bundleID)")
+            return
+        }
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: cfg) { _, err in
+            log("agentpad: focus codex → open \(bundleID) \(err == nil ? "ok" : "err \(err!.localizedDescription)")")
         }
     }
 
