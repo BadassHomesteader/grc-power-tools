@@ -106,6 +106,9 @@ final class AppController {
             throw NSError(domain: "GRCWhisper", code: 10,
                           userInfo: [NSLocalizedDescriptionKey: "Microphone permission denied"])
         }
+        // Parakeet's vocab boosting reads the dictionary per utterance, so
+        // Settings ▸ Dictionary edits apply to the very next dictation.
+        ParakeetEngine.vocabTermsProvider = { [store] in store.dictionary() }
         try await engineType.ensureAssets(locale: Locale(identifier: config.localeIdentifier))
         try audio.start()
         audio.onLevels = { [weak self] levels in

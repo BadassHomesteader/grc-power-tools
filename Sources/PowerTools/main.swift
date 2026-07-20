@@ -67,6 +67,8 @@ case "transcribe":
         requestedEngine = .apple
     }
     let paced = args.contains("--paced")
+    // Same dictionary-driven vocab boosting as the app, so CLI tests exercise it.
+    ParakeetEngine.vocabTermsProvider = { Store().dictionary() }
     do {
         let started = Date()
         // resolveEngineType() is called INSIDE the closure so only the Sendable
