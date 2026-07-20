@@ -66,11 +66,12 @@ case "transcribe":
     } else {
         requestedEngine = .apple
     }
+    let paced = args.contains("--paced")
     do {
         let started = Date()
         // resolveEngineType() is called INSIDE the closure so only the Sendable
         // enum crosses the @Sendable boundary, not the (non-Sendable) metatype.
-        let text = try runBlocking { try await transcribeFile(url: url, locale: locale, engine: resolveEngineType(requestedEngine)) }
+        let text = try runBlocking { try await transcribeFile(url: url, locale: locale, engine: resolveEngineType(requestedEngine), paced: paced) }
         let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))
         FileHandle.standardError.write("(transcribed in \(elapsed)s)\n".data(using: .utf8)!)
         print(text)

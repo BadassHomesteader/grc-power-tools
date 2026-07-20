@@ -189,12 +189,16 @@ final class AppleSpeechUtterance: TranscriptionEngine {
 /// Batch transcription of an audio file — used by the `transcribe` CLI subcommand
 /// to verify an engine without microphone/TCC involvement. `engine` defaults to
 /// Apple's; pass `ParakeetEngine.self` (via `--engine parakeet`) to smoke-test
-/// the other conformer instead.
-func transcribeFile(url: URL, locale: Locale, engine: any TranscriptionEngine.Type = AppleSpeechUtterance.self) async throws -> String {
+/// the other conformer instead. `paced` feeds the file at realtime speed and
+/// logs each partial — verifies live-partial behavior without a microphone.
+func transcribeFile(url: URL, locale: Locale, engine: any TranscriptionEngine.Type = AppleSpeechUtterance.self, paced: Bool = false) async throws -> String {
     try await engine.ensureAssets(locale: locale)
     let file = try AVAudioFile(forReading: url)
     log("transcribe: file format \(file.processingFormat)")
     let utterance = engine.init(locale: locale)
+    if paced {
+        utterance.onPartial = { text in log("partial: \(text)") }
+    }
     try await utterance.start()
     log("transcribe: analyzer started")
 
@@ -207,6 +211,10 @@ func transcribeFile(url: URL, locale: Locale, engine: any TranscriptionEngine.Ty
         if buffer.frameLength == 0 { break }
         fedFrames += AVAudioFramePosition(buffer.frameLength)
         utterance.feed(buffer)
+        if paced {
+            let seconds = Double(buffer.frameLength) / file.processingFormat.sampleRate
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        }
     }
     log("transcribe: fed \(fedFrames) frames, finishing")
     return try await utterance.finish()
