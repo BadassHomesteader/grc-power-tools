@@ -15,9 +15,23 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+
+      # FluidAudio's manifest requires swift-tools-version 6.0 (Swift 6 / Xcode
+      # 16+). The runner's default-selected Xcode can be older than the newest
+      # one actually installed, so pick the highest-versioned Xcode explicitly
+      # rather than trusting the image's default.
+      - name: Select latest available Xcode
+        run: |
+          ls /Applications | grep -i xcode || true
+          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$LATEST" ] && [ -d /Applications/Xcode.app ]; then
+            LATEST=/Applications/Xcode.app
+          fi
+          echo "Selecting: $LATEST"
+          sudo xcode-select -s "$LATEST"
 
       - name: Show toolchain
         run: |
