@@ -1,8 +1,11 @@
 import Foundation
 import AVFoundation
-import PowerToolsASRBridge
 
-/// Dictation utterance transcribed by FluidAudio's Parakeet TDT model.
+/// Dictation utterance transcribed by FluidAudio's Parakeet TDT model
+/// (vendored in `Sources/FluidAudioVendored/` — see its NOTICE.md for why:
+/// swiftpm is broken on the dev machine, and a CI-built artifact turned out
+/// to be blocked by a Swift-compiler version mismatch between this machine
+/// and GitHub Actions' available toolchains).
 ///
 /// Unlike `AppleSpeechUtterance`, FluidAudio's ASR API is batch-only (transcribe
 /// a complete file) — there's no push-based streaming with live partials. So
@@ -13,7 +16,7 @@ import PowerToolsASRBridge
 final class ParakeetEngine: TranscriptionEngine {
     // Model load is expensive (first use downloads from HuggingFace) and must
     // happen once, not per-utterance — shared across all ParakeetEngine instances.
-    private static var loadTask: Task<ParakeetBridge, Error>?
+    private static var loadTask: Task<AsrManager, Error>?
 
     private let locale: Locale
     private var pendingBuffers: [AVAudioPCMBuffer] = []
@@ -25,19 +28,20 @@ final class ParakeetEngine: TranscriptionEngine {
         self.locale = locale
     }
 
-    private static func modelVersion(for locale: Locale) -> ParakeetModelVersion {
-        locale.language.languageCode?.identifier == "en" ? .english : .multilingual
+    private static func modelVersion(for locale: Locale) -> AsrModelVersion {
+        locale.language.languageCode?.identifier == "en" ? .v2 : .v3
     }
 
-    private static func sharedBridge(locale: Locale) async throws -> ParakeetBridge {
+    private static func sharedManager(locale: Locale) async throws -> AsrManager {
         if let loadTask { return try await loadTask.value }
         let version = modelVersion(for: locale)
-        let task = Task<ParakeetBridge, Error> {
+        let task = Task<AsrManager, Error> {
             log("parakeet: downloading/loading model (version: \(version))…")
-            let bridge = ParakeetBridge()
-            try await bridge.loadModels(version: version)
+            let models = try await AsrModels.downloadAndLoad(version: version)
+            let manager = AsrManager()
+            try await manager.loadModels(models)
             log("parakeet: model ready")
-            return bridge
+            return manager
         }
         loadTask = task
         return try await task.value
@@ -46,7 +50,7 @@ final class ParakeetEngine: TranscriptionEngine {
     /// Pre-warms the shared model so the first real dictation isn't the one
     /// that pays the (possibly multi-second, first-run network) load cost.
     static func ensureAssets(locale: Locale) async throws {
-        _ = try await sharedBridge(locale: locale)
+        _ = try await sharedManager(locale: locale)
     }
 
     func start() async throws {
@@ -70,8 +74,9 @@ final class ParakeetEngine: TranscriptionEngine {
         pendingBuffers.removeAll()
         defer { try? FileManager.default.removeItem(at: tmpURL) }
 
-        let bridge = try await Self.sharedBridge(locale: locale)
-        let result = try await bridge.transcribe(fileURL: tmpURL)
+        let manager = try await Self.sharedManager(locale: locale)
+        var decoderState = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
+        let result = try await manager.transcribe(tmpURL, decoderState: &decoderState, language: nil)
         return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

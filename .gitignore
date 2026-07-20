@@ -1,8 +1,5 @@
 .build/
 dist/
-# downloaded from the FluidAudio CI artifact by bundle.sh, not committed
-vendor/fluidaudio-build/artifact/
-vendor/fluidaudio-build/artifact-download/
 .DS_Store
 *.wav
 *.aiff

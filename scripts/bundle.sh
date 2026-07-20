@@ -15,36 +15,30 @@ cd "$(dirname "$0")/.."
 BUNDLE_ID="com.grc.whisper"
 APP_NAME="Power Tools"
 OLD_APP_NAME="GRC Whisper"
-VERSION="1.25.3"
+VERSION="1.26.0"
 DIST="dist"
 APP="$DIST/$APP_NAME.app"
 
-# FluidAudio (Parakeet ASR) is a real SPM dependency, but swiftpm itself is
-# broken on this machine (see .github/workflows/build-fluidaudio-artifact.yml
-# for the full story) — it's built in CI instead and downloaded here as a
-# prebuilt static lib + swiftmodule. Cached locally after the first download;
-# delete vendor/fluidaudio-build/artifact/ to force a re-fetch of a newer build.
-FLUIDAUDIO_ARTIFACT="vendor/fluidaudio-build/artifact"
-if [[ ! -d "$FLUIDAUDIO_ARTIFACT" ]]; then
-    echo "==> downloading FluidAudio (Parakeet) CI artifact"
-    TMP_DL="$(mktemp -d)"
-    gh run download -n PowerToolsASRBridge-artifact --dir "$TMP_DL"
-    mkdir -p "$FLUIDAUDIO_ARTIFACT"
-    unzip -q "$TMP_DL/PowerToolsASRBridge-artifact.zip" -d "$FLUIDAUDIO_ARTIFACT"
-    rm -rf "$TMP_DL"
-fi
-
-# NOTE: the app itself is still built with swiftc directly, not `swift build` —
-# the CommandLineTools-only toolchain on this machine has a broken
-# PackageDescription dylib (manifest link failure), confirmed live and not a
-# sandbox/permissions issue. FluidAudio's own dependency (NemoTextProcessing)
-# is intentionally NOT linked — confirmed via `nm` that our narrow ASR-only
-# entry point never references it, so it'd be dead weight.
+# NOTE: built with swiftc directly, not `swift build` — the CommandLineTools-only
+# toolchain on this machine has a broken PackageDescription dylib (manifest link
+# failure), confirmed live and not a sandbox/permissions issue.
+#
+# FluidAudio (Parakeet ASR) is a real SPM dependency, but since swiftpm is
+# broken here, and a GitHub-Actions-built artifact turned out to be blocked by
+# a genuine Swift-compiler version mismatch between this machine and CI's
+# available toolchains, its ASR-relevant source is vendored directly into
+# Sources/FluidAudioVendored/ instead (see its NOTICE.md) — compiled by this
+# same swiftc invocation, so no external dependency or network fetch at all.
 echo "==> swiftc release build"
 mkdir -p .build
-swiftc -swift-version 5 -O Sources/PowerTools/*.swift \
-    -I "$FLUIDAUDIO_ARTIFACT/modules" \
-    -L "$FLUIDAUDIO_ARTIFACT/lib" -lPowerToolsASRBridge -lc++ \
+# swiftc mishandles a bare .c file mixed into a large multi-file Swift build
+# (passes it straight to ld, which rejects it) — precompile with clang instead.
+clang -c Sources/FluidAudioVendored/MachTaskSelfWrapper/MachTaskSelf.c -o .build/MachTaskSelf.o
+swiftc -swift-version 5 -O \
+    -Xcc -ISources/FluidAudioVendored/MachTaskSelfWrapper/include \
+    Sources/PowerTools/*.swift \
+    $(find Sources/FluidAudioVendored -name "*.swift") \
+    .build/MachTaskSelf.o \
     -o .build/PowerTools
 
 echo "==> assembling $APP"
