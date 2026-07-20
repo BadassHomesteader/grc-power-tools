@@ -60,8 +60,7 @@ jobs:
 
           echo "--- swiftmodule-family files (only need PowerToolsASRBridge's) ---"
           find .build -type d -name "*.swiftmodule" -print -exec cp -Rv {} "$OUT/modules/" \;
-          find .build -maxdepth 6 -name "PowerToolsASRBridge.swiftmodule" -type f -print -exec cp -v {} "$OUT/modules/" \; || true
-          find .build -maxdepth 6 \( -name "PowerToolsASRBridge.swiftdoc" -o -name "PowerToolsASRBridge.swiftsourceinfo" -o -name "PowerToolsASRBridge.abi.json" \) -print -exec cp -v {} "$OUT/modules/" \; || true
+          find .build -maxdepth 6 \( -name "PowerToolsASRBridge.swiftmodule" -o -name "PowerToolsASRBridge.swiftinterface" -o -name "PowerToolsASRBridge.private.swiftinterface" -o -name "PowerToolsASRBridge.swiftdoc" -o -name "PowerToolsASRBridge.swiftsourceinfo" -o -name "PowerToolsASRBridge.abi.json" \) -type f -print -exec cp -v {} "$OUT/modules/" \; || true
 
           echo "--- resource bundles, if any ---"
           find .build -maxdepth 6 -name "*.bundle" -print -exec cp -Rv {} "$OUT/resources/" \; || true
