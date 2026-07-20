@@ -21,7 +21,14 @@ let package = Package(
             // builds with — a plain .swiftmodule only imports on an EXACT
             // compiler-version match. Library evolution emits a resilient
             // .swiftinterface instead, importable across compiler versions.
-            swiftSettings: [.unsafeFlags(["-enable-library-evolution"])]
+            // Self-verification of that interface fails in isolation (can't
+            // resolve FluidAudio's transitive C-target modules from just the
+            // textual interface) — that check is only a sanity double-check,
+            // not something we need since we control both build and consumer.
+            swiftSettings: [.unsafeFlags([
+                "-enable-library-evolution",
+                "-no-verify-emitted-module-interface",
+            ])]
         )
     ]
 )
