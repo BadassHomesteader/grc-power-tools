@@ -214,6 +214,31 @@ struct Config: Codable {
         }
     }
 
+    /// Which speech engine transcribes dictation. Parakeet (FluidAudio) trades
+    /// Apple's zero-setup on-device engine for faster local ASR; models download
+    /// from HuggingFace on first use.
+    enum ASREngine: String, Codable, CaseIterable {
+        case apple      // Apple SpeechAnalyzer (on-device, no download)
+        case parakeet   // FluidAudio Parakeet TDT (on-device, downloads models on first use)
+
+        var displayName: String {
+            switch self {
+            case .apple: return "Apple (built-in)"
+            case .parakeet: return "Parakeet (faster, downloads on first use)"
+            }
+        }
+
+        // Lenient decode, matching every other enum here: unknown/legacy values
+        // fall back to the default instead of failing the whole config load.
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = ASREngine(rawValue: raw) ?? .apple
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer(); try c.encode(rawValue)
+        }
+    }
+
     /// A Quick Capture "connection": hold the hotkey + `leaderKey` opens a capture
     /// panel that POSTs to `endpoint`. Each has its own token (Keychain account
     /// `capture:<id>`). Nothing app-specific — a connection can point anywhere.
@@ -327,6 +352,7 @@ struct Config: Codable {
 
     var hotkey: Hotkey = .optionShift
     var polish: PolishMode = .apple
+    var asrEngine: ASREngine = .apple
     var localeIdentifier: String = "en_US"
     /// Soft deadline for the LLM polish pass; on expiry we fall back to Tier-0 text.
     var llmDeadlineMs: Int = 2500
@@ -395,7 +421,7 @@ struct Config: Codable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case hotkey, polish, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
+        case hotkey, polish, asrEngine, localeIdentifier, llmDeadlineMs, clipboardRestoreDelayMs
         case minHoldMs, maxUtteranceSeconds, preRollSeconds, claudeModel, openaiModel
         case overlayPosition, appearance, aiChatMode, snapSizes, gridSize, snapAssist
         case windowPalette, clipboardHistory, lastWindowSwitch, muteWhileDictating, finderEnterOpens
@@ -420,6 +446,7 @@ struct Config: Codable {
         }
         hotkey = field(.hotkey, .optionShift)
         polish = field(.polish, .apple)
+        asrEngine = field(.asrEngine, .apple)
         localeIdentifier = field(.localeIdentifier, "en_US")
         llmDeadlineMs = field(.llmDeadlineMs, 2500)
         clipboardRestoreDelayMs = field(.clipboardRestoreDelayMs, 600)

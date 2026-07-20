@@ -16,6 +16,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let statusStack = NSStackView()
     private let hotkeyPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let cleanupPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let asrPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let positionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let aiModePopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -152,6 +153,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         for mode in Config.PolishMode.allCases { cleanupPopup.addItem(withTitle: mode.displayName) }
         cleanupPopup.target = self
         cleanupPopup.action = #selector(cleanupChanged)
+        for engine in Config.ASREngine.allCases { asrPopup.addItem(withTitle: engine.displayName) }
+        asrPopup.target = self
+        asrPopup.action = #selector(asrEngineChanged)
         for hk in Config.Hotkey.allCases { hotkeyPopup.addItem(withTitle: hk.displayName) }
         hotkeyPopup.target = self
         hotkeyPopup.action = #selector(hotkeyChanged)
@@ -405,6 +409,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             section("Dictation", [
                 formRow("Hotkey", hotkeyPopup),
                 hotkeyNote,
+                formRow("Speech engine", asrPopup),
                 formRow("Cleanup", cleanupPopup),
                 formRow("Bar position", positionPopup),
                 formRow("Theme", appearancePopup),
@@ -1191,6 +1196,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         reloadPronunciations()
         hotkeyPopup.selectItem(withTitle: config.hotkey.displayName)
         cleanupPopup.selectItem(withTitle: config.polish.displayName)
+        asrPopup.selectItem(withTitle: config.asrEngine.displayName)
         positionPopup.selectItem(withTitle: config.overlayPosition.displayName)
         appearancePopup.selectItem(withTitle: config.appearance.displayName)
         aiModePopup.selectItem(withTitle: config.aiChatMode.displayName)
@@ -1380,6 +1386,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     @objc private func cleanupChanged() {
         guard let mode = Config.PolishMode.allCases.first(where: { $0.displayName == cleanupPopup.titleOfSelectedItem }) else { return }
         config.polish = mode
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func asrEngineChanged() {
+        guard let engine = Config.ASREngine.allCases.first(where: { $0.displayName == asrPopup.titleOfSelectedItem }) else { return }
+        config.asrEngine = engine
         config.save()
         onConfigChange(config)
     }

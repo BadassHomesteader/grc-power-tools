@@ -30,7 +30,7 @@ func usage() -> Never {
 
     usage:
       grc-whisper                     run the menu-bar app
-      grc-whisper transcribe <file>   transcribe an audio file (engine test)
+      grc-whisper transcribe <file> [--engine apple|parakeet]   transcribe an audio file (engine test)
       grc-whisper polish <text>       run the cleanup pipeline on text (LLM test)
       grc-whisper doctor              check permissions and on-device models
       grc-whisper dict add <term> [misheard,variants]
@@ -57,9 +57,20 @@ case "transcribe":
         print("no such file: \(url.path)"); exit(1)
     }
     let locale = Locale(identifier: Config.load().localeIdentifier)
+    let requestedEngine: Config.ASREngine
+    if let flagIndex = args.firstIndex(of: "--engine"), args.count > flagIndex + 1 {
+        guard let parsed = Config.ASREngine(rawValue: args[flagIndex + 1]) else {
+            print("unknown engine \(args[flagIndex + 1]) — expected apple or parakeet"); exit(1)
+        }
+        requestedEngine = parsed
+    } else {
+        requestedEngine = .apple
+    }
     do {
         let started = Date()
-        let text = try runBlocking { try await transcribeFile(url: url, locale: locale) }
+        // resolveEngineType() is called INSIDE the closure so only the Sendable
+        // enum crosses the @Sendable boundary, not the (non-Sendable) metatype.
+        let text = try runBlocking { try await transcribeFile(url: url, locale: locale, engine: resolveEngineType(requestedEngine)) }
         let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))
         FileHandle.standardError.write("(transcribed in \(elapsed)s)\n".data(using: .utf8)!)
         print(text)

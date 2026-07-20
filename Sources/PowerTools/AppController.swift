@@ -79,7 +79,7 @@ final class AppController {
     /// After an edge snap, the empty region to offer Snap Assist for (on release).
     private var snapAssistRegion: CGRect?
     private var snapAssistExcludeWID: CGWindowID?
-    private var utterance: AppleSpeechUtterance?
+    private var utterance: (any TranscriptionEngine)?
     private var startTask: Task<Void, Error>?
     private var context: ContextSnapshot?
     private var recordingStarted: Date?
@@ -97,6 +97,8 @@ final class AppController {
         self.polisher = Polisher(store: store)
     }
 
+    private var engineType: any TranscriptionEngine.Type { resolveEngineType(config.asrEngine) }
+
     func start() async throws {
         overlay.anchor = config.overlayPosition
         overlay.scheme = config.appearance
@@ -104,7 +106,7 @@ final class AppController {
             throw NSError(domain: "GRCWhisper", code: 10,
                           userInfo: [NSLocalizedDescriptionKey: "Microphone permission denied"])
         }
-        try await AppleSpeechUtterance.ensureAssets(locale: Locale(identifier: config.localeIdentifier))
+        try await engineType.ensureAssets(locale: Locale(identifier: config.localeIdentifier))
         try audio.start()
         audio.onLevels = { [weak self] levels in
             let peak = levels.max() ?? 0
@@ -342,7 +344,7 @@ final class AppController {
         // still be starting when the user finishes a short utterance.
         audio.beginHold()
 
-        let utt = AppleSpeechUtterance(locale: Locale(identifier: config.localeIdentifier))
+        let utt = engineType.init(locale: Locale(identifier: config.localeIdentifier))
         utt.onPartial = { [weak self] text in
             Task { @MainActor in
                 guard let self, self.cycle == gen, self.state == .recording else { return }

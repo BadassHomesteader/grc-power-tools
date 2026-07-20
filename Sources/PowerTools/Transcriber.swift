@@ -2,11 +2,35 @@ import Foundation
 import AVFoundation
 import Speech
 
+/// One dictation utterance, regardless of which speech engine transcribes it
+/// (see `Config.ASREngine`). One instance per utterance; `AppController` holds
+/// it as `any TranscriptionEngine` and never depends on the concrete type.
+protocol TranscriptionEngine: AnyObject {
+    init(locale: Locale)
+    static func ensureAssets(locale: Locale) async throws
+    /// Called with the running transcript as it's produced. Engines that only
+    /// support batch transcription (no live partials) may never call this.
+    var onPartial: ((String) -> Void)? { get set }
+    func start() async throws
+    func feed(_ buffer: AVAudioPCMBuffer)
+    func finish() async throws -> String
+    func cancel() async
+}
+
+/// Resolves which `TranscriptionEngine` conformer implements a given `Config.ASREngine`.
+/// TODO: map `.parakeet` to `ParakeetEngine.self` once that engine lands — falls
+/// back to Apple's engine until then so callers compile standalone.
+func resolveEngineType(_ engine: Config.ASREngine) -> any TranscriptionEngine.Type {
+    switch engine {
+    case .apple, .parakeet: return AppleSpeechUtterance.self
+    }
+}
+
 /// One dictation utterance transcribed by Apple's on-device SpeechAnalyzer (macOS 26).
 ///
 /// Streams audio *during* the key hold with volatile partial results, so the
 /// finalize step at key-release is near-instant. One instance per utterance.
-final class AppleSpeechUtterance {
+final class AppleSpeechUtterance: TranscriptionEngine {
     private let transcriber: SpeechTranscriber
     private let analyzer: SpeechAnalyzer
     private let inputContinuation: AsyncStream<AnalyzerInput>.Continuation
@@ -164,12 +188,14 @@ final class AppleSpeechUtterance {
 }
 
 /// Batch transcription of an audio file — used by the `transcribe` CLI subcommand
-/// to verify the engine without microphone/TCC involvement.
-func transcribeFile(url: URL, locale: Locale) async throws -> String {
-    try await AppleSpeechUtterance.ensureAssets(locale: locale)
+/// to verify an engine without microphone/TCC involvement. `engine` defaults to
+/// Apple's; pass `ParakeetEngine.self` (via `--engine parakeet`) to smoke-test
+/// the other conformer instead.
+func transcribeFile(url: URL, locale: Locale, engine: any TranscriptionEngine.Type = AppleSpeechUtterance.self) async throws -> String {
+    try await engine.ensureAssets(locale: locale)
     let file = try AVAudioFile(forReading: url)
     log("transcribe: file format \(file.processingFormat)")
-    let utterance = AppleSpeechUtterance(locale: locale)
+    let utterance = engine.init(locale: locale)
     try await utterance.start()
     log("transcribe: analyzer started")
 
