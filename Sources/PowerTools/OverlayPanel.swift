@@ -97,6 +97,15 @@ final class OverlayPanel {
         let x = 20 + iconSize + 14
         return NSRect(x: x, y: (height - 22) / 2, width: width - x - 18, height: 22)
     }
+    /// Live-transcript layout during recording: text takes the wave strip,
+    /// the waveform shrinks into the hint slot on the right.
+    private static var liveTextFrame: NSRect {
+        let x = 20 + iconSize + 14
+        return NSRect(x: x, y: (height - 22) / 2, width: (width - hintWidth - 18) - x - 12, height: 22)
+    }
+    private static var miniWaveFrame: NSRect {
+        NSRect(x: width - hintWidth - 18, y: (height - 26) / 2, width: hintWidth, height: 26)
+    }
     private static var diagramFrame: NSRect { NSRect(x: 18, y: (height - 30) / 2, width: 46, height: 30) }
     private static var winLabelFrame: NSRect {
         let x: CGFloat = 18 + 46 + 14
@@ -204,8 +213,9 @@ final class OverlayPanel {
     }
 
     /// Builds a static preview pill for `render-overlay`. `speaking:false` shows the
-    /// armed hint state; `speaking:true` shows the live waveform.
-    static func buildContent(dark: Bool = false, speaking: Bool = false) -> NSView {
+    /// armed hint state; `speaking:true` shows the live waveform; a non-nil
+    /// `partial` shows the live-transcript split layout.
+    static func buildContent(dark: Bool = false, speaking: Bool = false, partial: String? = nil) -> NSView {
         let panel = OverlayPanel()
         panel.scheme = dark ? .dark : .light
         panel.waveform.setSamples((0..<90).map { i in
@@ -218,6 +228,7 @@ final class OverlayPanel {
             panel.waveform.isHidden = true
             panel.hintStrip.isHidden = false
         }
+        if let partial { panel.showPartial(partial) }
         return panel.pill
     }
 
@@ -256,6 +267,11 @@ final class OverlayPanel {
         windowLabel.isHidden = (mode != .window)
         hintStrip.isHidden = true          // shown explicitly by showRecording()
         awaitingSpeech = false
+        // Undo the live-transcript split layout (showPartial) so every state
+        // starts from the standard geometry.
+        waveform.frame = Self.waveFrame
+        textLabel.frame = Self.textFrame
+        textLabel.lineBreakMode = .byTruncatingTail
     }
 
     private func position() {
@@ -290,8 +306,24 @@ final class OverlayPanel {
         present()
     }
 
-    /// The clean HUD shows only the waveform while you speak (no inline transcript).
-    func showPartial(_ text: String) {}
+    /// Live transcript while you speak: the running text takes the wave strip
+    /// (head-truncated so the newest words stay visible) and the waveform
+    /// shrinks into the hint slot — mic feedback and words at the same time.
+    func showPartial(_ text: String) {
+        guard !text.isEmpty else { return }
+        // Partial text is proof of speech even if levels never crossed the
+        // hint threshold (quiet talker / far mic).
+        awaitingSpeech = false
+        hintStrip.isHidden = true
+        hintLabel.isHidden = true
+        waveform.frame = Self.miniWaveFrame
+        waveform.isHidden = false
+        textLabel.frame = Self.liveTextFrame
+        textLabel.lineBreakMode = .byTruncatingHead
+        textLabel.textColor = fg
+        textLabel.stringValue = text
+        textLabel.isHidden = false
+    }
 
     func setLevels(_ levels: [Float]) {
         for l in levels { waveform.push(CGFloat(l)) }

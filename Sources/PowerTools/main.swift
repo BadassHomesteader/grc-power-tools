@@ -678,8 +678,11 @@ case "render-overlay":
     let out = args.count >= 2 ? args[1] : "overlay-preview.png"
     let dark = !(args.count >= 3 && args[2] == "light")
     let speaking = args.contains("speaking")
+    let partial = args.contains("partial")
+        ? "the field crew finished the meter exchange on Elm Street and headed"
+        : nil
     MainActor.assumeIsolated {
-        let content = OverlayPanel.buildContent(dark: dark, speaking: speaking)
+        let content = OverlayPanel.buildContent(dark: dark, speaking: speaking, partial: partial)
         guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { exit(1) }
         content.cacheDisplay(in: content.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {
