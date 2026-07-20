@@ -18,11 +18,10 @@ protocol TranscriptionEngine: AnyObject {
 }
 
 /// Resolves which `TranscriptionEngine` conformer implements a given `Config.ASREngine`.
-/// TODO: map `.parakeet` to `ParakeetEngine.self` once that engine lands — falls
-/// back to Apple's engine until then so callers compile standalone.
 func resolveEngineType(_ engine: Config.ASREngine) -> any TranscriptionEngine.Type {
     switch engine {
-    case .apple, .parakeet: return AppleSpeechUtterance.self
+    case .apple: return AppleSpeechUtterance.self
+    case .parakeet: return ParakeetEngine.self
     }
 }
 

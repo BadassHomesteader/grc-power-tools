@@ -19,12 +19,33 @@ VERSION="1.25.3"
 DIST="dist"
 APP="$DIST/$APP_NAME.app"
 
-# NOTE: built with swiftc directly, not `swift build` — the CommandLineTools-only
-# toolchain on this machine has a broken PackageDescription dylib (manifest link
-# failure). No external dependencies, so swiftc is equivalent.
+# FluidAudio (Parakeet ASR) is a real SPM dependency, but swiftpm itself is
+# broken on this machine (see .github/workflows/build-fluidaudio-artifact.yml
+# for the full story) — it's built in CI instead and downloaded here as a
+# prebuilt static lib + swiftmodule. Cached locally after the first download;
+# delete vendor/fluidaudio-build/artifact/ to force a re-fetch of a newer build.
+FLUIDAUDIO_ARTIFACT="vendor/fluidaudio-build/artifact"
+if [[ ! -d "$FLUIDAUDIO_ARTIFACT" ]]; then
+    echo "==> downloading FluidAudio (Parakeet) CI artifact"
+    TMP_DL="$(mktemp -d)"
+    gh run download -n PowerToolsASRBridge-artifact --dir "$TMP_DL"
+    mkdir -p "$FLUIDAUDIO_ARTIFACT"
+    unzip -q "$TMP_DL/PowerToolsASRBridge-artifact.zip" -d "$FLUIDAUDIO_ARTIFACT"
+    rm -rf "$TMP_DL"
+fi
+
+# NOTE: the app itself is still built with swiftc directly, not `swift build` —
+# the CommandLineTools-only toolchain on this machine has a broken
+# PackageDescription dylib (manifest link failure), confirmed live and not a
+# sandbox/permissions issue. FluidAudio's own dependency (NemoTextProcessing)
+# is intentionally NOT linked — confirmed via `nm` that our narrow ASR-only
+# entry point never references it, so it'd be dead weight.
 echo "==> swiftc release build"
 mkdir -p .build
-swiftc -swift-version 5 -O Sources/PowerTools/*.swift -o .build/PowerTools
+swiftc -swift-version 5 -O Sources/PowerTools/*.swift \
+    -I "$FLUIDAUDIO_ARTIFACT/modules" \
+    -L "$FLUIDAUDIO_ARTIFACT/lib" -lPowerToolsASRBridge -lc++ \
+    -o .build/PowerTools
 
 echo "==> assembling $APP"
 rm -rf "$APP"

@@ -16,7 +16,12 @@ let package = Package(
     targets: [
         .target(
             name: "PowerToolsASRBridge",
-            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")]
+            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
+            // The dev machine's swiftc (6.3.1) is newer than whatever Xcode CI
+            // builds with — a plain .swiftmodule only imports on an EXACT
+            // compiler-version match. Library evolution emits a resilient
+            // .swiftinterface instead, importable across compiler versions.
+            swiftSettings: [.unsafeFlags(["-enable-library-evolution"])]
         )
     ]
 )
