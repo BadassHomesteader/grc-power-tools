@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Carbon.HIToolbox
+import ApplicationServices
 
 /// Inserts text into whatever app has focus via clipboard-swap paste.
 ///
@@ -192,6 +193,80 @@ enum Inserter {
         down.post(tap: .cghidEventTap)
         usleep(10_000) // 10ms between down and up
         up.post(tap: .cghidEventTap)
+    }
+
+    /// Press a menu item by title path (e.g. ["Message", "Move"]) via the
+    /// Accessibility API — for actions whose keyboard shortcut an app has
+    /// dropped (New Outlook's Move has none anymore) so a chord can't reach
+    /// them. `pid` must already be frontmost; same Accessibility grant Power
+    /// Tools already holds for the hotkey tap covers this, no extra prompt.
+    static func clickMenuItem(pid: pid_t, path: [String]) -> Bool {
+        guard !path.isEmpty else { return false }
+        let app = AXUIElementCreateApplication(pid)
+        var menuBarValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBarValue) == .success,
+              let menuBar = menuBarValue else { return false }
+        var pool = axChildren(of: (menuBar as! AXUIElement))   // AX attributes are untyped CF; this one's always the menu bar element
+        var target: AXUIElement?
+        for (i, name) in path.enumerated() {
+            guard let match = pool.first(where: { axTitle($0) == name }) else { return false }
+            if i == path.count - 1 { target = match; break }
+            // Descend past the wrapping AXMenu: a menu bar item's (or menu
+            // item's) one child is the menu holding the next level of items.
+            guard let submenu = axChildren(of: match).first else { return false }
+            pool = axChildren(of: submenu)
+        }
+        guard let target else { return false }
+        return AXUIElementPerformAction(target, kAXPressAction as CFString) == .success
+    }
+
+    enum MenuMatchResult {
+        case matched         // clicked a submenu item matching the name directly — action is complete
+        case openedPicker    // no direct match; clicked a "Choose Folder…"-style escape hatch instead
+        case notFound        // path itself didn't resolve, or neither a match nor an escape hatch exists
+    }
+
+    /// Click through `path`, then within the LAST item's OWN submenu, click
+    /// whichever child's title starts with `name` (case-insensitive) — Outlook
+    /// lists real folder names inline there, so this is a direct, reliable
+    /// pick. Typing into an open menu is NOT a substitute: macOS treats
+    /// keystrokes there as type-ahead item-jump, not text filtering, which is
+    /// how typing "APS" once landed on an unrelated "Pin" item instead.
+    /// Falls back to a "Choose Folder…" item (opens a real dialog) when the
+    /// target isn't in the quick list, so the caller can type into that.
+    static func clickMenuItemMatching(pid: pid_t, path: [String], name: String) -> MenuMatchResult {
+        guard !path.isEmpty else { return .notFound }
+        let app = AXUIElementCreateApplication(pid)
+        var menuBarValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &menuBarValue) == .success,
+              let menuBar = menuBarValue else { return .notFound }
+        var pool = axChildren(of: (menuBar as! AXUIElement))
+        for step in path {
+            guard let match = pool.first(where: { axTitle($0) == step }),
+                  let submenu = axChildren(of: match).first else { return .notFound }
+            pool = axChildren(of: submenu)
+        }
+        let needle = name.trimmingCharacters(in: .whitespaces).lowercased()
+        if let direct = pool.first(where: { (axTitle($0) ?? "").lowercased().hasPrefix(needle) }) {
+            return AXUIElementPerformAction(direct, kAXPressAction as CFString) == .success ? .matched : .notFound
+        }
+        if let picker = pool.first(where: { (axTitle($0) ?? "").localizedCaseInsensitiveContains("choose folder") }) {
+            return AXUIElementPerformAction(picker, kAXPressAction as CFString) == .success ? .openedPicker : .notFound
+        }
+        return .notFound
+    }
+
+    private static func axChildren(of element: AXUIElement) -> [AXUIElement] {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success,
+              let children = value as? [AXUIElement] else { return [] }
+        return children
+    }
+
+    private static func axTitle(_ element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &value) == .success else { return nil }
+        return value as? String
     }
 
     /// File copy = ⌘C (copies selected Finder items to the clipboard).

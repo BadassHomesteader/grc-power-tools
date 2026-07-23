@@ -56,7 +56,6 @@ final class AppController {
     private let macroPad = MacroPad()
     private let cheatSheet = HotkeyCheatSheet()
     private let powerRing = PowerRing()
-    private let permissionToast = PermissionToast()
     private let agentPad = AgentPad()
     private let claudeRegistry = ClaudeSessionRegistry()
     private let hookServer = ClaudeHookServer()
@@ -275,7 +274,7 @@ final class AppController {
             claudeRegistry.onChange = { [weak self] sessions in
                 guard let self else { return }
                 self.agentPad.updateSessions(sessions, hooksInstalled: ClaudeHooksInstaller.isInstalled())
-                self.updatePermissionToasts(sessions)
+                self.revealAgentPadIfWaiting(sessions)
             }
             if !hookServer.start(port: config.agentPadPort) {
                 log("controller: Agent Pad server couldn't bind 127.0.0.1:\(config.agentPadPort)")
@@ -789,49 +788,46 @@ final class AppController {
         }
     }
 
-    /// Toast waiting permissions whenever the Agent Pad can't show its ✓/✕
-    /// rows itself (closed or collapsed to the strip); clear them the moment
-    /// they resolve or the full pad is up.
-    private func updatePermissionToasts(_ sessions: [ClaudeSession]) {
-        guard config.agentPad, config.agentPadToasts else {
-            permissionToast.sync(waitingIds: [])
-            return
-        }
-        let padShowing = agentPad.isVisible && !agentPad.isMini
-        let waiting = padShowing ? [] : sessions.filter { $0.state == .needsPermission }
-        for s in waiting {
-            permissionToast.present(session: s, dark: config.appearance.isDark,
-                onApprove: { [weak self] in self?.handleAgentPadAction(s, .accept) },
-                onDeny: { [weak self] in self?.handleAgentPadAction(s, .deny) })
-        }
-        permissionToast.sync(waitingIds: Set(waiting.map(\.id)))
+    /// Reveal the Agent Pad — open it (or, if already open, `updateSessions`
+    /// has already un-mini'd it) — whenever a session needs the user's
+    /// approval. This maxes the one pad surface instead of spawning a
+    /// separate popup for permissions.
+    private func revealAgentPadIfWaiting(_ sessions: [ClaudeSession]) {
+        guard config.agentPad, !agentPad.isVisible,
+              sessions.contains(where: { $0.state == .needsPermission }) else { return }
+        openAgentPad(on: NSScreen.main)
     }
 
     func toggleAgentPad() {
         interruptDictation()
         if agentPad.isVisible {
             agentPad.dismiss()
-            updatePermissionToasts(claudeRegistry.ordered)   // pad gone — surface waiting ✓/✕
+            revealAgentPadIfWaiting(claudeRegistry.ordered)   // still waiting — pop right back
             return
         }
         guard config.agentPad else {
             overlay.showError("Agent Pad is off — enable it in Settings ▸ Agent Pad")
             return
         }
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        openAgentPad(on: screen)
+    }
+
+    /// Build and show the Agent Pad panel. Shared by the manual hotkey/menu
+    /// toggle and the automatic reveal when a permission needs the user.
+    private func openAgentPad(on screen: NSScreen?) {
         overlay.hide()
         claudeRegistry.pruneDead()
         claudeRegistry.refreshDiscovered()  // catch silent sessions on every open
         if config.agentPadCodex { CodexWatcher.refresh(into: claudeRegistry) }
         if config.agentPadCursor { CursorWatcher.refresh(into: claudeRegistry) }
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
         agentPad.present(
             sessions: claudeRegistry.ordered, dark: config.appearance.isDark, screen: screen,
             hotkeyName: config.hotkey.displayName, hooksInstalled: ClaudeHooksInstaller.isInstalled(),
             onAction: { [weak self] session, action in self?.handleAgentPadAction(session, action) }
         )
-        updatePermissionToasts(claudeRegistry.ordered)   // full pad shows its own ✓/✕ now
     }
 
     private func handleAgentPadAction(_ session: ClaudeSession, _ action: AgentPad.Action) {
@@ -949,11 +945,14 @@ final class AppController {
     /// — two macros must never interleave their synthesized keystrokes.
     private var macroChain: Task<Void, Never>?
 
-    /// Run one macro button: chord → (delay) → typed text → (delay) → Return.
-    /// Focus can drift between render and click, so the profile's app is
-    /// re-activated first if something else slipped in front.
+    /// Run one macro button: an "open" step — chord, or a `menuPath` clicked
+    /// via Accessibility when the app has no shortcut for the action — then
+    /// (delay) → typed text → (delay) → Return. Focus can drift between
+    /// render and click, so the profile's app is re-activated first if
+    /// something else slipped in front.
     private func runMacroButton(_ button: Config.MacroButton, targetBundleID: String) {
         let stepMs = max(config.macroPadStepDelayMs, 100)
+        let menuPath = button.menuPath.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         // A hand-edited profile with a typo'd chord must abort — skipping just
         // the chord would type the folder name + Return straight into the email.
         let chord = MacroPad.parseChord(button.chord)
@@ -971,20 +970,48 @@ final class AppController {
                 self.overlay.showError("“\(button.title)” skipped — a modifier key never released")
                 return
             }
+            guard let target = NSRunningApplication
+                .runningApplications(withBundleIdentifier: targetBundleID).first else {
+                self.overlay.showError("\(targetBundleID) isn't running")
+                return
+            }
             if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != targetBundleID {
-                guard let target = NSRunningApplication
-                    .runningApplications(withBundleIdentifier: targetBundleID).first else {
-                    self.overlay.showError("\(targetBundleID) isn't running")
-                    return
-                }
                 target.activate()
                 try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
             }
+            let pid = target.processIdentifier
             // Off the main actor (awaited, so the chain stays serial):
             // typeText/postKey pace themselves with usleep, which must not
             // stall the app's UI mid-macro.
-            await Task.detached(priority: .userInitiated) {
-                if let chord {
+            await Task.detached(priority: .userInitiated) { [weak self] in
+                if !menuPath.isEmpty, !button.text.isEmpty {
+                    // A menu with a folder name to hit (Outlook's Move): click
+                    // the matching submenu item directly rather than typing —
+                    // an open menu treats keystrokes as item-jump, not a
+                    // filter, so typing here can land on the wrong command.
+                    switch Inserter.clickMenuItemMatching(pid: pid, path: menuPath, name: button.text) {
+                    case .matched:
+                        return   // the click alone completed the move
+                    case .openedPicker:
+                        break    // a real dialog is open now — type into it below
+                    case .notFound:
+                        if let self {
+                            await MainActor.run {
+                                self.overlay.showError("“\(button.title)” — couldn't find “\(button.text)” under \(menuPath.joined(separator: " ▸ "))")
+                            }
+                        }
+                        return
+                    }
+                } else if !menuPath.isEmpty {
+                    guard Inserter.clickMenuItem(pid: pid, path: menuPath) else {
+                        if let self {
+                            await MainActor.run {
+                                self.overlay.showError("“\(button.title)” — couldn't find \(menuPath.joined(separator: " ▸ ")) in the menu bar")
+                            }
+                        }
+                        return
+                    }
+                } else if let chord {
                     Inserter.postKey(chord.key, flags: chord.flags)
                 }
                 if !button.text.isEmpty {

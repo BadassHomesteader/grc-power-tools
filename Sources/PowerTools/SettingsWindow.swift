@@ -88,7 +88,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     // Agent Pad
     private let agentPadCheck = NSButton(checkboxWithTitle: "Agent Pad — floating agent-session panel (hold hotkey + J, or menu bar)", target: nil, action: nil)
-    private let agentToastsCheck = NSButton(checkboxWithTitle: "Permission toasts — Approve/Deny card top-right while the pad is closed", target: nil, action: nil)
     private let agentCodexCheck = NSButton(checkboxWithTitle: "Watch Codex — ChatGPT/Codex threads as rows (watch-only, click to focus)", target: nil, action: nil)
     private let agentCursorCheck = NSButton(checkboxWithTitle: "Watch Cursor — cloud agents + Agents Window sessions (watch-only)", target: nil, action: nil)
     private let hooksStatus = NSTextField(labelWithString: " ")
@@ -190,8 +189,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         powerRingCheck.action = #selector(powerRingToggled)
         agentPadCheck.target = self
         agentPadCheck.action = #selector(agentPadToggled)
-        agentToastsCheck.target = self
-        agentToastsCheck.action = #selector(agentToastsToggled)
         agentCodexCheck.target = self
         agentCodexCheck.action = #selector(agentCodexToggled)
         agentCursorCheck.target = self
@@ -624,7 +621,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     private func macroPadTab() -> NSView {
-        let note = NSTextField(labelWithString: "A floating button pad (like an on-screen Stream Deck) that swaps with the app in front. Clicking a button never steals focus. First profile: Outlook filing — each folder below becomes a button that moves the selected email there (⌘⇧M → folder name → ⏎). Add keywords after a | and the pad highlights the buttons whose keywords appear in the open email (screenshot + on-device OCR of the reading pane — nothing leaves your Mac). Drag the pad anywhere; ✕ closes it. While the pad is open, hold your hotkey and tap the button's digit (1…9, 0 = tenth) to fire it without clicking — tap several to file several emails in one hold. Buttons aren't limited to moves — any keystroke works (Delete, Archive, Reply…): add them to the Outlook profile in config.json and this editor leaves them alone. Profiles for other apps: also config.json.")
+        let note = NSTextField(labelWithString: "A floating button pad (like an on-screen Stream Deck) that swaps with the app in front. Clicking a button never steals focus. First profile: Outlook filing — each folder below becomes a button that moves the selected email there (Message ▸ Move, clicked directly since New Outlook dropped its keyboard shortcut → folder name → ⏎). Add keywords after a | and the pad highlights the buttons whose keywords appear in the open email (screenshot + on-device OCR of the reading pane — nothing leaves your Mac). Drag the pad anywhere; ✕ closes it. While the pad is open, hold your hotkey and tap the button's digit (1…9, 0 = tenth) to fire it without clicking — tap several to file several emails in one hold. Buttons aren't limited to moves — any keystroke works (Delete, Archive, Reply…): add them to the Outlook profile in config.json and this editor leaves them alone. Profiles for other apps: also config.json.")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         note.lineBreakMode = .byWordWrapping
@@ -798,7 +795,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         if let touched, touched.caseInsensitiveCompare("com.microsoft.Outlook") == .orderedSame {
             let outlook = macroProfiles.first { $0.bundleID.caseInsensitiveCompare(touched) == .orderedSame }
             macroFoldersView.string = (outlook?.buttons ?? [])
-                .filter { $0.chord == Self.macroMoveChord }
+                .filter { $0.menuPath == Self.macroMoveMenuPath }
                 .map { $0.keywords.isEmpty ? $0.title : "\($0.title) | \($0.keywords)" }
                 .joined(separator: "\n")
         }
@@ -835,8 +832,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         persistMacroProfiles("Removed \(removed.name)", touched: removed.bundleID)
     }
 
-    /// Editor fields → a MacroButton (nil + alert on a bad chord).
-    private func macroButtonFromFields() -> Config.MacroButton? {
+    /// Editor fields → a MacroButton (nil + alert on a bad chord). This editor
+    /// has no Menu Path field of its own (the Outlook folders box above owns
+    /// that), so `preserving` carries an existing button's menuPath through an
+    /// update instead of the field silently erasing it.
+    private func macroButtonFromFields(preserving existing: Config.MacroButton? = nil) -> Config.MacroButton? {
         let title = macroBtnTitleField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !title.isEmpty else { macroEditorStatus.stringValue = "Give the button a title"; return nil }
         let chord = macroBtnChordField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
@@ -848,7 +848,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             title: title, chord: chord,
             text: macroBtnTextField.stringValue,
             pressReturn: macroBtnReturnCheck.state == .on,
-            keywords: macroBtnKeywordsField.stringValue.trimmingCharacters(in: .whitespaces))
+            keywords: macroBtnKeywordsField.stringValue.trimmingCharacters(in: .whitespaces),
+            menuPath: existing?.menuPath ?? "")
     }
 
     @objc private func addMacroButton() {
@@ -865,7 +866,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             macroEditorStatus.stringValue = "Select a button row first"
             return
         }
-        guard let button = macroButtonFromFields() else { return }
+        guard let button = macroButtonFromFields(preserving: macroProfiles[idx].buttons[row]) else { return }
         macroProfiles[idx].buttons[row] = button
         persistMacroProfiles("Updated “\(button.title)”", touched: macroProfiles[idx].bundleID)
         macroButtonsTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
@@ -894,9 +895,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     @objc private func macroButtonUp() { moveMacroButton(by: -1) }
     @objc private func macroButtonDown() { moveMacroButton(by: 1) }
 
-    /// The chord the folders editor manages; buttons with any OTHER chord are
-    /// custom (Delete, Archive, …) and must survive a folder-list save.
-    private static let macroMoveChord = "cmd+shift+m"
+    /// The menu path the folders editor manages (Message ▸ Move — New Outlook
+    /// dropped its ⌘⇧M shortcut, see Config's migration); buttons with any
+    /// OTHER menuPath are custom (Delete, Archive, …) and must survive a
+    /// folder-list save.
+    private static let macroMoveMenuPath = "Message,Move"
 
     /// Rebuild the Outlook profile's folder-move buttons from the list
     /// ("Name | kw1, kw2" per line). Custom buttons and other apps' profiles
@@ -911,8 +914,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                 let parts = line.split(separator: "|", maxSplits: 1)
                 guard let folder = parts.first?.trimmingCharacters(in: .whitespaces), !folder.isEmpty else { return nil }
                 let keywords = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
-                return Config.MacroButton(title: folder, chord: Self.macroMoveChord, text: folder,
-                                          pressReturn: true, keywords: keywords)
+                return Config.MacroButton(title: folder, text: folder,
+                                          pressReturn: true, keywords: keywords, menuPath: Self.macroMoveMenuPath)
             }
         let outlookID = "com.microsoft.Outlook"
         // Case-insensitive to match MacroPad's runtime lookup — a hand-edited
@@ -921,13 +924,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             let existing = config.macroPadProfiles[idx].buttons
             // No-op save must not touch anything: rebuilding would front-load
             // the folder buttons and silently reshuffle custom buttons' digits.
-            let unchanged = existing.filter { $0.chord == Self.macroMoveChord }
+            let unchanged = existing.filter { $0.menuPath == Self.macroMoveMenuPath }
                 .map { "\($0.title)|\($0.keywords)" } == buttons.map { "\($0.title)|\($0.keywords)" }
             if unchanged {
                 macroPadStatus.stringValue = "No folder changes"
                 return
             }
-            let custom = existing.filter { $0.chord != Self.macroMoveChord }
+            let custom = existing.filter { $0.menuPath != Self.macroMoveMenuPath }
             let merged = buttons + custom   // folder buttons keep the low digits
             if merged.isEmpty { config.macroPadProfiles.remove(at: idx) }
             else { config.macroPadProfiles[idx].buttons = merged }
@@ -1059,7 +1062,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         hooksStatus.lineBreakMode = .byWordWrapping
         hooksStatus.preferredMaxLayoutWidth = 500
         return vstack([
-            section("Agent Pad", [agentPadCheck, note, agentToastsCheck, agentCodexCheck, agentCursorCheck], width: 540),
+            section("Agent Pad", [agentPadCheck, note, agentCodexCheck, agentCursorCheck], width: 540),
             section("Claude Code hooks", [hooksRow, hooksStatus], width: 540),
         ])
     }
@@ -1072,12 +1075,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func agentPadToggled() {
         config.agentPad = (agentPadCheck.state == .on)
-        config.save()
-        onConfigChange(config)
-    }
-
-    @objc private func agentToastsToggled() {
-        config.agentPadToasts = (agentToastsCheck.state == .on)
         config.save()
         onConfigChange(config)
     }
@@ -1223,7 +1220,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
         macroPadCheck.state = config.macroPad ? .on : .off
         agentPadCheck.state = config.agentPad ? .on : .off
-        agentToastsCheck.state = config.agentPadToasts ? .on : .off
         agentCodexCheck.state = config.agentPadCodex ? .on : .off
         agentCursorCheck.state = config.agentPadCursor ? .on : .off
         refreshHooksStatus()
@@ -1239,7 +1235,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         // Only the folder-move buttons belong in the editor — a custom button
         // listed here would be converted into a bogus folder on save.
         macroFoldersView.string = (outlook?.buttons ?? [])
-            .filter { $0.chord == Self.macroMoveChord }
+            .filter { $0.menuPath == Self.macroMoveMenuPath }
             .map { $0.keywords.isEmpty ? $0.title : "\($0.title) | \($0.keywords)" }
             .joined(separator: "\n")
         macroProfiles = config.macroPadProfiles
@@ -1595,7 +1591,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             let b = macroProfiles[idx].buttons[row]
             switch tableColumn?.identifier.rawValue {
             case "mbTitle": text = b.title
-            case "mbChord": text = b.chord
+            case "mbChord": text = b.chord.isEmpty && !b.menuPath.isEmpty
+                ? "▸" + b.menuPath.replacingOccurrences(of: ",", with: "▸") : b.chord
             case "mbText": text = b.text
             case "mbRet": text = b.pressReturn ? "⏎" : ""
             default: text = b.keywords

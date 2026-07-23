@@ -527,25 +527,6 @@ case "powerring-preview":
         }
     }
 
-case "permissiontoast-preview":
-    // Offscreen render of a permission toast card.
-    let out = args.count >= 2 ? args[1] : "permissiontoast-preview.png"
-    let dark = !args.contains("light")
-    MainActor.assumeIsolated {
-        var s = ClaudeSession(id: "prev")
-        s.cwd = "/Users/dev/grc-power-tools"
-        s.label = "Ship the Power Ring release"
-        s.state = .needsPermission
-        s.detail = "Bash: scripts/bundle.sh --install && git push origin main"
-        let v = PermissionToastView(session: s, dark: dark)
-        v.frame = NSRect(origin: .zero, size: v.fittingSize)
-        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
-        v.cacheDisplay(in: v.bounds, to: rep)
-        if let data = rep.representation(using: .png, properties: [:]) {
-            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
-        }
-    }
-
 case "dockoverlay-preview":
     // Offscreen render of the drag-time dock-target overlay (fake 1440x900
     // screen, pad held near the midLeft anchor → left-mid marker lit + ghost).

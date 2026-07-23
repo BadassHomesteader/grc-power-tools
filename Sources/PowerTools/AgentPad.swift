@@ -59,9 +59,12 @@ final class AgentPad: NSObject {
     private var onAction: ((ClaudeSession, Action) -> Void)?
 
     var isVisible: Bool { panel != nil }
-    /// Collapsed to the traffic-light strip (no ✓/✕ rows visible) — the
-    /// permission toasts key off this.
+    /// Collapsed to the traffic-light strip (no ✓/✕ rows visible).
     var isMini: Bool { miniActive }
+    /// A session is blocked waiting on the user — this always wins over the
+    /// mini preference so a permission never goes silent in the strip; the
+    /// pad maxes itself instead of a separate popup surfacing it.
+    private var hasWaitingPermission: Bool { sessions.contains { $0.state == .needsPermission } }
 
     /// Triage order: blocked sessions first, then everything else by how fresh
     /// its state is — the pad exists to surface whoever needs the user now.
@@ -99,6 +102,7 @@ final class AgentPad: NSObject {
             miniPreferred = saved.mini ?? false
             miniActive = miniPreferred
         }
+        if hasWaitingPermission { miniActive = false }
         buildPanel(on: screen)
         render(on: screen)
         persistPlacement()   // open=true — survives quits/deploys for launch restore
@@ -138,6 +142,11 @@ final class AgentPad: NSObject {
     func updateSessions(_ sessions: [ClaudeSession], hooksInstalled: Bool) {
         self.sessions = Self.triageSorted(sessions)
         self.hooksInstalled = hooksInstalled
+        if hasWaitingPermission {
+            miniActive = false
+        } else if miniPreferred {
+            miniActive = true
+        }
         if isVisible { render() }
     }
 
@@ -168,7 +177,7 @@ final class AgentPad: NSObject {
             self.render()
         }
         view.onCollapse = { [weak self] in
-            guard let self, self.miniPreferred, !self.miniActive else { return }
+            guard let self, self.miniPreferred, !self.miniActive, !self.hasWaitingPermission else { return }
             self.miniActive = true
             self.render()
         }

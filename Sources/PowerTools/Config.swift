@@ -275,24 +275,28 @@ struct Config: Codable {
     /// Quick Capture connections. Each has its own hotkey leader letter.
     var connections: [Connection] = []
 
-    /// One Macro Pad button: an optional keystroke chord ("cmd+shift+m"), then
-    /// optional literal text typed into whatever the chord opened, then an
-    /// optional Return. `keywords` (comma-separated) light the button up as a
-    /// suggestion when they appear in the target window's reading pane.
+    /// One Macro Pad button: an "open" step — either a keystroke chord
+    /// ("cmd+shift+m") OR, when the target app has no shortcut for the action
+    /// (New Outlook dropped Move's), a `menuPath` ("Message,Move") clicked via
+    /// the Accessibility API — then optional literal text typed into whatever
+    /// that opened, then an optional Return. `keywords` (comma-separated)
+    /// light the button up as a suggestion when they appear in the target
+    /// window's reading pane.
     struct MacroButton: Codable {
         var title: String
         var chord: String
         var text: String
         var pressReturn: Bool
         var keywords: String
+        var menuPath: String
 
         init(title: String, chord: String = "", text: String = "",
-             pressReturn: Bool = false, keywords: String = "") {
+             pressReturn: Bool = false, keywords: String = "", menuPath: String = "") {
             self.title = title; self.chord = chord; self.text = text
-            self.pressReturn = pressReturn; self.keywords = keywords
+            self.pressReturn = pressReturn; self.keywords = keywords; self.menuPath = menuPath
         }
 
-        private enum CodingKeys: String, CodingKey { case title, chord, text, pressReturn, keywords }
+        private enum CodingKeys: String, CodingKey { case title, chord, text, pressReturn, keywords, menuPath }
 
         // Lenient: a partial/legacy element decodes with defaults instead of throwing.
         init(from decoder: Decoder) throws {
@@ -302,6 +306,7 @@ struct Config: Codable {
             text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
             pressReturn = try c.decodeIfPresent(Bool.self, forKey: .pressReturn) ?? false
             keywords = try c.decodeIfPresent(String.self, forKey: .keywords) ?? ""
+            menuPath = try c.decodeIfPresent(String.self, forKey: .menuPath) ?? ""
         }
     }
 
@@ -337,8 +342,6 @@ struct Config: Codable {
     /// AND a hook re-install (the port is baked into the settings.json entries).
     var agentPad: Bool = true
     var agentPadPort: Int = 8377
-    /// Approve/Deny card when a session needs permission and the pad is closed.
-    var agentPadToasts: Bool = true
     /// Show Codex (ChatGPT app) threads as watch-only rows.
     var agentPadCodex: Bool = true
     /// Show Cursor sessions (cloud agents + Agents Window) as watch-only rows.
@@ -430,7 +433,7 @@ struct Config: Codable {
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs
-        case agentPad, agentPadPort, agentPadToasts, agentPadCodex, agentPadCursor, restorePads
+        case agentPad, agentPadPort, agentPadCodex, agentPadCursor, restorePads
         case powerRing, powerRingSlots
         case pronunciations
     }
@@ -484,10 +487,22 @@ struct Config: Codable {
         connections = field(.connections, [])
         macroPad = field(.macroPad, true)
         macroPadProfiles = field(.macroPadProfiles, [])
+        // Migration: New Outlook dropped the ⌘⇧M shortcut for Move (still true
+        // as of this writing — the menu item now has no keyboard shortcut at
+        // all), so any button still carrying that dead chord is switched to
+        // clicking Message ▸ Move directly via the Accessibility API instead.
+        if let idx = macroPadProfiles.firstIndex(where: {
+            $0.bundleID.caseInsensitiveCompare("com.microsoft.Outlook") == .orderedSame
+        }) {
+            for bi in macroPadProfiles[idx].buttons.indices
+            where macroPadProfiles[idx].buttons[bi].chord == "cmd+shift+m" {
+                macroPadProfiles[idx].buttons[bi].chord = ""
+                macroPadProfiles[idx].buttons[bi].menuPath = "Message,Move"
+            }
+        }
         macroPadStepDelayMs = field(.macroPadStepDelayMs, 350)
         agentPad = field(.agentPad, true)
         agentPadPort = field(.agentPadPort, 8377)
-        agentPadToasts = field(.agentPadToasts, true)
         agentPadCodex = field(.agentPadCodex, true)
         agentPadCursor = field(.agentPadCursor, true)
         restorePads = field(.restorePads, true)
