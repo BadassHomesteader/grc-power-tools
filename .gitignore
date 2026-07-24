@@ -8,3 +8,7 @@ dist/
 *.key
 *.crt
 cs.cnf
+
+# .NET build output (windows/)
+windows/**/bin/
+windows/**/obj/

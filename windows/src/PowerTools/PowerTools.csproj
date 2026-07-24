@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms is referenced only for NotifyIcon (the tray icon); all UI is WPF. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>PowerTools</AssemblyName>
+    <RootNamespace>PowerTools</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Allows `dotnet build` on macOS/Linux for compile checks; running still needs Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Version>0.1.0</Version>
+    <Product>GRC Power Tools</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.6" />
+  </ItemGroup>
+
+  <!-- The WinForms SDK injects global usings that collide with the WPF types
+       of the same names; WinForms stays an explicit per-file import. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('Assets\PowerTools.ico')">
+    <Resource Include="Assets\PowerTools.ico" />
+  </ItemGroup>
+  <PropertyGroup Condition="Exists('Assets\PowerTools.ico')">
+    <ApplicationIcon>Assets\PowerTools.ico</ApplicationIcon>
+  </PropertyGroup>
+
+</Project>
