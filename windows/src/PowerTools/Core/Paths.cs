@@ -12,9 +12,12 @@ public static class Paths
     {
         get
         {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "GRC Whisper");
+            // POWERTOOLS_DATA_DIR redirects everything — used by the test
+            // harness and handy for portable installs.
+            var dir = Environment.GetEnvironmentVariable("POWERTOOLS_DATA_DIR")
+                ?? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "GRC Whisper");
             Directory.CreateDirectory(dir);
             return dir;
         }

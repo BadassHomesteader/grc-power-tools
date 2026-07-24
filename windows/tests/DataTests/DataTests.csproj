@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.6" />
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.*" />
+  </ItemGroup>
+  <!-- Compiles the app's platform-neutral layers directly, so these tests run
+       on any OS — including real Windows in CI — without the WPF shell. -->
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../../src/PowerTools/Core/Config.cs" />
+    <Compile Include="../../src/PowerTools/Core/Paths.cs" />
+    <Compile Include="../../src/PowerTools/Core/Logger.cs" />
+    <Compile Include="../../src/PowerTools/Core/SecretsStore.cs" />
+    <Compile Include="../../src/PowerTools/Core/Store.cs" />
+    <Compile Include="../../src/PowerTools/Core/Polisher.cs" />
+    <Compile Include="../../src/PowerTools/Core/CloudPolish.cs" />
+    <Compile Include="../../src/PowerTools/Asr/ParakeetEngine.cs" />
+    <Compile Include="../../src/PowerTools/Asr/WavFile.cs" />
+  </ItemGroup>
+</Project>

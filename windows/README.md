@@ -43,17 +43,25 @@ On Windows:
 
     dotnet run --project src/PowerTools
 
-On macOS/Linux (compile check only — WPF can't run here; `EnableWindowsTargeting`
-makes the build work):
+On macOS/Linux (compile check + non-UI tests — WPF can't run here;
+`EnableWindowsTargeting` makes the build work):
 
     dotnet build windows/PowerTools.Windows.sln
+    dotnet run --project windows/tests/DataTests            # data layer + polish
+    dotnet run --project windows/tests/DataTests -- asr <wav> <expected words…>
+
+The ASR smoke test runs the real sherpa-onnx Parakeet engine on any OS
+(~700 MB model download on first use, cached in the temp dir or
+`POWERTOOLS_ASR_CACHE`). CI (`.github/workflows/windows.yml`) builds and runs
+the data tests on real Windows and publishes a run-ready `PowerTools-win-x64`
+artifact on every push.
 
 ## Phase status
 
 | Phase | Status |
 |---|---|
-| 1. Core infra (tray, hook, config, store, settings shell) | **this code** |
-| 2. Dictation (WASAPI + sherpa-onnx Parakeet + inserter + overlay) | pending |
+| 1. Core infra (tray, hook, config, store, settings shell) | **shipped** |
+| 2. Dictation (WASAPI + sherpa-onnx Parakeet + polish + inserter + overlay + ducking) | **core shipped** — awaiting hands-on Windows verification ([MONDAY-TEST.md](MONDAY-TEST.md)) |
 | 3. Window management suite | pending |
 | 4. Clipboard history + Advanced Paste | pending |
 | 5. Pads (Macro Pad, Power Ring, Quick Capture, cheat sheet) | pending |

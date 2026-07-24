@@ -1,0 +1,38 @@
+name: windows
+
+on:
+  push:
+    branches: [main]
+    paths: ["windows/**", ".github/workflows/windows.yml"]
+  pull_request:
+    paths: ["windows/**", ".github/workflows/windows.yml"]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build solution
+        run: dotnet build windows/PowerTools.Windows.sln -c Release
+
+      - name: Data-layer tests (real Windows)
+        run: dotnet run --project windows/tests/DataTests -c Release
+
+      - name: Publish run-ready build
+        run: >
+          dotnet publish windows/src/PowerTools/PowerTools.csproj -c Release
+          -r win-x64 --self-contained -o publish
+          -p:PublishSingleFile=false
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PowerTools-win-x64
+          path: publish/
+          retention-days: 30

@@ -19,6 +19,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.6" />
+    <!-- Parakeet-TDT ONNX inference; ships native libs for win/osx/linux -->
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.*" />
+    <!-- WASAPI mic capture -->
+    <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 
   <!-- The WinForms SDK injects global usings that collide with the WPF types

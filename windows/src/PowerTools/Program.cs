@@ -21,8 +21,9 @@ public static class Program
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         var dispatcher = app.Dispatcher;
 
+        using var controller = new AppController(config, store, dispatcher);
         var hook = new KeyboardHook(config.HotkeyChoice,
-            e => dispatcher.BeginInvoke(() => HandleHook(e)));
+            e => dispatcher.BeginInvoke(() => controller.Handle(e)));
         hook.PowerRingEnabled = config.PowerRing;
 
         var leaders = new Dictionary<int, string>();
@@ -38,20 +39,13 @@ public static class Program
             onSettings: () => SettingsWindow.ShowSingleton(config),
             onQuit: () => app.Shutdown());
 
+        controller.Start();
+
         app.Exit += (_, _) =>
         {
             hook.Dispose();
             Logger.Log("app: shutting down");
         };
         app.Run();
-    }
-
-    /// <summary>
-    /// Hook event sink. Phase 1 proves the input spine end-to-end by logging;
-    /// Phase 2 replaces this with the AppController dictation state machine.
-    /// </summary>
-    private static void HandleHook(HookEvent e)
-    {
-        Logger.Log($"hook: {e}");
     }
 }
