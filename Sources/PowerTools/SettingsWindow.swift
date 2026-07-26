@@ -27,6 +27,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let snapAssistCheck = NSButton(checkboxWithTitle: "Snap Assist — offer other windows to fill the gap after a snap", target: nil, action: nil)
     private let windowPaletteCheck = NSButton(checkboxWithTitle: "Snap palette (hold hotkey + W)", target: nil, action: nil)
     private let clipboardHistoryCheck = NSButton(checkboxWithTitle: "Clipboard history — hold hotkey + H to paste a recent copy or image", target: nil, action: nil)
+    private let whiteboardCheck = NSButton(checkboxWithTitle: "Whiteboard — hold hotkey + E to draw on the last screenshot", target: nil, action: nil)
     private let lastWindowCheck = NSButton(checkboxWithTitle: "⌘⇥ works like Windows Alt-Tab — last window first, per window not app", target: nil, action: nil)
     private let grabMoveCheck = NSButton(checkboxWithTitle: "Grab & Move — hold the modifier and drag anywhere on a window to move it", target: nil, action: nil)
     private let grabModsPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -205,6 +206,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         windowPaletteCheck.action = #selector(windowPaletteToggled)
         clipboardHistoryCheck.target = self
         clipboardHistoryCheck.action = #selector(clipboardHistoryToggled)
+        whiteboardCheck.target = self
+        whiteboardCheck.action = #selector(whiteboardToggled)
         lastWindowCheck.target = self
         lastWindowCheck.action = #selector(lastWindowToggled)
         grabMoveCheck.target = self
@@ -378,7 +381,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         return vstack([
             section("How to use it", [helpLabel], width: 590),
-            section("General", [clipboardHistoryCheck, launchLoginCheck, restorePadsCheck, buttons, version], width: 590),
+            section("General", [clipboardHistoryCheck, whiteboardCheck, launchLoginCheck, restorePadsCheck, buttons, version], width: 590),
         ])
     }
 
@@ -1202,6 +1205,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         snapAssistCheck.state = config.snapAssist ? .on : .off
         windowPaletteCheck.state = config.windowPalette ? .on : .off
         clipboardHistoryCheck.state = config.clipboardHistory ? .on : .off
+        whiteboardCheck.state = config.whiteboard ? .on : .off
         lastWindowCheck.state = config.lastWindowSwitch ? .on : .off
         grabMoveCheck.state = config.grabAndMove ? .on : .off
         grabModsPopup.selectItem(withTitle: config.grabMoveModifiers.displayName)
@@ -1468,6 +1472,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func clipboardHistoryToggled() {
         config.clipboardHistory = (clipboardHistoryCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func whiteboardToggled() {
+        config.whiteboard = (whiteboardCheck.state == .on)
         config.save()
         onConfigChange(config)
     }

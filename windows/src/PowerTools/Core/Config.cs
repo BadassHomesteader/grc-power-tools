@@ -102,6 +102,8 @@ public sealed class Config
     public bool RestorePads = true;
     public bool PowerRing = true;
     public List<string> PowerRingSlots = new(DefaultPowerRingSlots);
+    /// Mac-only (annotation whiteboard on hold + E); preserved for schema parity.
+    public bool Whiteboard = true;
     public Dictionary<string, string> Pronunciations = new();
 
     // ---- enum raw-value maps (must match the Swift rawValues verbatim) ----
@@ -227,6 +229,7 @@ public sealed class Config
         c.RestorePads = Bool(root, "restorePads", true);
         c.PowerRing = Bool(root, "powerRing", true);
         c.PowerRingSlots = StrList(root, "powerRingSlots") ?? new(DefaultPowerRingSlots);
+        c.Whiteboard = Bool(root, "whiteboard", true);
         c.Pronunciations = StrMap(root, "pronunciations");
 
         if (c.MigrateLegacyCapture()) c.Save();
@@ -313,6 +316,7 @@ public sealed class Config
             ["restorePads"] = RestorePads,
             ["powerRing"] = PowerRing,
             ["powerRingSlots"] = new JsonArray(PowerRingSlots.Select(s => (JsonNode)s!).ToArray()),
+            ["whiteboard"] = Whiteboard,
             ["pronunciations"] = new JsonObject(Pronunciations.Select(kv =>
                 new KeyValuePair<string, JsonNode?>(kv.Key, kv.Value))),
         };

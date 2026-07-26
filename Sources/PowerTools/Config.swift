@@ -352,6 +352,9 @@ struct Config: Codable {
     /// ids, clockwise from the top (see PowerRingCatalog).
     var powerRing: Bool = true
     var powerRingSlots: [String] = PowerRingCatalog.defaultSlots
+    /// Annotation whiteboard: hold hotkey + E → draw on the clipboard image
+    /// (or a fresh region grab when the clipboard has no image).
+    var whiteboard: Bool = true
 
     var hotkey: Hotkey = .optionShift
     var polish: PolishMode = .apple
@@ -435,6 +438,7 @@ struct Config: Codable {
         case macroPad, macroPadProfiles, macroPadStepDelayMs
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, restorePads
         case powerRing, powerRingSlots
+        case whiteboard
         case pronunciations
     }
 
@@ -508,6 +512,7 @@ struct Config: Codable {
         restorePads = field(.restorePads, true)
         powerRing = field(.powerRing, true)
         powerRingSlots = field(.powerRingSlots, PowerRingCatalog.defaultSlots)
+        whiteboard = field(.whiteboard, true)
         pronunciations = field(.pronunciations, [:])
     }
 

@@ -128,6 +128,7 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 - **hold + R** → **read aloud**: drag a screen region, the recognized text is spoken through the system voice — hold + R again stops it. Same on-device OCR as T; nothing leaves your Mac. Better voices: download an Enhanced/Premium voice in System Settings ▸ Accessibility ▸ Spoken Content and it's used automatically.
   - **Pronunciation fixes**: teach it names and jargon in **Settings ▸ Dictionary ▸ Read Aloud pronunciations** — word + how to say it (`KYAW` → `K Y A W`, `andrea` → `ahn-DRAY-ah`). Case-insensitive, whole words only, longest entry wins; only the spoken audio changes (hold + T still copies the real text). UI edits apply immediately; the list is stored as `pronunciations` in `config.json`, where hand-edits load on the next launch.
 - **hold + S** → **screenshot**: drag a region, the image is copied to your clipboard.
+- **hold + E** → **whiteboard**: annotate the image on your clipboard — take a shot with hold + S first, or E alone prompts a fresh region grab. Pen, arrow, box, text, 5 colors, ⌘Z undo; **⏎ copies the annotated image to your clipboard at full resolution**, Esc cancels. (If you've assigned E to a Quick Capture connection, that wins — reach the whiteboard from the Power Ring instead.) Toggle in Settings ▸ General.
 - **hold + G** → **Google Lens**: drag a region → image to clipboard + Google Lens results open in your browser (Circle-to-Search style).
 
 **Files** (with the Finder frontmost)

@@ -56,6 +56,7 @@ final class AppController {
     private let macroPad = MacroPad()
     private let cheatSheet = HotkeyCheatSheet()
     private let powerRing = PowerRing()
+    private let whiteboard = Whiteboard()
     private let agentPad = AgentPad()
     private let claudeRegistry = ClaudeSessionRegistry()
     private let hookServer = ClaudeHookServer()
@@ -208,6 +209,11 @@ final class AppController {
                 self.powerRing.dismiss()
             case .powerRing:
                 self.togglePowerRing()
+            case .whiteboard:
+                self.interruptDictation()
+                self.openWhiteboard()
+            case .whiteboardClose:
+                self.whiteboard.handleEscape()
             }
         }
         guard monitor.start() else {
@@ -236,6 +242,9 @@ final class AppController {
         }
         powerRing.onVisibility = { [weak self] visible in
             self?.hotkey?.powerRingVisible = visible
+        }
+        whiteboard.onVisibility = { [weak self] visible in
+            self?.hotkey?.whiteboardVisible = visible
         }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
@@ -635,6 +644,48 @@ final class AppController {
         }
     }
 
+    /// hold + E: annotate. A clipboard image (e.g. the hold + S shot just taken)
+    /// opens straight into the whiteboard; an empty clipboard falls back to a
+    /// fresh region grab, so hold + E alone = shoot-then-annotate.
+    func openWhiteboard() {
+        overlay.hide()
+        if whiteboard.isVisible { whiteboard.handleEscape(); return }  // toggle = Esc semantics
+        guard config.whiteboard else {
+            overlay.showError("Whiteboard is off — enable it in Settings ▸ General")
+            return
+        }
+        if let png = ClipboardHistory.pngFromPasteboard(NSPasteboard.general) {
+            presentWhiteboard(png: png)
+            return
+        }
+        guard state == .idle, ensureScreenRecording() else { return }
+        state = .processing
+        onStateChange?(.processing)
+        Task {
+            let png = await ScreenCapture.grabRegionPNG()
+            await MainActor.run {
+                self.finishCycle()
+                guard let png else { return } // selection cancelled
+                self.presentWhiteboard(png: png)
+            }
+        }
+    }
+
+    private func presentWhiteboard(png: Data) {
+        let priorApp = NSWorkspace.shared.frontmostApplication  // refocus target on close
+        let mouse = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
+            ?? NSScreen.main else { return }
+        whiteboard.present(
+            png: png, dark: config.appearance.isDark, screen: screen,
+            onSave: { [weak self] out in
+                AppController.putImageOnClipboard(out)  // clip history records it, same as hold + S
+                self?.overlay.showResult("Annotated screenshot copied to clipboard")
+                priorApp?.activate()
+            },
+            onCancel: { priorApp?.activate() })
+    }
+
     /// hold + K: screen color picker. Show the system loupe; when a color comes
     /// back, offer a palette of formats (HEX/RGB/HSL/HSV/CMYK…) and copy the one
     /// picked to the clipboard, logging it to history. Cancelling is silent.
@@ -773,6 +824,7 @@ final class AppController {
         case "screenText": return { [weak self] in self?.captureScreenText() }
         case "screenshot": return { [weak self] in self?.captureScreenshot(search: false) }
         case "search": return { [weak self] in self?.captureScreenshot(search: true) }
+        case "whiteboard": return { [weak self] in self?.openWhiteboard() }
         case "clipboard": return { [weak self] in self?.openClipboardHistory() }
         case "pasteAs": return { [weak self] in self?.openAdvancedPaste() }
         case "readAloud": return { [weak self] in self?.readScreenText() }

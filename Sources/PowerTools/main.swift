@@ -298,6 +298,157 @@ case "grid-preview":
         }
     }
 
+case "whiteboard-preview":
+    // Offscreen render of the annotation whiteboard: a synthetic "screenshot"
+    // with one seeded stroke per tool, for design checks. `light` = light dim.
+    let out = args.count >= 2 ? args[1] : "whiteboard-preview.png"
+    let dark = !args.contains("light")
+    MainActor.assumeIsolated {
+        guard let png = WhiteboardView.syntheticShot(),
+              let v = WhiteboardView(png: png, dark: dark) else { exit(1) }
+        v.frame = NSRect(x: 0, y: 0, width: 1200, height: 760)
+        v.previewSeed(strokes: WhiteboardView.sampleStrokes(in: v.previewCanvasSize()),
+                      tool: .arrow, colorIndex: 0)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
+case "whiteboard-export-test":
+    // whiteboard-export-test [in.png] [out.png] — seeds one stroke per tool and
+    // writes renderAnnotatedPNG(). Verifies the export math no screen preview
+    // exercises: output pixel dims must equal input (exit 1 otherwise).
+    MainActor.assumeIsolated {
+        let inPath = args.count >= 2 ? args[1] : ""
+        let out = args.count >= 3 ? args[2] : "whiteboard-export-test.png"
+        let png: Data
+        if inPath.isEmpty {
+            guard let d = WhiteboardView.syntheticShot() else { exit(1) }
+            png = d
+        } else {
+            guard let d = FileManager.default.contents(atPath: inPath) else {
+                print("cannot read \(inPath)"); exit(1)
+            }
+            png = d
+        }
+        guard let inRep = NSBitmapImageRep(data: png),
+              let v = WhiteboardView(png: png, dark: true) else { exit(1) }
+        v.frame = NSRect(x: 0, y: 0, width: 1200, height: 760)
+        v.previewSeed(strokes: WhiteboardView.sampleStrokes(in: v.previewCanvasSize()),
+                      tool: .pen, colorIndex: 0)
+        guard let outData = v.renderAnnotatedPNG(),
+              let outRep = NSBitmapImageRep(data: outData) else { print("export failed"); exit(1) }
+        try? outData.write(to: URL(fileURLWithPath: out))
+        print("in \(inRep.pixelsWide)x\(inRep.pixelsHigh) → out \(outRep.pixelsWide)x\(outRep.pixelsHigh)")
+        if inRep.pixelsWide != outRep.pixelsWide || inRep.pixelsHigh != outRep.pixelsHigh { exit(1) }
+    }
+
+case "whiteboard-live-test":
+    // Presents a REAL whiteboard window and drives it with synthesized mouse
+    // events — proves what the offscreen preview can't: the borderless window
+    // becomes key, the view takes first responder, the text tool's field editor
+    // works, the Esc funnel cancels entry-then-window, and save() composites.
+    // `hold` keeps the last window up so it can be screenshotted.
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let hold = args.contains("hold")
+        func pump(_ s: Double = 0.2) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+        var failures = 0
+        func check(_ ok: Bool, _ what: String) {
+            print("\(ok ? "ok  " : "FAIL") \(what)")
+            if !ok { failures += 1 }
+        }
+        guard let png = WhiteboardView.syntheticShot(), let screen = NSScreen.main else { exit(1) }
+
+        var saved: Data?
+        var cancelled = false
+        let wb = Whiteboard()
+        var visibility: [Bool] = []
+        wb.onVisibility = { visibility.append($0) }
+        wb.present(png: png, dark: true, screen: screen,
+                   onSave: { saved = $0 }, onCancel: { cancelled = true })
+        pump(0.4)
+        guard let win = app.windows.first(where: { $0.contentView is WhiteboardView }),
+              let view = win.contentView as? WhiteboardView else { print("FAIL no window"); exit(1) }
+        // isKeyWindow is NOT assertable from this harness: a bare CLI binary
+        // can't take activation from the terminal (NSApp.isActive stays false),
+        // and GridOverlay — the shipped window this pattern copies — reports
+        // key=false here too. What IS assertable is the structural guarantee a
+        // borderless window normally lacks, plus first-responder wiring.
+        check(win.canBecomeKey, "borderless window can become key (KeyableWindow)")
+        check(win.isVisible, "window is on screen")
+        check(win.firstResponder === view, "view is first responder")
+        check(visibility == [true], "onVisibility(true) mirrored to the tap")
+
+        // Synthesized pen drag across the image (window coords == view coords:
+        // the view is the contentView at the origin).
+        func mouse(_ type: NSEvent.EventType, _ p: NSPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: 0,
+                               windowNumber: win.windowNumber, context: nil,
+                               eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        let box = view.imageRect
+        view.mouseDown(with: mouse(.leftMouseDown, NSPoint(x: box.minX + 40, y: box.minY + 40)))
+        for i in 1...6 {
+            view.mouseDragged(with: mouse(.leftMouseDragged,
+                NSPoint(x: box.minX + 40 + CGFloat(i) * 20, y: box.minY + 40 + CGFloat(i) * 8)))
+        }
+        view.mouseUp(with: mouse(.leftMouseUp, NSPoint(x: box.minX + 160, y: box.minY + 88)))
+        check(view.strokeCount == 1, "pen drag committed one stroke")
+
+        // Text tool: click places a field editor, typing commits as a stroke.
+        view.selectTool(.text)
+        view.mouseDown(with: mouse(.leftMouseDown, NSPoint(x: box.midX, y: box.midY)))
+        pump()
+        check(view.isEditingText, "text click opened an entry field")
+        check(win.firstResponder !== view, "field editor took first responder")
+        view.activeTextField?.stringValue = "annotated"
+        view.commitActiveText()
+        pump()
+        check(!view.isEditingText && view.strokeCount == 2, "text committed as a stroke")
+
+        // Esc funnel: first Esc cancels a live entry, the window stays up.
+        view.mouseDown(with: mouse(.leftMouseDown, NSPoint(x: box.midX, y: box.minY + 30)))
+        pump()
+        view.activeTextField?.stringValue = "discard me"
+        wb.handleEscape()
+        pump()
+        check(!view.isEditingText && view.strokeCount == 2, "esc cancelled the text entry only")
+        check(wb.isVisible && !cancelled, "whiteboard still up after entry-cancel")
+
+        // Undo drops the last committed stroke.
+        view.undo()
+        check(view.strokeCount == 1, "undo popped the text stroke")
+
+        // Save composites at the source's pixel size and dismisses.
+        view.save()
+        pump()
+        check(saved != nil, "save produced a PNG")
+        if let saved, let rep = NSBitmapImageRep(data: saved) {
+            check(rep.pixelsWide == 900 && rep.pixelsHigh == 560,
+                  "export kept source resolution (\(rep.pixelsWide)x\(rep.pixelsHigh))")
+        }
+        check(!wb.isVisible, "save dismissed the window")
+        check(visibility == [true, false], "onVisibility(false) mirrored on dismiss")
+
+        // Second Esc path: no live entry → the whole board cancels.
+        wb.present(png: png, dark: true, screen: screen, onSave: { _ in }, onCancel: { cancelled = true })
+        pump(0.3)
+        if hold {
+            print("holding the window for 6s — screenshot it now")
+            pump(6)
+        }
+        wb.handleEscape()
+        pump()
+        check(cancelled && !wb.isVisible, "esc with no entry closed the board")
+
+        print(failures == 0 ? "PASS" : "FAILED \(failures)")
+        exit(failures == 0 ? 0 : 1)
+    }
+
 case "chat-live-test":
     // Opens a real chat window and pumps the run loop so the deferred
     // scrollToBottom() actually executes — exercises the live crash path.

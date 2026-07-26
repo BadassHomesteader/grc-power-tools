@@ -50,6 +50,8 @@ final class HotkeyMonitor {
         case cheatSheetClose              // Esc while the sheet is up — close it
         case powerRing                    // hold + right-click — radial menu at the cursor
         case powerRingClose               // Esc while the ring is up — close it
+        case whiteboard                   // hold + E — annotate the last screenshot
+        case whiteboardClose              // Esc while the whiteboard is up — cancel text entry / close
     }
 
     var handler: ((Callback) -> Void)?
@@ -81,6 +83,9 @@ final class HotkeyMonitor {
     var powerRingEnabled = true
     /// True while the ring is up (same discipline) — plain Esc closes it.
     var powerRingVisible = false
+    /// True while the annotation whiteboard is up (same discipline) — plain Esc
+    /// must reach it even when its text tool's field editor is first responder.
+    var whiteboardVisible = false
     /// Buttons in the pad's current profile — digits ≥ this pass through.
     var macroPadButtonCount = 0
 
@@ -161,6 +166,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_J: Int64 = 38
     private static let kVK_ANSI_3: Int64 = 20
     private static let kVK_ANSI_Q: Int64 = 12
+    private static let kVK_ANSI_E: Int64 = 14
     private static let kVK_Tab: Int64 = 48
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
@@ -375,16 +381,18 @@ final class HotkeyMonitor {
             dispatch(.cycleCancel)
             return nil
         }
-        // Plain Esc while the cheat sheet or Power Ring is up → close them
-        // (swallowed so the frontmost app's dialogs don't also close).
-        // Leader-held Esc keeps its cancel meaning — they close there too
-        // (leader block below).
-        if cheatSheetVisible || powerRingVisible, !held, type == .keyDown, keyCode == Self.kVK_Escape,
+        // Plain Esc while the cheat sheet, Power Ring, or whiteboard is up →
+        // close them (swallowed so the frontmost app's dialogs don't also
+        // close). Leader-held Esc keeps its cancel meaning — they close there
+        // too (leader block below).
+        if cheatSheetVisible || powerRingVisible || whiteboardVisible, !held, type == .keyDown,
+           keyCode == Self.kVK_Escape,
            flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).isEmpty {
             swallowedKeyUps.insert(keyCode)
             if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
                 if cheatSheetVisible { dispatch(.cheatSheetClose) }
                 if powerRingVisible { dispatch(.powerRingClose) }
+                if whiteboardVisible { dispatch(.whiteboardClose) }
             }
             return nil
         }
@@ -461,6 +469,7 @@ final class HotkeyMonitor {
                 interrupted = true; swallowedKeyUps.insert(keyCode)
                 if cheatSheetVisible { dispatch(.cheatSheetClose) }
                 if powerRingVisible { dispatch(.powerRingClose) }
+                if whiteboardVisible { dispatch(.whiteboardClose) }
                 dispatch(.cancel)
                 return nil // swallow so it doesn't close the user's dialogs
             case Self.kVK_ANSI_T:
@@ -561,6 +570,20 @@ final class HotkeyMonitor {
                 windowMode = true
                 swallowedKeyUps.insert(keyCode)
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.cheatSheet) }
+                return nil
+            case Self.kVK_ANSI_E:
+                // Annotation whiteboard — same rules as B/J/Q: a user-assigned
+                // Quick Capture connection on E wins, auto-repeat must not
+                // re-toggle. The whiteboard (a keyable window) takes over from
+                // here; release just ends the session.
+                if let connId = connectionLeader(for: keyCode) {
+                    log("hotkey: connection leader armed (\(connId))")
+                    pending = .quickCapture(connId); swallowedKeyUps.insert(keyCode)
+                    return nil
+                }
+                windowMode = true
+                swallowedKeyUps.insert(keyCode)
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.whiteboard) }
                 return nil
             case Self.kVK_ANSI_3:
                 // Grid draw mode. Enter windowMode so release ends the session (no
