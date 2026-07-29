@@ -55,8 +55,17 @@ final class AgentPad: NSObject {
     /// Fired on that same tick — the controller re-runs discovery so IDE tab
     /// states (the log-derived attention dots) stay current while the pad is up.
     var onRefresh: (() -> Void)?
+    /// The registry's full list as last handed to us; `sessions` is the
+    /// visible-and-triaged subset. Kept so the 10s tick can re-hide sessions
+    /// that age past the idle cutoff without waiting on a registry event.
+    private var allSessions: [ClaudeSession] = []
     private var sessions: [ClaudeSession] = []
     private var onAction: ((ClaudeSession, Action) -> Void)?
+
+    /// Re-derive the visible rows from the raw list (drop long-idle, triage).
+    private func applyVisible() {
+        sessions = Self.triageSorted(Self.visible(allSessions))
+    }
 
     var isVisible: Bool { panel != nil }
     /// Collapsed to the traffic-light strip (no ✓/✕ rows visible).
@@ -65,6 +74,18 @@ final class AgentPad: NSObject {
     /// mini preference so a permission never goes silent in the strip; the
     /// pad maxes itself instead of a separate popup surfacing it.
     private var hasWaitingPermission: Bool { sessions.contains { $0.state == .needsPermission } }
+
+    /// A session the user has plainly walked away from stops cluttering the
+    /// pad: once it has sat idle past this, its card drops off entirely (the
+    /// `claude` process may still be alive — it just no longer needs surfacing).
+    /// Any non-idle state, or fresh activity, brings the card right back.
+    nonisolated private static let hideIdleAfter: TimeInterval = 3 * 3600
+
+    /// Filter out long-idle sessions before they reach the pad, so the full
+    /// rows, the mini traffic-light strip, and the header counts all agree.
+    nonisolated static func visible(_ sessions: [ClaudeSession]) -> [ClaudeSession] {
+        sessions.filter { !($0.state == .idle && $0.stateChanged.timeIntervalSinceNow < -hideIdleAfter) }
+    }
 
     /// Triage order: blocked sessions first, then everything else by how fresh
     /// its state is — the pad exists to surface whoever needs the user now.
@@ -86,7 +107,8 @@ final class AgentPad: NSObject {
 
     func present(sessions: [ClaudeSession], dark: Bool, screen: NSScreen, hotkeyName: String,
                  hooksInstalled: Bool, onAction: @escaping (ClaudeSession, Action) -> Void) {
-        self.sessions = Self.triageSorted(sessions)
+        self.allSessions = sessions
+        applyVisible()
         self.dark = dark
         self.hotkeyName = hotkeyName
         self.hooksInstalled = hooksInstalled
@@ -110,6 +132,9 @@ final class AgentPad: NSObject {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isVisible else { return }
+                // Re-hide sessions that have aged past the idle cutoff since the
+                // last registry event, then redraw so the "2m ago" stays honest.
+                self.applyVisible()
                 self.render()
                 self.onRefresh?()
             }
@@ -140,7 +165,8 @@ final class AgentPad: NSObject {
 
     /// Live update from the registry (hook events land while the pad is open).
     func updateSessions(_ sessions: [ClaudeSession], hooksInstalled: Bool) {
-        self.sessions = Self.triageSorted(sessions)
+        self.allSessions = sessions
+        applyVisible()
         self.hooksInstalled = hooksInstalled
         if hasWaitingPermission {
             miniActive = false
