@@ -29,6 +29,12 @@ final class AgentPad: NSObject {
     /// drops back to the strip. Sticky: survives dismiss and restarts.
     private var miniPreferred = false
     private var miniActive = false
+    /// The pad expanded itself for a new permission rather than the user
+    /// hovering the strip. Same `miniPreferred && !miniActive` shape, opposite
+    /// intent — a hover-peek offers "pin me open" ("□"), a permission-max
+    /// offers "back to the strip" ("–"), so the header button has to tell them
+    /// apart or there's no one-click way home.
+    private var maxedForPermission = false
 
     /// Docking: drop the pad near a corner or edge midpoint and it snaps
     /// there; every re-render (mini↔full, row-count changes) re-anchors to
@@ -74,10 +80,29 @@ final class AgentPad: NSObject {
     var isVisible: Bool { panel != nil }
     /// Collapsed to the traffic-light strip (no ✓/✕ rows visible).
     var isMini: Bool { miniActive }
-    /// A session is blocked waiting on the user — this always wins over the
-    /// mini preference so a permission never goes silent in the strip; the
-    /// pad maxes itself instead of a separate popup surfacing it.
-    private var hasWaitingPermission: Bool { sessions.contains { $0.state == .needsPermission } }
+    /// Permissions the user had already seen when they collapsed the pad to
+    /// the strip. Auto-max ignores these — collapsing means "I've seen these,
+    /// leave me alone", and a permission stuck on-screen (answered in the
+    /// terminal, tab flag never cleared) must not re-maximize the pad on
+    /// every registry event. A session drops out the moment it stops waiting,
+    /// so its *next* ask counts as fresh again.
+    private var seenPermissions: Set<String> = []
+
+    /// A permission the pad hasn't surfaced yet — the one thing that overrides
+    /// the user's mini preference, so a new ask never goes silent in the strip
+    /// (the pad maxes itself instead of a separate popup surfacing it).
+    /// Prunes `seenPermissions` as a side effect: answered asks stop counting.
+    private func hasFreshPermission() -> Bool {
+        let waiting = Set(sessions.filter { $0.state == .needsPermission }.map(\.id))
+        seenPermissions.formIntersection(waiting)
+        return !waiting.subtracting(seenPermissions).isEmpty
+    }
+
+    /// Everything on screen is now "seen" — called when the user collapses the
+    /// pad, so only a later ask brings it back up.
+    private func markPermissionsSeen() {
+        seenPermissions = Set(sessions.filter { $0.state == .needsPermission }.map(\.id))
+    }
 
     /// A session the user has plainly walked away from stops cluttering the
     /// pad: once it has sat idle past this, its card drops off entirely (the
@@ -127,8 +152,12 @@ final class AgentPad: NSObject {
             }
             miniPreferred = saved.mini ?? false
             miniActive = miniPreferred
+            seenPermissions = Set(saved.seen ?? [])   // a stuck ask stays "seen" across restarts
         }
-        if hasWaitingPermission { miniActive = false }
+        if hasFreshPermission() {
+            miniActive = false
+            maxedForPermission = miniPreferred
+        }
         buildPanel(on: screen)
         render(on: screen)
         persistPlacement()   // open=true — survives quits/deploys for launch restore
@@ -166,7 +195,7 @@ final class AgentPad: NSObject {
         guard let panel else { return }
         PadPlacement.save(Self.placementKey, anchor: dockAnchor,
                           topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY),
-                          mini: miniPreferred, open: open)
+                          mini: miniPreferred, open: open, seen: Array(seenPermissions))
     }
 
     /// Live update from the registry (hook events land while the pad is open).
@@ -174,10 +203,12 @@ final class AgentPad: NSObject {
         self.allSessions = sessions
         applyVisible()
         self.hooksInstalled = hooksInstalled
-        if hasWaitingPermission {
+        if hasFreshPermission() {
             miniActive = false
+            maxedForPermission = miniPreferred
         } else if miniPreferred {
             miniActive = true
+            maxedForPermission = false
         }
         if isVisible { render() }
     }
@@ -196,10 +227,20 @@ final class AgentPad: NSObject {
         view.onClose = { [weak self] in self?.dismiss() }
         view.onMinimize = { [weak self] in
             guard let self else { return }
-            // Toggle: from full → traffic lights; from a peeked pad (hover-
-            // expanded strip) → pin it back to full-time.
-            self.miniPreferred.toggle()
-            self.miniActive = self.miniPreferred
+            if self.miniPreferred, !self.miniActive, !self.maxedForPermission {
+                // Peeked strip ("□") → pin it back to full-time.
+                self.miniPreferred = false
+                self.miniActive = false
+                self.seenPermissions.removeAll()
+            } else {
+                // Full pad, or one the pad maxed itself for a permission ("–")
+                // → the strip. Collapsing banks every permission on screen as
+                // seen, so it stays a strip until a *new* one lands.
+                self.miniPreferred = true
+                self.miniActive = true
+                self.maxedForPermission = false
+                self.markPermissionsSeen()
+            }
             self.render()
             self.persistPlacement()
         }
@@ -209,7 +250,7 @@ final class AgentPad: NSObject {
             self.render()
         }
         view.onCollapse = { [weak self] in
-            guard let self, self.miniPreferred, !self.miniActive, !self.hasWaitingPermission else { return }
+            guard let self, self.miniPreferred, !self.miniActive, !self.hasFreshPermission() else { return }
             self.miniActive = true
             self.render()
         }
@@ -302,7 +343,7 @@ final class AgentPad: NSObject {
         guard let panel, let view = padView else { return }
         view.configure(sessions: sessions, dark: dark, hotkeyName: hotkeyName,
                        hooksInstalled: hooksInstalled, mini: miniActive,
-                       peeking: miniPreferred && !miniActive)
+                       peeking: miniPreferred && !miniActive && !maxedForPermission)
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
 

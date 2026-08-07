@@ -53,6 +53,10 @@ struct PadPlacement: Codable {
     /// Open at last save — app quit/deploy leaves it true, user dismiss
     /// writes false; launch restores pads whose flag is still true.
     var open: Bool?
+    /// Sessions whose pending permission the user had already seen when they
+    /// collapsed the pad to the strip. Persisted so a permission that's stuck
+    /// on-screen doesn't re-maximize the pad on every restart.
+    var seen: [String]?
 
     private static var url: URL { Config.appSupportDir.appendingPathComponent("pad-placement.json") }
 
@@ -62,10 +66,12 @@ struct PadPlacement: Codable {
         return all[key]
     }
 
-    static func save(_ key: String, anchor: PadDock?, topLeft: NSPoint?, mini: Bool = false, open: Bool = false) {
+    static func save(_ key: String, anchor: PadDock?, topLeft: NSPoint?, mini: Bool = false,
+                     open: Bool = false, seen: [String] = []) {
         var all = (try? Data(contentsOf: url))
             .flatMap { try? JSONDecoder().decode([String: PadPlacement].self, from: $0) } ?? [:]
-        all[key] = PadPlacement(anchor: anchor, x: topLeft?.x, y: topLeft?.y, mini: mini, open: open)
+        all[key] = PadPlacement(anchor: anchor, x: topLeft?.x, y: topLeft?.y, mini: mini,
+                                open: open, seen: seen)
         if let data = try? JSONEncoder().encode(all) { try? data.write(to: url, options: .atomic) }
     }
 }
