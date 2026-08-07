@@ -55,6 +55,10 @@ final class AgentPad: NSObject {
     /// Fired on that same tick — the controller re-runs discovery so IDE tab
     /// states (the log-derived attention dots) stay current while the pad is up.
     var onRefresh: (() -> Void)?
+    /// Fired when the pad actually goes away (header ✕ or the hotkey toggle) —
+    /// the controller uses it to remember which permissions the user was
+    /// looking at, so auto-reveal doesn't drag the pad straight back.
+    var onDismiss: (() -> Void)?
     /// The registry's full list as last handed to us; `sessions` is the
     /// visible-and-triaged subset. Kept so the 10s tick can re-hide sessions
     /// that age past the idle cutoff without waiting on a registry event.
@@ -142,6 +146,7 @@ final class AgentPad: NSObject {
     }
 
     func dismiss() {
+        let wasVisible = panel != nil
         if let panel {
             savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
             persistPlacement(open: false)
@@ -152,6 +157,7 @@ final class AgentPad: NSObject {
         panel?.orderOut(nil)
         panel = nil
         padView = nil
+        if wasVisible { onDismiss?() }
     }
 
     /// open defaults true — every save except the user's explicit dismiss

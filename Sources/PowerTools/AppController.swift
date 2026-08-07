@@ -280,22 +280,40 @@ final class AppController {
                 }
                 return (try? JSONSerialization.data(withJSONObject: list, options: [.prettyPrinted])) ?? Data("[]".utf8)
             }
-            claudeRegistry.onChange = { [weak self] sessions in
-                guard let self else { return }
-                self.agentPad.updateSessions(sessions, hooksInstalled: ClaudeHooksInstaller.isInstalled())
-                self.revealAgentPadIfWaiting(sessions)
-            }
             if !hookServer.start(port: config.agentPadPort) {
                 log("controller: Agent Pad server couldn't bind 127.0.0.1:\(config.agentPadPort)")
             }
             claudeRegistry.loadPersisted()      // survive our own restarts
             claudeRegistry.refreshDiscovered()  // find sessions that predate us
+            // Seed suppression BEFORE onChange is live: a permission that was
+            // already pending when the user left the pad closed stays "seen"
+            // across our own restarts — otherwise a stuck one reopens the pad
+            // every launch. Wiring onChange after discovery also keeps boot
+            // itself from tripping the auto-reveal.
+            if PadPlacement.load("agent")?.open != true {
+                revealSuppressed = Set(
+                    claudeRegistry.ordered.filter { $0.state == .needsPermission }.map(\.id))
+            }
+            claudeRegistry.onChange = { [weak self] sessions in
+                guard let self else { return }
+                self.agentPad.updateSessions(sessions, hooksInstalled: ClaudeHooksInstaller.isInstalled())
+                self.revealAgentPadIfWaiting(sessions)
+            }
             agentPad.onRefresh = { [weak self] in
-            guard let self else { return }
-            self.claudeRegistry.refreshDiscovered()
-            if self.config.agentPadCodex { CodexWatcher.refresh(into: self.claudeRegistry) }
-            if self.config.agentPadCursor { CursorWatcher.refresh(into: self.claudeRegistry) }
-        }
+                guard let self else { return }
+                self.claudeRegistry.refreshDiscovered()
+                if self.config.agentPadCodex { CodexWatcher.refresh(into: self.claudeRegistry) }
+                if self.config.agentPadCursor { CursorWatcher.refresh(into: self.claudeRegistry) }
+            }
+            // Closing the pad is a decision, not a glitch: remember which
+            // permissions were on screen so auto-reveal leaves them alone.
+            agentPad.onDismiss = { [weak self] in
+                guard let self else { return }
+                self.revealSuppressed = Set(
+                    self.claudeRegistry.ordered
+                        .filter { $0.state == .needsPermission }
+                        .map(\.id))
+            }
         }
         // Pads that were open when the app last quit (updates included) come
         // back in their persisted dock/mini state.
@@ -840,21 +858,30 @@ final class AppController {
         }
     }
 
+    /// Sessions that were already waiting on a permission when the user
+    /// explicitly closed the pad. Auto-reveal skips these: closing the pad
+    /// means "I've seen it" — a stuck `needsPermission` (answered in the
+    /// terminal, flag never cleared) must not drag the pad back on every hook
+    /// event. A session drops out of here the moment it stops waiting, so its
+    /// *next* permission pops the pad again.
+    private var revealSuppressed: Set<String> = []
+
     /// Reveal the Agent Pad — open it (or, if already open, `updateSessions`
     /// has already un-mini'd it) — whenever a session needs the user's
     /// approval. This maxes the one pad surface instead of spawning a
     /// separate popup for permissions.
     private func revealAgentPadIfWaiting(_ sessions: [ClaudeSession]) {
-        guard config.agentPad, !agentPad.isVisible,
-              sessions.contains(where: { $0.state == .needsPermission }) else { return }
+        guard config.agentPad, !agentPad.isVisible else { return }
+        let waiting = Set(sessions.filter { $0.state == .needsPermission }.map(\.id))
+        revealSuppressed.formIntersection(waiting)   // answered → no longer suppressed
+        guard !waiting.subtracting(revealSuppressed).isEmpty else { return }
         openAgentPad(on: NSScreen.main)
     }
 
     func toggleAgentPad() {
         interruptDictation()
         if agentPad.isVisible {
-            agentPad.dismiss()
-            revealAgentPadIfWaiting(claudeRegistry.ordered)   // still waiting — pop right back
+            agentPad.dismiss()   // onDismiss snapshots what was waiting — it stays closed
             return
         }
         guard config.agentPad else {
@@ -870,6 +897,7 @@ final class AppController {
     /// toggle and the automatic reveal when a permission needs the user.
     private func openAgentPad(on screen: NSScreen?) {
         overlay.hide()
+        revealSuppressed.removeAll()   // pad is up again — everything is "seen"
         claudeRegistry.pruneDead()
         claudeRegistry.refreshDiscovered()  // catch silent sessions on every open
         if config.agentPadCodex { CodexWatcher.refresh(into: claudeRegistry) }
