@@ -161,6 +161,17 @@ final class AgentPad: NSObject {
         buildPanel(on: screen)
         render(on: screen)
         persistPlacement()   // open=true — survives quits/deploys for launch restore
+        // Quota only matters while the pad is up, so it is fetched here rather
+        // than on a background schedule. Self-throttling: this is a no-op until
+        // the snapshot ages out.
+        UsageReader.shared.onUpdate = { [weak self] in
+            guard let self else { return }
+            self.render()
+            // Refill a menu that is open right now, so a cold read that lands
+            // while the user is staring at "Reading…" replaces it in place.
+            if let menu = self.openUsageMenu { self.populateUsageMenu(menu) }
+        }
+        UsageReader.shared.refreshIfStale()
         refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -170,6 +181,7 @@ final class AgentPad: NSObject {
                 self.applyVisible()
                 self.render()
                 self.onRefresh?()
+                UsageReader.shared.refreshIfStale()
             }
         }
     }
@@ -224,6 +236,7 @@ final class AgentPad: NSObject {
             guard let self, index < self.sessions.count else { return }
             self.showRowMenu(for: self.sessions[index], with: event)
         }
+        view.onUsage = { [weak self] event in self?.showUsageMenu(with: event) }
         view.onClose = { [weak self] in self?.dismiss() }
         view.onMinimize = { [weak self] in
             guard let self else { return }
@@ -283,6 +296,87 @@ final class AgentPad: NSObject {
     /// The session the open context menu refers to (menus outlive the render
     /// cycle, so the row index can't be trusted at action time).
     private var menuSession: ClaudeSession?
+
+    /// Header ◔ — provider quota, one disabled item per window. Read-only by
+    /// design: this answers "have I got runway to start this", and there is
+    /// nothing here to click.
+    private func showUsageMenu(with event: NSEvent) {
+        // Opening is a user action, so it is also the right moment to catch a
+        // stale snapshot up — refreshIfStale self-throttles.
+        UsageReader.shared.refreshIfStale()
+
+        let menu = NSMenu()
+        populateUsageMenu(menu)
+        // A cold read takes ~45s (it spawns a Claude session to scrape /usage),
+        // which is far longer than anyone will hold a menu open. NSMenu builds
+        // its items once at pop-up time, so without refilling in place the menu
+        // would sit on "Reading…" forever and only ever show numbers on a
+        // second opening.
+        openUsageMenu = menu
+        if let view = padView {
+            menu.popUp(positioning: nil, at: view.convert(event.locationInWindow, from: nil), in: view)
+        }
+        openUsageMenu = nil
+    }
+
+    /// The menu currently on screen, so a fetch landing mid-open can refill it.
+    private var openUsageMenu: NSMenu?
+
+    private func populateUsageMenu(_ menu: NSMenu) {
+        let reader = UsageReader.shared
+        menu.removeAllItems()
+
+        let age = reader.ageDescription
+        let header = NSMenuItem(
+            title: age.isEmpty ? "Provider limits" : "Provider limits · \(age)",
+            action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(.separator())
+
+        if reader.providers.isEmpty {
+            let empty = NSMenuItem(
+                title: reader.fetchedAt == nil ? "Reading… (~45s)" : "No limits reported.",
+                action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        }
+
+        for provider in reader.providers {
+            let name = provider.plan.isEmpty ? provider.name : "\(provider.name) · \(provider.plan)"
+            let title = NSMenuItem(title: name, action: nil, keyEquivalent: "")
+            title.isEnabled = false
+            title.attributedTitle = NSAttributedString(string: name, attributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .semibold)])
+            menu.addItem(title)
+
+            for window in provider.windows {
+                let reset = window.resetDescription
+                let line = "    \(window.label)  \(window.usedPercent)%"
+                    + (reset.isEmpty ? "" : "  ·  \(reset)")
+                let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                // Colour by pressure, matching the pad's own attention palette.
+                let color: NSColor = window.usedPercent >= 90
+                    ? NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
+                    : (window.usedPercent >= 75
+                        ? NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+                        : .secondaryLabelColor)
+                item.attributedTitle = NSAttributedString(string: line, attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+                    .foregroundColor: color])
+                menu.addItem(item)
+            }
+
+            // Only worth saying when it cost us the numbers.
+            if provider.windows.isEmpty, !provider.error.isEmpty {
+                let item = NSMenuItem(title: "    \(provider.error)", action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+        }
+    }
 
     private func showRowMenu(for session: ClaudeSession, with event: NSEvent) {
         menuSession = session
@@ -383,6 +477,8 @@ final class AgentPadView: NSView {
     var onRowMenu: ((Int, NSEvent) -> Void)?
     var onClose: (() -> Void)?
     var onMinimize: (() -> Void)?
+    /// Header ◔ — carries the event because the handler pops an NSMenu.
+    var onUsage: ((NSEvent) -> Void)?
     var onExpand: (() -> Void)?
     var onCollapse: (() -> Void)?
     var onDragMoved: (() -> Void)?
@@ -541,6 +637,13 @@ final class AgentPadView: NSView {
 
     private var closeRect: NSRect { NSRect(x: Self.width - Self.pad - 18, y: Self.pad + 2, width: 18, height: 18) }
     private var minimizeRect: NSRect { NSRect(x: closeRect.minX - 22, y: Self.pad + 2, width: 18, height: 18) }
+    /// ◔ — provider quota. Absent entirely when there is no reader installed,
+    /// so the header does not grow a button that can only disappoint.
+    private var usageRect: NSRect {
+        UsageReader.isAvailable
+            ? NSRect(x: minimizeRect.minX - 22, y: Self.pad + 2, width: 18, height: 18)
+            : .zero
+    }
 
     /// The per-row ✕ (close a stale chat), top-right corner of the row.
     private func rowCloseRect(_ i: Int) -> NSRect {
@@ -623,6 +726,17 @@ final class AgentPadView: NSView {
         // – collapses to traffic lights; □ (while peeking) pins full mode back.
         ((peeking ? "□" : "–") as NSString).draw(in: minimizeRect.offsetBy(dx: 4, dy: 1), withAttributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
+        if !usageRect.isEmpty {
+            // Tinted once any window is close to spent, so the pad can say
+            // "you're nearly out" without being opened.
+            let worst = UsageReader.shared.providers
+                .flatMap(\.windows).map(\.usedPercent).max() ?? 0
+            let tint = worst >= 90
+                ? NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
+                : (worst >= 75 ? NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1) : dim)
+            ("◔" as NSString).draw(in: usageRect.offsetBy(dx: 3, dy: 1), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: tint])
+        }
 
         if sessions.isEmpty {
             let msg = (hooksInstalled
@@ -779,6 +893,11 @@ final class AgentPadView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         if closeRect.insetBy(dx: -4, dy: -4).contains(p) { onClose?(); return }
         if minimizeRect.insetBy(dx: -4, dy: -4).contains(p) { onMinimize?(); return }
+        // Pops a menu, so it needs the click event rather than a bare callback.
+        if !usageRect.isEmpty, usageRect.insetBy(dx: -4, dy: -4).contains(p) {
+            onUsage?(event)
+            return
+        }
         for (i, session) in sessions.enumerated() {
             if rowCloseRect(i).insetBy(dx: -3, dy: -3).contains(p) {
                 onRowAction?(i, .closeChat)

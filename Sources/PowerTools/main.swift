@@ -755,6 +755,38 @@ case "cursor-scan-test":
         print("store unreadable (locked?)")
     }
 
+case "usage-test":
+    // Live verification: print the provider quota the Agent Pad header would
+    // show right now, straight from the real CodexBar CLI. A read spawns a
+    // Claude session to scrape /usage, so this takes ~45s.
+    MainActor.assumeIsolated {
+        guard let bin = UsageReader.binaryPath else {
+            print("no codexbar binary found — the ◔ header button stays hidden")
+            exit(1)
+        }
+        print("reader: \(bin)")
+        let reader = UsageReader.shared
+        let done = DispatchSemaphore(value: 0)
+        reader.onUpdate = { done.signal() }
+        reader.refreshIfStale()
+        // The fetch is deliberately off the main actor; pump the runloop rather
+        // than blocking it, or the completion never lands.
+        while done.wait(timeout: .now() + 0.05) == .timedOut {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        if reader.providers.isEmpty {
+            print("no providers reporting")
+        }
+        for p in reader.providers {
+            print("\(p.name)\(p.plan.isEmpty ? "" : " · \(p.plan)")")
+            for w in p.windows {
+                print("    \(w.label)  \(w.usedPercent)%  \(w.resetDescription)")
+            }
+            if p.windows.isEmpty, !p.error.isEmpty { print("    error: \(p.error)") }
+        }
+        print("fetched \(reader.ageDescription)")
+    }
+
 case "agentpad-server-test":
     // Smoke-test the hook pipeline without the UI: start the loopback server +
     // registry, print session states as events arrive, exit after N seconds.

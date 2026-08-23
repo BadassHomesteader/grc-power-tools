@@ -22,6 +22,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Nudge the Accessibility prompt early — the hotkey tap needs it.
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
 
+        // Warm the provider-quota snapshot now. A cold read takes ~45s because
+        // it spawns a Claude session to scrape /usage, and asking for it only
+        // when the pad's ◔ is clicked guarantees the first click shows
+        // "Reading…". Doing it at launch means the answer is usually already
+        // there. No-op when no reader is installed.
+        UsageReader.shared.refreshIfStale()
+
         controller = AppController(config: config, store: store)
         controller.onStateChange = { [weak self] state in
             self?.setIcon(recording: state == .recording)
