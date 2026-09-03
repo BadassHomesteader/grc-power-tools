@@ -524,7 +524,16 @@ case "macropad-live-test":
             else { try? FileManager.default.removeItem(at: placementURL) }
             exit(code)
         }
-        let front = NSWorkspace.shared.frontmostApplication
+        // Never the frontmost app as-is: when that is Power Tools itself (or
+        // nil) present() leaves currentBundleID unset, the test profile matches
+        // nothing, and every size assertion below silently measures an EMPTY
+        // pad instead of a four-button one.
+        let front = [NSWorkspace.shared.frontmostApplication]
+            .compactMap { $0 }
+            .first { $0.bundleIdentifier != "com.grc.whisper" }
+            ?? NSWorkspace.shared.runningApplications.first {
+                $0.activationPolicy == .regular && $0.bundleIdentifier != "com.grc.whisper"
+            }
         let buttons = ["Invoices", "Projects", "Receipts", "Travel"]
             .map { Config.MacroButton(title: $0, chord: "cmd+shift+m", text: $0, pressReturn: true) }
         let profile = Config.MacroProfile(bundleID: front?.bundleIdentifier ?? "com.apple.finder",
@@ -637,11 +646,17 @@ case "macropad-live-test":
                               ("18 drop beside notch (right)", PadDock.notchRight),
                               ("19 drop below notch", PadDock.notchBelow)] {
             size = panel.frame.size   // still pinned full from step 14
-            let want = anchor.origin(for: size, in: field)
-            panel.setFrame(NSRect(origin: NSPoint(x: want.x + 20, y: want.y - 20), size: size), display: true)
-            pad.snapAfterDrag(); pump()
+            let aim = anchor.origin(for: size, in: field)
+            panel.setFrame(NSRect(origin: NSPoint(x: aim.x + 20, y: aim.y - 20), size: size), display: true)
+            pad.snapAfterDrag(); pump(0.45)   // outlast the 0.22s grow-out-of-the-notch
             report(tag)
-            print("   expected origin=(\(Int(want.x)),\(Int(want.y))) top edge \(Int(want.y + size.height)) (screen top \(Int(screen.frame.maxY)), menu bar \(Int(field.notch.minY))…\(Int(field.notch.maxY)))")
+            // The shelf reserves the housing's dead band, so the pad is taller
+            // after the snap than it was when we aimed — judge the landing
+            // against the size it actually ended up at.
+            let landed = panel.frame.size
+            let want = anchor.origin(for: landed, in: field)
+            let ok = abs(panel.frame.minX - want.x) < 1 && abs(panel.frame.minY - want.y) < 1
+            print("   expected origin=(\(Int(want.x)),\(Int(want.y))) for \(Int(landed.width))x\(Int(landed.height)) — \(ok ? "MATCH" : "MISMATCH") · top edge \(Int(want.y + landed.height)) vs screen top \(Int(screen.frame.maxY))")
         }
 
         // 20: minimized on a berth, the strip must lie DOWN — a row of lights
@@ -649,11 +664,13 @@ case "macropad-live-test":
         size = panel.frame.size
         let berth = PadDock.notchRight.origin(for: size, in: field)
         panel.setFrame(NSRect(origin: berth, size: size), display: true)
-        pad.snapAfterDrag(); pump()
-        clickMinimize()
+        pad.snapAfterDrag(); pump(0.45)
+        clickMinimize(); pump(0.45)
         report("20 minimized on the right berth")
         let strip = panel.frame
-        print("   horizontal: \(strip.width > strip.height ? "YES" : "NO (expected YES)")  " +
+        let lights = view.buttonCount
+        print("   \(lights) light(s) · horizontal: " +
+              "\(lights < 2 ? "n/a (a single light is square)" : (strip.width > strip.height ? "YES" : "NO (expected YES)"))  " +
               "inside the menu bar band: \(strip.minY >= field.notch.minY && strip.maxY <= field.notch.maxY ? "YES" : "NO (expected YES)")")
 
         // 21: restart simulation — a FRESH MacroPad instance must restore the

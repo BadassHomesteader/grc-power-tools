@@ -242,17 +242,25 @@ final class MacroPad {
         // configure() and forces the next scan to re-OCR.
         let hits = preservingHighlights ? view.suggested : []
         if !preservingHighlights { lastCapture = nil }
-        // Only the SHELF berth swallows the housing; the shoulders keep their
-        // natural width. The screen is the controller's to know, not the view's.
-        let shellWidth: CGFloat = dockAnchor?.absorbsNotch == true
-            ? PadDock.Field(screen: screen ?? panel.screen ?? NSScreen.main ?? NSScreen.screens[0]).shellWidth
-            : 0
+        // Only the SHELF berth swallows the housing — it alone has to clear the
+        // housing's dead band and pad out around it. The shoulders sit in real
+        // menu-bar pixels and need neither. The screen is the controller's to
+        // know, not the view's.
+        var shellWidth: CGFloat = 0
+        var shellTopInset: CGFloat = 0
+        if dockAnchor?.absorbsNotch == true,
+           let s = screen ?? panel.screen ?? NSScreen.main {
+            let field = PadDock.Field(screen: s)
+            shellWidth = field.shellWidth
+            shellTopInset = field.notch.height
+        }
         var current: Config.MacroProfile?
         if let id = currentBundleID { current = profile(for: id) }
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
                        buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName,
                        mini: miniActive, peeking: miniPreferred && !miniActive,
-                       berth: dockAnchor?.isNotch == true, shellWidth: shellWidth)
+                       berth: dockAnchor?.isNotch == true, shellWidth: shellWidth,
+                       shellTopInset: shellTopInset)
         view.suggested = hits
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
@@ -476,6 +484,20 @@ final class MacroPadView: NSView {
     /// housing disappears into it; 0 elsewhere. Set by the controller,
     /// which is the side that knows the screen.
     private var shellWidth: CGFloat = 0
+    /// Height of the camera housing, on the shelf berth only. The pad's top
+    /// band lies BEHIND the housing, where the display has no pixels at all —
+    /// anything drawn there lands in the framebuffer (screenshots even show it)
+    /// but never on the glass. So the plate fills the whole shell, to fuse with
+    /// the housing, and the CONTENT starts below this.
+    private var shellTopInset: CGFloat = 0
+    private var contentTop: CGFloat { berth ? shellTopInset : 0 }
+
+    /// Mouse point in content space — see `contentTop`.
+    private func localPoint(_ event: NSEvent) -> NSPoint {
+        var p = convert(event.locationInWindow, from: nil)
+        p.y -= contentTop
+        return p
+    }
     private var peeking = false   // hover-expanded from the strip; – becomes □
     private var hotkeyName = ""
     private var hovered: Int?
@@ -499,13 +521,14 @@ final class MacroPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(appName: String, buttons: [Config.MacroButton], dark: Bool, hotkeyName: String = "",
-                   mini: Bool = false, peeking: Bool = false, berth: Bool = false, shellWidth: CGFloat = 0) {
+                   mini: Bool = false, peeking: Bool = false, berth: Bool = false, shellWidth: CGFloat = 0, shellTopInset: CGFloat = 0) {
         self.appName = appName
         self.buttons = buttons
         self.dark = dark
         self.mini = mini
         self.berth = berth
         self.shellWidth = shellWidth
+        self.shellTopInset = shellTopInset
         self.peeking = peeking
         self.hotkeyName = hotkeyName
         hovered = nil
@@ -524,13 +547,14 @@ final class MacroPadView: NSView {
             let n = CGFloat(max(buttons.count, 1))
             let run = n * Self.sq + (n - 1) * Self.sqGap
             return berth
-                ? NSSize(width: max(Self.miniPad * 2 + run, shellWidth), height: Self.miniPad * 2 + Self.sq)
+                ? NSSize(width: max(Self.miniPad * 2 + run, shellWidth), height: Self.miniPad * 2 + Self.sq + contentTop)
                 : NSSize(width: Self.miniPad * 2 + Self.sq, height: Self.miniPad * 2 + run)
         }
         let content = buttons.isEmpty
             ? Self.emptyH
             : CGFloat(buttons.count) * Self.btnH + CGFloat(buttons.count - 1) * Self.gap + Self.footerH
-        return NSSize(width: Self.width, height: Self.pad + Self.headerH + content + Self.pad)
+        return NSSize(width: Self.width,
+                      height: Self.pad + Self.headerH + content + Self.pad + contentTop)
     }
 
 
@@ -577,6 +601,9 @@ final class MacroPadView: NSView {
                : NSBezierPath(roundedRect: bounds, xRadius: mini ? 9 : 14, yRadius: mini ? 9 : 14)).setClip()
         bg.setFill()
         bounds.fill()
+        // Plate first, at full height, so the shell fuses with the housing —
+        // then push every bit of content clear of the housing's dead band.
+        if contentTop > 0 { NSGraphicsContext.current?.cgContext.translateBy(x: 0, y: contentTop) }
 
         // Traffic lights: one square per macro in button order — a column on the
         // edge anchors, a row on the notch berths; a square lights up when its
@@ -715,12 +742,16 @@ final class MacroPadView: NSView {
         }
     }
 
+    /// Test hook: how many lights the strip is actually drawing, so a size
+    /// assertion can tell "collapsed to one" from "collapsed to four".
+    var buttonCount: Int { buttons.count }
+
     override func mouseDown(with event: NSEvent) {
         if mini {
             beginDrag(event)
             return
         }
-        let p = convert(event.locationInWindow, from: nil)
+        let p = localPoint(event)
         if closeRect.insetBy(dx: -4, dy: -4).contains(p) { onClose?(); return }
         if rescanRect.insetBy(dx: -4, dy: -4).contains(p) { onRescan?(); return }
         if minimizeRect.insetBy(dx: -4, dy: -4).contains(p) { onMinimize?(); return }
@@ -734,7 +765,7 @@ final class MacroPadView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         if mini { onExpand?(); return }
-        let p = convert(event.locationInWindow, from: nil)
+        let p = localPoint(event)
         let h = buttons.indices.first { buttonRect($0).contains(p) }
         if h != hovered {
             hovered = h

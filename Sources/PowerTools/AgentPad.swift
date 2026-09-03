@@ -466,15 +466,23 @@ final class AgentPad: NSObject {
 
     private func render(on screen: NSScreen? = nil) {
         guard let panel, let view = padView else { return }
-        // Only the SHELF berth swallows the housing; the shoulders keep their
-        // natural width. The screen is the controller's to know, not the view's.
-        let shellWidth: CGFloat = dockAnchor?.absorbsNotch == true
-            ? PadDock.Field(screen: screen ?? panel.screen ?? NSScreen.main ?? NSScreen.screens[0]).shellWidth
-            : 0
+        // Only the SHELF berth swallows the housing — it alone has to clear the
+        // housing's dead band and pad out around it. The shoulders sit in real
+        // menu-bar pixels and need neither. The screen is the controller's to
+        // know, not the view's.
+        var shellWidth: CGFloat = 0
+        var shellTopInset: CGFloat = 0
+        if dockAnchor?.absorbsNotch == true,
+           let s = screen ?? panel.screen ?? NSScreen.main {
+            let field = PadDock.Field(screen: s)
+            shellWidth = field.shellWidth
+            shellTopInset = field.notch.height
+        }
         view.configure(sessions: sessions, dark: dark, hotkeyName: hotkeyName,
                        hooksInstalled: hooksInstalled, mini: miniActive,
                        peeking: miniPreferred && !miniActive && !maxedForPermission,
-                       berth: dockAnchor?.isNotch == true, shellWidth: shellWidth)
+                       berth: dockAnchor?.isNotch == true, shellWidth: shellWidth,
+                       shellTopInset: shellTopInset)
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
         // A panel shadow over the menu bar is the loudest tell that this is a
@@ -600,12 +608,13 @@ final class AgentPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(sessions: [ClaudeSession], dark: Bool, hotkeyName: String, hooksInstalled: Bool,
-                   mini: Bool = false, peeking: Bool = false, berth: Bool = false, shellWidth: CGFloat = 0) {
+                   mini: Bool = false, peeking: Bool = false, berth: Bool = false, shellWidth: CGFloat = 0, shellTopInset: CGFloat = 0) {
         self.sessions = sessions
         self.dark = dark
         self.mini = mini
         self.berth = berth
         self.shellWidth = shellWidth
+        self.shellTopInset = shellTopInset
         self.peeking = peeking
         self.hotkeyName = hotkeyName
         self.hooksInstalled = hooksInstalled
@@ -630,6 +639,20 @@ final class AgentPadView: NSView {
     /// housing disappears into it; 0 elsewhere. Set by the controller,
     /// which is the side that knows the screen.
     private var shellWidth: CGFloat = 0
+    /// Height of the camera housing, on the shelf berth only. The pad's top
+    /// band lies BEHIND the housing, where the display has no pixels at all —
+    /// anything drawn there lands in the framebuffer (screenshots even show it)
+    /// but never on the glass. So the plate fills the whole shell, to fuse with
+    /// the housing, and the CONTENT starts below this.
+    private var shellTopInset: CGFloat = 0
+    private var contentTop: CGFloat { berth ? shellTopInset : 0 }
+
+    /// Mouse point in content space — see `contentTop`.
+    private func localPoint(_ event: NSEvent) -> NSPoint {
+        var p = convert(event.locationInWindow, from: nil)
+        p.y -= contentTop
+        return p
+    }
 
     /// The status square for light `i` — the strip runs down on the edge
     /// anchors and across on the notch berths, identity bar on the near side.
@@ -653,7 +676,7 @@ final class AgentPadView: NSView {
             let run = n * Self.sq + (n - 1) * Self.sqGap
             return berth
                 ? NSSize(width: max(Self.miniPad * 2 + run, shellWidth),
-                         height: Self.miniPad * 2 + Self.miniBarSpan + Self.sq)
+                         height: Self.miniPad * 2 + Self.miniBarSpan + Self.sq + contentTop)
                 : NSSize(width: Self.miniPad * 2 + Self.miniBarSpan + Self.sq,
                          height: Self.miniPad * 2 + run)
         }
@@ -661,7 +684,8 @@ final class AgentPadView: NSView {
             ? Self.emptyH
             : sessions.indices.reduce(0) { $0 + rowHeight($1) } + CGFloat(sessions.count - 1) * Self.gap
                 + (firstRecent == nil ? 0 : Self.recentHeaderH) + Self.footerH
-        return NSSize(width: Self.width, height: Self.pad + Self.headerH + content + Self.pad)
+        return NSSize(width: Self.width,
+                      height: Self.pad + Self.headerH + content + Self.pad + contentTop)
     }
 
 
@@ -813,6 +837,9 @@ final class AgentPadView: NSView {
                : NSBezierPath(roundedRect: bounds, xRadius: mini ? 9 : 14, yRadius: mini ? 9 : 14)).setClip()
         bg.setFill()
         bounds.fill()
+        // Plate first, at full height, so the shell fuses with the housing —
+        // then push every bit of content clear of the housing's dead band.
+        if contentTop > 0 { NSGraphicsContext.current?.cgContext.translateBy(x: 0, y: contentTop) }
 
         // Traffic lights: one status square per session in the same triage order
         // as the rows (most urgent first) — a column on the edge anchors, a row
@@ -1099,7 +1126,7 @@ final class AgentPadView: NSView {
             beginDrag(event)
             return
         }
-        let p = convert(event.locationInWindow, from: nil)
+        let p = localPoint(event)
         if closeRect.insetBy(dx: -4, dy: -4).contains(p) { onClose?(); return }
         if minimizeRect.insetBy(dx: -4, dy: -4).contains(p) { onMinimize?(); return }
         // Pops a menu, so it needs the click event rather than a bare callback.
@@ -1134,7 +1161,7 @@ final class AgentPadView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        let p = convert(event.locationInWindow, from: nil)
+        let p = localPoint(event)
         if let i = sessions.indices.first(where: { rowRect($0).contains(p) }) {
             onRowMenu?(i, event)
         }
@@ -1142,7 +1169,7 @@ final class AgentPadView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         if mini { onExpand?(); return }
-        let p = convert(event.locationInWindow, from: nil)
+        let p = localPoint(event)
         let newRow = sessions.indices.first { rowRect($0).contains(p) }
         var newButton: (row: Int, index: Int)?
         var newClose: Int?
