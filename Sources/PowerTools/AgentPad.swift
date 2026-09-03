@@ -442,9 +442,12 @@ final class AgentPad: NSObject {
         view.configure(sessions: sessions, dark: dark, hotkeyName: hotkeyName,
                        hooksInstalled: hooksInstalled, mini: miniActive,
                        peeking: miniPreferred && !miniActive && !maxedForPermission,
-                       miniHorizontal: dockAnchor?.isNotch == true)
+                       berth: dockAnchor?.isNotch == true)
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
+        // A panel shadow over the menu bar is the loudest tell that this is a
+        // floating window rather than a bar item.
+        panel.hasShadow = !view.inBar
 
         // Docked: pin to the anchor for whatever size this render came out at,
         // so the mini strip parks in the same corner as the full pad.
@@ -551,11 +554,11 @@ final class AgentPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(sessions: [ClaudeSession], dark: Bool, hotkeyName: String, hooksInstalled: Bool,
-                   mini: Bool = false, peeking: Bool = false, miniHorizontal: Bool = false) {
+                   mini: Bool = false, peeking: Bool = false, berth: Bool = false) {
         self.sessions = sessions
         self.dark = dark
         self.mini = mini
-        self.miniHorizontal = miniHorizontal
+        self.berth = berth
         self.peeking = peeking
         self.hotkeyName = hotkeyName
         self.hooksInstalled = hooksInstalled
@@ -572,15 +575,16 @@ final class AgentPadView: NSView {
     /// Mini strip: agent identity bar (3px) + gap beside each status square
     /// (above it, when a notch berth turns the strip on its side).
     private static let miniBarSpan: CGFloat = 6
-    /// Notch berths park the strip in the menu-bar band, where a column of
-    /// lights would drape down the screen — so there the lights run in a row.
-    private var miniHorizontal = false
+    /// Parked on a notch berth: the strip lies down into a row (a column would
+    /// drape off the menu bar and down the screen) and, collapsed, dresses like
+    /// the menu bar rather than like a floating panel — see `inBar`.
+    private var berth = false
 
     /// The status square for light `i` — the strip runs down on the edge
     /// anchors and across on the notch berths, identity bar on the near side.
     private func miniLight(_ i: Int) -> NSRect {
         let step = CGFloat(i) * (Self.sq + Self.sqGap)
-        return miniHorizontal
+        return berth
             ? NSRect(x: Self.miniPad + step, y: Self.miniPad + Self.miniBarSpan,
                      width: Self.sq, height: Self.sq)
             : NSRect(x: Self.miniPad + Self.miniBarSpan, y: Self.miniPad + step,
@@ -591,7 +595,7 @@ final class AgentPadView: NSView {
         if mini {
             let n = CGFloat(max(sessions.count, 1))
             let run = n * Self.sq + (n - 1) * Self.sqGap
-            return miniHorizontal
+            return berth
                 ? NSSize(width: Self.miniPad * 2 + run,
                          height: Self.miniPad * 2 + Self.miniBarSpan + Self.sq)
                 : NSSize(width: Self.miniPad * 2 + Self.miniBarSpan + Self.sq,
@@ -603,9 +607,25 @@ final class AgentPadView: NSView {
         return NSSize(width: Self.width, height: Self.pad + Self.headerH + content + Self.pad)
     }
 
-    private var bg: NSColor { dark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 0.98) : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 0.98) }
-    private var fg: NSColor { dark ? .white : .black }
-    private var dim: NSColor { (dark ? NSColor.white : .black).withAlphaComponent(0.5) }
+
+    /// A collapsed pad parked on a berth sits INSIDE the menu bar, so it dresses
+    /// like the bar instead of like a floating panel: the bar's light/dark comes
+    /// from the SYSTEM (and the wallpaper behind it), never from this app's own
+    /// Dark/Lite setting — a Lite pad in a Dark bar is a white brick — and its
+    /// plate goes translucent so the bar reads through it. `render` drops the
+    /// window shadow to match.
+    var inBar: Bool { berth && mini }
+    private var onDark: Bool {
+        inBar ? NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua : dark
+    }
+
+    private var bg: NSColor {
+        (onDark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1)
+                : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 1))
+            .withAlphaComponent(inBar ? 0.55 : 0.98)
+    }
+    private var fg: NSColor { onDark ? .white : .black }
+    private var dim: NSColor { (onDark ? NSColor.white : .black).withAlphaComponent(0.5) }
     private var accent: NSColor { NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1) }
 
     /// Claude Code's own signal palette: terracotta (the tab-strip attention
@@ -705,7 +725,7 @@ final class AgentPadView: NSView {
                 // Same identity bar as the full rows, scaled to the square —
                 // beside it in a column, over it in a row.
                 Self.agentColor(session).withAlphaComponent(stale ? 0.35 : 1).setFill()
-                let bar = miniHorizontal
+                let bar = berth
                     ? NSRect(x: r.minX + 1, y: Self.miniPad, width: Self.sq - 2, height: 3)
                     : NSRect(x: Self.miniPad, y: r.minY + 1, width: 3, height: Self.sq - 2)
                 NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()

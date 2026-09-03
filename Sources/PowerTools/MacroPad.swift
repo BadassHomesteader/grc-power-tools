@@ -247,10 +247,13 @@ final class MacroPad {
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
                        buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName,
                        mini: miniActive, peeking: miniPreferred && !miniActive,
-                       miniHorizontal: dockAnchor?.isNotch == true)
+                       berth: dockAnchor?.isNotch == true)
         view.suggested = hits
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
+        // A panel shadow over the menu bar is the loudest tell that this is a
+        // floating window rather than a bar item.
+        panel.hasShadow = !view.inBar
 
         // Docked: pin to the anchor for whatever size this render came out at,
         // so the mini strip parks in the same corner as the full pad.
@@ -448,9 +451,10 @@ final class MacroPadView: NSView {
     private var buttons: [Config.MacroButton] = []
     private var dark: Bool
     private var mini = false
-    /// Notch berths park the strip in the menu-bar band, where a column of
-    /// lights would drape down the screen — so there the lights run in a row.
-    private var miniHorizontal = false
+    /// Parked on a notch berth: the strip lies down into a row (a column would
+    /// drape off the menu bar and down the screen) and, collapsed, dresses like
+    /// the menu bar rather than like a floating panel — see `inBar`.
+    private var berth = false
     private var peeking = false   // hover-expanded from the strip; – becomes □
     private var hotkeyName = ""
     private var hovered: Int?
@@ -474,12 +478,12 @@ final class MacroPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(appName: String, buttons: [Config.MacroButton], dark: Bool, hotkeyName: String = "",
-                   mini: Bool = false, peeking: Bool = false, miniHorizontal: Bool = false) {
+                   mini: Bool = false, peeking: Bool = false, berth: Bool = false) {
         self.appName = appName
         self.buttons = buttons
         self.dark = dark
         self.mini = mini
-        self.miniHorizontal = miniHorizontal
+        self.berth = berth
         self.peeking = peeking
         self.hotkeyName = hotkeyName
         hovered = nil
@@ -497,7 +501,7 @@ final class MacroPadView: NSView {
         if mini {
             let n = CGFloat(max(buttons.count, 1))
             let run = n * Self.sq + (n - 1) * Self.sqGap
-            return miniHorizontal
+            return berth
                 ? NSSize(width: Self.miniPad * 2 + run, height: Self.miniPad * 2 + Self.sq)
                 : NSSize(width: Self.miniPad * 2 + Self.sq, height: Self.miniPad * 2 + run)
         }
@@ -507,9 +511,25 @@ final class MacroPadView: NSView {
         return NSSize(width: Self.width, height: Self.pad + Self.headerH + content + Self.pad)
     }
 
+
+    /// A collapsed pad parked on a berth sits INSIDE the menu bar, so it dresses
+    /// like the bar instead of like a floating panel: the bar's light/dark comes
+    /// from the SYSTEM (and the wallpaper behind it), never from this app's own
+    /// Dark/Lite setting — a Lite pad in a Dark bar is a white brick — and its
+    /// plate goes translucent so the bar reads through it. `render` drops the
+    /// window shadow to match.
+    var inBar: Bool { berth && mini }
+    private var onDark: Bool {
+        inBar ? NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua : dark
+    }
+
     // Same palette as the other panels so everything feels like one system.
-    private var bg: NSColor { dark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 0.98) : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 0.98) }
-    private var fg: NSColor { dark ? .white : .black }
+    private var bg: NSColor {
+        (onDark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1)
+                : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 1))
+            .withAlphaComponent(inBar ? 0.55 : 0.98)
+    }
+    private var fg: NSColor { onDark ? .white : .black }
     private var dim: NSColor { (dark ? NSColor.white : .black).withAlphaComponent(0.5) }
     private var accent: NSColor { NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1) }
 
@@ -540,8 +560,8 @@ final class MacroPadView: NSView {
             }
             for i in buttons.indices {
                 let step = CGFloat(i) * (Self.sq + Self.sqGap)
-                let r = NSRect(x: Self.miniPad + (miniHorizontal ? step : 0),
-                               y: Self.miniPad + (miniHorizontal ? 0 : step),
+                let r = NSRect(x: Self.miniPad + (berth ? step : 0),
+                               y: Self.miniPad + (berth ? 0 : step),
                                width: Self.sq, height: Self.sq)
                 let path = NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4)
                 if i == pressed {
@@ -549,7 +569,9 @@ final class MacroPadView: NSView {
                 } else if suggested.contains(i) {
                     accent.withAlphaComponent(0.4).setFill()
                 } else {
-                    (dark ? NSColor.white : .black).withAlphaComponent(0.12).setFill()
+                    // In the bar there's no plate to read the empty slots
+                    // against, so they carry their own contrast.
+                    (onDark ? NSColor.white : .black).withAlphaComponent(inBar ? 0.28 : 0.12).setFill()
                 }
                 path.fill()
                 if suggested.contains(i) {
