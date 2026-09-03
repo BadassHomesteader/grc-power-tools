@@ -781,7 +781,8 @@ case "agentpad-preview":
         ])
         let v = AgentPadView(dark: dark)
         v.configure(sessions: sessions, dark: dark, hotkeyName: "Option + Shift", hooksInstalled: true,
-                    mini: mini, berth: berth, shellWidth: berth ? 268 : 0)
+                    mini: mini, berth: berth, shelf: berth,
+                    notchSpan: berth ? 220 : 0, notchHeight: berth ? 38 : 0)
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
         if !mini { v.previewState(hoverRow: 2, hoverButton: nil) }
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }

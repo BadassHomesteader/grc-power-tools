@@ -466,23 +466,23 @@ final class AgentPad: NSObject {
 
     private func render(on screen: NSScreen? = nil) {
         guard let panel, let view = padView else { return }
-        // Only the SHELF berth swallows the housing — it alone has to clear the
-        // housing's dead band and pad out around it. The shoulders sit in real
-        // menu-bar pixels and need neither. The screen is the controller's to
-        // know, not the view's.
-        var shellWidth: CGFloat = 0
-        var shellTopInset: CGFloat = 0
-        if dockAnchor?.absorbsNotch == true,
-           let s = screen ?? panel.screen ?? NSScreen.main {
-            let field = PadDock.Field(screen: s)
-            shellWidth = field.shellWidth
-            shellTopInset = field.notch.height
+        // Only the SHELF berth straddles the housing, so it alone needs the
+        // housing's box: collapsed it lays marks either side of it, expanded it
+        // hangs below it. The shoulders sit in plain menu-bar pixels and need
+        // neither. The screen is the controller's to know, not the view's.
+        let shelf = dockAnchor?.absorbsNotch == true
+        var notchSpan: CGFloat = 0
+        var notchHeight: CGFloat = 0
+        if shelf, let s = screen ?? panel.screen ?? NSScreen.main {
+            let notch = PadDock.Field(screen: s).notch
+            notchSpan = notch.width
+            notchHeight = notch.height
         }
         view.configure(sessions: sessions, dark: dark, hotkeyName: hotkeyName,
                        hooksInstalled: hooksInstalled, mini: miniActive,
                        peeking: miniPreferred && !miniActive && !maxedForPermission,
-                       berth: dockAnchor?.isNotch == true, shellWidth: shellWidth,
-                       shellTopInset: shellTopInset)
+                       berth: dockAnchor?.isNotch == true, shelf: shelf,
+                       notchSpan: notchSpan, notchHeight: notchHeight)
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
         // A panel shadow over the menu bar is the loudest tell that this is a
@@ -608,13 +608,15 @@ final class AgentPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(sessions: [ClaudeSession], dark: Bool, hotkeyName: String, hooksInstalled: Bool,
-                   mini: Bool = false, peeking: Bool = false, berth: Bool = false, shellWidth: CGFloat = 0, shellTopInset: CGFloat = 0) {
+                   mini: Bool = false, peeking: Bool = false, berth: Bool = false, shelf: Bool = false,
+                   notchSpan: CGFloat = 0, notchHeight: CGFloat = 0) {
         self.sessions = sessions
         self.dark = dark
         self.mini = mini
         self.berth = berth
-        self.shellWidth = shellWidth
-        self.shellTopInset = shellTopInset
+        self.shelf = shelf
+        self.notchSpan = notchSpan
+        self.notchHeight = notchHeight
         self.peeking = peeking
         self.hotkeyName = hotkeyName
         self.hooksInstalled = hooksInstalled
@@ -628,9 +630,16 @@ final class AgentPadView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    /// Mini strip: agent identity bar (3px) + gap beside each status square
-    /// (above it, when a notch berth turns the strip on its side).
+    /// Mini strip: agent identity bar (3px) + gap beside each status square.
+    /// The notch strip carries NO bar — see `berthDot`.
     private static let miniBarSpan: CGFloat = 6
+    /// In the notch the strip is a row of small status DOTS: no agent-identity
+    /// bar and a smaller mark than the edge-anchor strip. There is very little
+    /// room beside the housing, and which agent a session belongs to is a
+    /// second question — it stays on the row in the pull-down, where the pad
+    /// has the width to answer it.
+    private static let berthDot: CGFloat = 9
+    private static let berthDotGap: CGFloat = 5
     /// Parked on a notch berth: the strip lies down into a row (a column would
     /// drape off the menu bar and down the screen) and the pad takes on the
     /// housing's silhouette and black — see `shellClip`.
@@ -638,14 +647,22 @@ final class AgentPadView: NSView {
     /// On the SHELF berth the pad pads out to at least this wide so the
     /// housing disappears into it; 0 elsewhere. Set by the controller,
     /// which is the side that knows the screen.
-    private var shellWidth: CGFloat = 0
-    /// Height of the camera housing, on the shelf berth only. The pad's top
-    /// band lies BEHIND the housing, where the display has no pixels at all —
-    /// anything drawn there lands in the framebuffer (screenshots even show it)
-    /// but never on the glass. So the plate fills the whole shell, to fuse with
-    /// the housing, and the CONTENT starts below this.
-    private var shellTopInset: CGFloat = 0
-    private var contentTop: CGFloat { berth ? shellTopInset : 0 }
+    private var shelf = false
+    /// The housing's own box, on the shelf berth. The middle of that box has no
+    /// display behind it — anything drawn there lands in the framebuffer (a
+    /// screencapture even shows it) but never on the glass.
+    private var notchSpan: CGFloat = 0
+    private var notchHeight: CGFloat = 0
+
+    /// COLLAPSED on the shelf, the marks FLANK the housing: a leading cluster in
+    /// the left shoulder, a trailing one in the right, both real pixels. That is
+    /// the compact Dynamic Island layout, and it beats hanging below the housing
+    /// because it costs no vertical space at all.
+    private var flanked: Bool { shelf && mini && notchSpan > 0 }
+    /// EXPANDED there is nothing like enough room in the shoulders, so the pad
+    /// hangs below the housing and its top band is dead space kept black to
+    /// fuse with the hardware.
+    private var contentTop: CGFloat { shelf && !mini ? notchHeight : 0 }
 
     /// Mouse point in content space — see `contentTop`.
     private func localPoint(_ event: NSEvent) -> NSPoint {
@@ -654,31 +671,63 @@ final class AgentPadView: NSView {
         return p
     }
 
+    /// Marks are split as evenly as possible, the extra one going leading.
+    /// Width of a row of `count` marks.
+    private func markRun(_ count: Int) -> CGFloat {
+        count <= 0 ? 0 : CGFloat(count) * Self.berthDot + CGFloat(count - 1) * Self.berthDotGap
+    }
+
+    private func flankSplit(_ total: Int) -> (leading: Int, trailing: Int) {
+        let n = max(total, 1)
+        let leading = (n + 1) / 2
+        return (leading, n - leading)
+    }
+
     /// The status square for light `i` — the strip runs down on the edge
     /// anchors and across on the notch berths, identity bar on the near side.
     private func miniLight(_ i: Int) -> NSRect {
-        let step = CGFloat(i) * (Self.sq + Self.sqGap)
-        // Centred in the shell: on the shelf the pill is padded out to swallow
-        // the notch, so the lights belong in the middle of it.
-        let n = CGFloat(max(sessions.count, 1))
-        let run = n * Self.sq + (n - 1) * Self.sqGap
-        let lead = max((bounds.width - run) / 2, Self.miniPad)
-        return berth
-            ? NSRect(x: lead + step, y: Self.miniPad + Self.miniBarSpan,
-                     width: Self.sq, height: Self.sq)
-            : NSRect(x: Self.miniPad + Self.miniBarSpan, y: Self.miniPad + step,
-                     width: Self.sq, height: Self.sq)
+        guard berth else {
+            return NSRect(x: Self.miniPad + Self.miniBarSpan,
+                          y: Self.miniPad + CGFloat(i) * (Self.sq + Self.sqGap),
+                          width: Self.sq, height: Self.sq)
+        }
+        let step = Self.berthDot + Self.berthDotGap
+        guard flanked else {
+            // Shoulder berth: one row, already clear of the housing.
+            return NSRect(x: Self.miniPad + CGFloat(i) * step, y: Self.miniPad,
+                          width: Self.berthDot, height: Self.berthDot)
+        }
+        // Flanked: the leading cluster hugs the housing's left edge from the
+        // outside, the trailing one its right edge. Nothing in the middle,
+        // which is the part with no display behind it.
+        let (lead, _) = flankSplit(sessions.count)
+        let y = (bounds.height - Self.berthDot) / 2
+        if i < lead {
+            let x0 = (bounds.width - notchSpan) / 2 - Self.miniPad - markRun(lead)
+            return NSRect(x: x0 + CGFloat(i) * step, y: y, width: Self.berthDot, height: Self.berthDot)
+        }
+        let x0 = (bounds.width + notchSpan) / 2 + Self.miniPad
+        return NSRect(x: x0 + CGFloat(i - lead) * step, y: y, width: Self.berthDot, height: Self.berthDot)
     }
 
     override var fittingSize: NSSize {
         if mini {
             let n = CGFloat(max(sessions.count, 1))
+            if flanked {
+                // Symmetric around the housing, because the anchor centres the
+                // pill on it — so both shoulders get the wider cluster's width.
+                let (lead, trail) = flankSplit(sessions.count)
+                let flank = max(markRun(lead), markRun(trail)) + Self.miniPad
+                return NSSize(width: notchSpan + flank * 2,
+                              height: max(notchHeight, Self.berthDot + Self.miniPad * 2))
+            }
+            if berth {
+                return NSSize(width: Self.miniPad * 2 + markRun(Int(n)),
+                              height: Self.miniPad * 2 + Self.berthDot)
+            }
             let run = n * Self.sq + (n - 1) * Self.sqGap
-            return berth
-                ? NSSize(width: max(Self.miniPad * 2 + run, shellWidth),
-                         height: Self.miniPad * 2 + Self.miniBarSpan + Self.sq + contentTop)
-                : NSSize(width: Self.miniPad * 2 + Self.miniBarSpan + Self.sq,
-                         height: Self.miniPad * 2 + run)
+            return NSSize(width: Self.miniPad * 2 + Self.miniBarSpan + Self.sq,
+                          height: Self.miniPad * 2 + run)
         }
         let content = sessions.isEmpty
             ? Self.emptyH
@@ -847,22 +896,28 @@ final class AgentPadView: NSView {
         if mini {
             if sessions.isEmpty {
                 dim.withAlphaComponent(0.3).setFill()
-                NSBezierPath(roundedRect: miniLight(0), xRadius: 4, yRadius: 4).fill()
+                let empty = miniLight(0)
+                NSBezierPath(roundedRect: empty, xRadius: berth ? empty.width / 2 : 4,
+                             yRadius: berth ? empty.width / 2 : 4).fill()
                 return
             }
             for (i, session) in sessions.enumerated() {
                 let stale = session.state == .idle
                     && session.stateChanged.timeIntervalSinceNow < -3600
                 let r = miniLight(i)
-                // Same identity bar as the full rows, scaled to the square —
-                // beside it in a column, over it in a row.
-                Self.agentColor(session).withAlphaComponent(stale ? 0.35 : 1).setFill()
-                let bar = berth
-                    ? NSRect(x: r.minX + 1, y: Self.miniPad, width: Self.sq - 2, height: 3)
-                    : NSRect(x: Self.miniPad, y: r.minY + 1, width: 3, height: Self.sq - 2)
-                NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
+                // The edge-anchor strip keeps the full rows' identity bar beside
+                // each square; the notch strip drops it — no room, and the
+                // pull-down already answers "which agent".
+                if !berth {
+                    Self.agentColor(session).withAlphaComponent(stale ? 0.35 : 1).setFill()
+                    NSBezierPath(roundedRect: NSRect(x: Self.miniPad, y: r.minY + 1,
+                                                     width: 3, height: Self.sq - 2),
+                                 xRadius: 1.5, yRadius: 1.5).fill()
+                }
                 Self.stateColor(session.state).withAlphaComponent(stale ? 0.35 : 0.9).setFill()
-                let path = NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4)
+                // Round in the notch: a status dot, like the bar's own items.
+                let radius: CGFloat = berth ? r.width / 2 : 4
+                let path = NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius)
                 path.fill()
                 if session.state == .needsPermission || session.state == .needsInput
                     || session.state == .unseen || session.state == .error {

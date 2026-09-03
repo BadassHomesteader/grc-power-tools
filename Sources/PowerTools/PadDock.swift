@@ -58,11 +58,6 @@ enum PadDock: String, CaseIterable, Codable {
 
         var hasNotch: Bool { notch.width > 0 }
 
-        /// What a pad on the SHELF berth has to span to swallow the housing and
-        /// read as one piece with it — the notch plus a shoulder either side.
-        /// Narrower than this and it looks like a tab stuck under the notch.
-        var shellWidth: CGFloat { notch.width + PadDock.margin * 4 }
-
         /// visibleFrame plus the menu-bar strip — every point an anchor can put
         /// a pad, and therefore the canvas the drag overlay has to cover.
         var canvas: NSRect {

@@ -242,25 +242,25 @@ final class MacroPad {
         // configure() and forces the next scan to re-OCR.
         let hits = preservingHighlights ? view.suggested : []
         if !preservingHighlights { lastCapture = nil }
-        // Only the SHELF berth swallows the housing — it alone has to clear the
-        // housing's dead band and pad out around it. The shoulders sit in real
-        // menu-bar pixels and need neither. The screen is the controller's to
-        // know, not the view's.
-        var shellWidth: CGFloat = 0
-        var shellTopInset: CGFloat = 0
-        if dockAnchor?.absorbsNotch == true,
-           let s = screen ?? panel.screen ?? NSScreen.main {
-            let field = PadDock.Field(screen: s)
-            shellWidth = field.shellWidth
-            shellTopInset = field.notch.height
+        // Only the SHELF berth straddles the housing, so it alone needs the
+        // housing's box: collapsed it lays marks either side of it, expanded it
+        // hangs below it. The shoulders sit in plain menu-bar pixels and need
+        // neither. The screen is the controller's to know, not the view's.
+        let shelf = dockAnchor?.absorbsNotch == true
+        var notchSpan: CGFloat = 0
+        var notchHeight: CGFloat = 0
+        if shelf, let s = screen ?? panel.screen ?? NSScreen.main {
+            let notch = PadDock.Field(screen: s).notch
+            notchSpan = notch.width
+            notchHeight = notch.height
         }
         var current: Config.MacroProfile?
         if let id = currentBundleID { current = profile(for: id) }
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
                        buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName,
                        mini: miniActive, peeking: miniPreferred && !miniActive,
-                       berth: dockAnchor?.isNotch == true, shellWidth: shellWidth,
-                       shellTopInset: shellTopInset)
+                       berth: dockAnchor?.isNotch == true, shelf: shelf,
+                       notchSpan: notchSpan, notchHeight: notchHeight)
         view.suggested = hits
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
@@ -483,20 +483,63 @@ final class MacroPadView: NSView {
     /// On the SHELF berth the pad pads out to at least this wide so the
     /// housing disappears into it; 0 elsewhere. Set by the controller,
     /// which is the side that knows the screen.
-    private var shellWidth: CGFloat = 0
-    /// Height of the camera housing, on the shelf berth only. The pad's top
-    /// band lies BEHIND the housing, where the display has no pixels at all —
-    /// anything drawn there lands in the framebuffer (screenshots even show it)
-    /// but never on the glass. So the plate fills the whole shell, to fuse with
-    /// the housing, and the CONTENT starts below this.
-    private var shellTopInset: CGFloat = 0
-    private var contentTop: CGFloat { berth ? shellTopInset : 0 }
+    private var shelf = false
+    /// The housing's own box, on the shelf berth. The middle of that box has no
+    /// display behind it — anything drawn there lands in the framebuffer (a
+    /// screencapture even shows it) but never on the glass.
+    private var notchSpan: CGFloat = 0
+    private var notchHeight: CGFloat = 0
+
+    /// COLLAPSED on the shelf, the marks FLANK the housing: a leading cluster in
+    /// the left shoulder, a trailing one in the right, both real pixels. That is
+    /// the compact Dynamic Island layout, and it beats hanging below the housing
+    /// because it costs no vertical space at all.
+    private var flanked: Bool { shelf && mini && notchSpan > 0 }
+    /// EXPANDED there is nothing like enough room in the shoulders, so the pad
+    /// hangs below the housing and its top band is dead space kept black to
+    /// fuse with the hardware.
+    private var contentTop: CGFloat { shelf && !mini ? notchHeight : 0 }
 
     /// Mouse point in content space — see `contentTop`.
     private func localPoint(_ event: NSEvent) -> NSPoint {
         var p = convert(event.locationInWindow, from: nil)
         p.y -= contentTop
         return p
+    }
+
+    /// Marks are split as evenly as possible, the extra one going leading.
+    /// Where macro light `i` sits: a column on the edge anchors, a row on a
+    /// shoulder berth, and split either side of the housing on the shelf —
+    /// where the middle of the pill has no display behind it.
+    private func miniMark(_ i: Int) -> NSRect {
+        guard berth else {
+            return NSRect(x: Self.miniPad, y: Self.miniPad + CGFloat(i) * (Self.sq + Self.sqGap),
+                          width: Self.sq, height: Self.sq)
+        }
+        let step = Self.berthSq + Self.berthGap
+        guard flanked else {
+            return NSRect(x: Self.miniPad + CGFloat(i) * step, y: Self.miniPad,
+                          width: Self.berthSq, height: Self.berthSq)
+        }
+        let (lead, _) = flankSplit(buttons.count)
+        let y = (bounds.height - Self.berthSq) / 2
+        if i < lead {
+            let x0 = (bounds.width - notchSpan) / 2 - Self.miniPad - markRun(lead)
+            return NSRect(x: x0 + CGFloat(i) * step, y: y, width: Self.berthSq, height: Self.berthSq)
+        }
+        let x0 = (bounds.width + notchSpan) / 2 + Self.miniPad
+        return NSRect(x: x0 + CGFloat(i - lead) * step, y: y, width: Self.berthSq, height: Self.berthSq)
+    }
+
+    /// Width of a row of `count` marks.
+    private func markRun(_ count: Int) -> CGFloat {
+        count <= 0 ? 0 : CGFloat(count) * Self.berthSq + CGFloat(count - 1) * Self.berthGap
+    }
+
+    private func flankSplit(_ total: Int) -> (leading: Int, trailing: Int) {
+        let n = max(total, 1)
+        let leading = (n + 1) / 2
+        return (leading, n - leading)
     }
     private var peeking = false   // hover-expanded from the strip; – becomes □
     private var hotkeyName = ""
@@ -513,6 +556,10 @@ final class MacroPadView: NSView {
     private static let sq: CGFloat = 14      // traffic-light square
     private static let sqGap: CGFloat = 4
     private static let miniPad: CGFloat = 7
+    /// The notch strip runs smaller than the edge-anchor strip — there is very
+    /// little room beside the housing.
+    private static let berthSq: CGFloat = 9
+    private static let berthGap: CGFloat = 5
 
     init(dark: Bool) {
         self.dark = dark
@@ -521,14 +568,16 @@ final class MacroPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(appName: String, buttons: [Config.MacroButton], dark: Bool, hotkeyName: String = "",
-                   mini: Bool = false, peeking: Bool = false, berth: Bool = false, shellWidth: CGFloat = 0, shellTopInset: CGFloat = 0) {
+                   mini: Bool = false, peeking: Bool = false, berth: Bool = false, shelf: Bool = false,
+                   notchSpan: CGFloat = 0, notchHeight: CGFloat = 0) {
         self.appName = appName
         self.buttons = buttons
         self.dark = dark
         self.mini = mini
         self.berth = berth
-        self.shellWidth = shellWidth
-        self.shellTopInset = shellTopInset
+        self.shelf = shelf
+        self.notchSpan = notchSpan
+        self.notchHeight = notchHeight
         self.peeking = peeking
         self.hotkeyName = hotkeyName
         hovered = nil
@@ -545,10 +594,18 @@ final class MacroPadView: NSView {
     override var fittingSize: NSSize {
         if mini {
             let n = CGFloat(max(buttons.count, 1))
+            if flanked {
+                let (lead, trail) = flankSplit(buttons.count)
+                let flank = max(markRun(lead), markRun(trail)) + Self.miniPad
+                return NSSize(width: notchSpan + flank * 2,
+                              height: max(notchHeight, Self.berthSq + Self.miniPad * 2))
+            }
+            if berth {
+                return NSSize(width: Self.miniPad * 2 + markRun(Int(n)),
+                              height: Self.miniPad * 2 + Self.berthSq)
+            }
             let run = n * Self.sq + (n - 1) * Self.sqGap
-            return berth
-                ? NSSize(width: max(Self.miniPad * 2 + run, shellWidth), height: Self.miniPad * 2 + Self.sq + contentTop)
-                : NSSize(width: Self.miniPad * 2 + Self.sq, height: Self.miniPad * 2 + run)
+            return NSSize(width: Self.miniPad * 2 + Self.sq, height: Self.miniPad * 2 + run)
         }
         let content = buttons.isEmpty
             ? Self.emptyH
@@ -611,21 +668,13 @@ final class MacroPadView: NSView {
         if mini {
             if buttons.isEmpty {
                 dim.withAlphaComponent(0.3).setFill()
-                NSBezierPath(roundedRect: NSRect(x: Self.miniPad, y: Self.miniPad,
-                                                 width: Self.sq, height: Self.sq),
-                             xRadius: 4, yRadius: 4).fill()
+                let empty = miniMark(0)
+                NSBezierPath(roundedRect: empty, xRadius: berth ? 3 : 4, yRadius: berth ? 3 : 4).fill()
                 return
             }
             for i in buttons.indices {
-                let step = CGFloat(i) * (Self.sq + Self.sqGap)
-                // Centred in the shell: on the shelf the pill is padded out to
-                // swallow the notch, so the lights belong in the middle of it.
-                let run = CGFloat(buttons.count) * Self.sq + CGFloat(buttons.count - 1) * Self.sqGap
-                let lead = berth ? max((bounds.width - run) / 2, Self.miniPad) : Self.miniPad
-                let r = NSRect(x: berth ? lead + step : Self.miniPad,
-                               y: Self.miniPad + (berth ? 0 : step),
-                               width: Self.sq, height: Self.sq)
-                let path = NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4)
+                let r = miniMark(i)
+                let path = NSBezierPath(roundedRect: r, xRadius: berth ? 3 : 4, yRadius: berth ? 3 : 4)
                 if i == pressed {
                     accent.withAlphaComponent(0.95).setFill()
                 } else if suggested.contains(i) {
