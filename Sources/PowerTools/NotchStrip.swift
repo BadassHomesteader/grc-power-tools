@@ -65,6 +65,11 @@ final class NotchStrip {
     static let midWidthFactor: CGFloat = 2
     static let midCardHeight: CGFloat = 56
     static let midCardHeightWithActions: CGFloat = 74
+    /// The hover list: one line per session, capped. The cap is the thing that
+    /// keeps "show me everything" from quietly becoming a full panel.
+    static let listRow: CGFloat = 24
+    static let listPad: CGFloat = 8
+    static let maxListRows = 6
 
     /// Where a mark ends up, in view coordinates. One array, read by BOTH
     /// `draw` and `mouseDown` — the pads recompute this in two places and the
@@ -75,9 +80,14 @@ final class NotchStrip {
         let rect: NSRect
     }
 
+    /// Mid comes in two shapes, because hovering and being notified are
+    /// different questions. Hovering asks "what have I got running?" and wants
+    /// the WHOLE list; a permission arriving asks "answer this" and wants one
+    /// card with the answer on it. Both stay bounded — neither is ever Max.
     enum Mode: Equatable {
         case min
-        case mid(source: Int, mark: Int)
+        case list(source: Int)
+        case card(source: Int, mark: Int)
     }
 
     private var panel: NSPanel?
@@ -168,16 +178,34 @@ final class NotchStrip {
         }
         let field = PadDock.Field(screen: screen)
         build(on: screen)
-        // A Mid card whose source or mark has gone away falls back to Min.
-        if case let .mid(si, mi) = mode, si >= live.count || mi >= live[si].count {
+        // A Mid whose source or mark has gone away falls back to Min.
+        switch mode {
+        case .min: break
+        case let .list(si):
+            if si >= live.count || live[si].isEmpty { mode = .min }
+        case let .card(si, mi):
+            if si >= live.count || mi >= live[si].count { mode = .min }
+        }
+        var cards: [Card] = []
+        var listMode = false
+        switch mode {
+        case .min: break
+        case let .list(si) where si < activeSources.count:
+            listMode = true
+            // Built from the source's REAL count, not from the capped marks:
+            // after capping, the last mark is the overflow dot, and asking the
+            // source for a card at that index hands back a genuine item wearing
+            // the overflow's slot. The list caps itself separately.
+            let total = activeSources[si].marks().count
+            cards = (0..<Swift.min(total, NotchStrip.maxListRows)).compactMap { activeSources[si].card($0) }
+            if cards.isEmpty { mode = .min }
+        case let .card(si, mi) where si < activeSources.count:
+            if let one = activeSources[si].card(mi) { cards = [one] } else { mode = .min }
+        default:
             mode = .min
         }
-        var card: Card?
-        if case let .mid(si, mi) = mode, si < activeSources.count {
-            card = activeSources[si].card(mi)
-            if card == nil { mode = .min }
-        }
-        view?.configure(groups: live, card: card, field: field)
+        if case let .list(si) = mode { view?.listSource = si }
+        view?.configure(groups: live, cards: cards, listMode: listMode, field: field)
         place(field: field, animated: true)
     }
 
@@ -244,10 +272,15 @@ final class NotchStrip {
 
     // MARK: Interaction
 
+    /// Hovering any dot opens that source's whole list — one dot at a time was
+    /// the wrong answer to "what have I got running?".
     private func hover(_ hit: Placed?) {
         guard let hit else { return }
-        guard case .min = mode else { return }
-        open(source: hit.source, mark: hit.mark, hold: nil)
+        if case .list(hit.source) = mode { return }   // already showing it
+        if case .card = mode { return }               // a notification owns the surface
+        midTimer?.invalidate(); midTimer = nil
+        mode = .list(source: hit.source)
+        refresh()
     }
 
     private func click(_ hit: Placed?) {
@@ -258,11 +291,11 @@ final class NotchStrip {
         activeSources[hit.source].activate(hit.mark)
     }
 
-    /// Present a card. `hold` auto-collapses after that many seconds — used by
+    /// Present one card. `hold` auto-collapses after that many seconds — used by
     /// the permission banner, which has to stand on its own without a cursor.
     func open(source: Int, mark: Int, hold: TimeInterval?) {
         guard source < activeSources.count, activeSources[source].card(mark) != nil else { return }
-        mode = .mid(source: source, mark: mark)
+        mode = .card(source: source, mark: mark)
         midTimer?.invalidate(); midTimer = nil
         if let hold {
             midTimer = Timer.scheduledTimer(withTimeInterval: hold, repeats: false) { [weak self] _ in
@@ -297,6 +330,14 @@ final class NotchStrip {
 
     // MARK: Test hooks
 
+    /// Show a source's whole list — the hover shape, exposed for the harness.
+    func openList(source: Int) {
+        guard source < activeSources.count else { return }
+        midTimer?.invalidate(); midTimer = nil
+        mode = .list(source: source)
+        refresh()
+    }
+
     /// Every rect the view draws content into, in SCREEN coordinates. The
     /// harness asserts none of these intersect the housing — see the note on
     /// `NotchStripView.contentRects`.
@@ -330,7 +371,12 @@ final class NotchStripView: NSView {
     var onClick: ((NotchStrip.Placed?) -> Void)?
 
     private var groups: [[NotchStrip.Mark]] = []
-    private var card: NotchStrip.Card?
+    private var cards: [NotchStrip.Card] = []
+    /// Which source the open list belongs to, so a row click routes to it.
+    var listSource = 0
+    private var listMode = false
+    private var card: NotchStrip.Card? { listMode ? nil : cards.first }
+    private var hoveredRow: Int?
     private var notchSpan: CGFloat = 0
     private var notchHeight: CGFloat = 0
     private var maxWidth: CGFloat = 10_000
@@ -346,9 +392,12 @@ final class NotchStripView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    func configure(groups: [[NotchStrip.Mark]], card: NotchStrip.Card?, field: PadDock.Field) {
+    func configure(groups: [[NotchStrip.Mark]], cards: [NotchStrip.Card], listMode: Bool,
+                   field: PadDock.Field) {
         self.groups = groups
-        self.card = card
+        self.cards = cards
+        self.listMode = listMode
+        hoveredRow = nil
         self.notchSpan = field.notch.width
         self.notchHeight = field.notch.height
         self.maxWidth = field.visible.width - PadDock.margin * 2
@@ -387,8 +436,20 @@ final class NotchStripView: NSView {
         notchHeight + ((card?.actions.isEmpty ?? true)
                        ? NotchStrip.midCardHeight : NotchStrip.midCardHeightWithActions)
     }
+    /// The list is capped at `maxListRows`, not fitted to the source — that cap
+    /// is what keeps the hover shape Mid rather than sliding into Max.
+    private var listHeight: CGFloat {
+        notchHeight + NotchStrip.listPad * 2
+            + CGFloat(min(cards.count, NotchStrip.maxListRows)) * NotchStrip.listRow
+    }
+    private func rowRect(_ i: Int) -> NSRect {
+        NSRect(x: 12, y: notchHeight + NotchStrip.listPad + CGFloat(i) * NotchStrip.listRow,
+               width: bounds.width - 24, height: NotchStrip.listRow)
+    }
+    private var visibleRows: Int { min(cards.count, NotchStrip.maxListRows) }
 
     override var fittingSize: NSSize {
+        if listMode, !cards.isEmpty { return NSSize(width: midWidth, height: listHeight) }
         if card != nil { return NSSize(width: midWidth, height: midHeight) }
         return NSSize(width: leadFlank + notchSpan + trailFlank,
                       height: max(notchHeight, NotchStrip.dot + NotchStrip.pad * 2))
@@ -399,8 +460,8 @@ final class NotchStripView: NSView {
     /// Mid is centred on the housing. Both are flush with the top of the screen.
     func targetFrame(in field: PadDock.Field) -> NSRect {
         let size = fittingSize
-        let x = card == nil ? field.notch.minX - leadFlank
-                            : field.notch.midX - size.width / 2
+        let x = isMid ? field.notch.midX - size.width / 2
+                      : field.notch.minX - leadFlank
         let clamped = min(max(x, field.visible.minX), max(field.visible.maxX - size.width, field.visible.minX))
         return NSRect(x: clamped, y: field.notch.maxY - size.height,
                       width: size.width, height: size.height)
@@ -409,8 +470,11 @@ final class NotchStripView: NSView {
     /// Marks laid out around the housing. Whole groups only — splitting one
     /// source across the cutout would make it impossible to tell whose dot is
     /// whose, which is the entire point of grouping them.
+    /// Any expanded shape — list or single card.
+    var isMid: Bool { (listMode && !cards.isEmpty) || card != nil }
+
     private func computePlacement() -> [NotchStrip.Placed] {
-        guard card == nil, !groups.isEmpty else { return [] }
+        guard !isMid, !groups.isEmpty else { return [] }
         var out: [NotchStrip.Placed] = []
         let y = (bounds.height - NotchStrip.dot) / 2
         let step = NotchStrip.dot + NotchStrip.gap
@@ -442,8 +506,12 @@ final class NotchStripView: NSView {
     /// the camera that no human can see, so a screenshot check passes on
     /// precisely the bug it exists to catch.
     var contentRects: [NSRect] {
-        card == nil ? placed.map(\.rect) : ([cardTextRect] + actionRects)
+        if listMode, !cards.isEmpty { return (0..<visibleRows).map(rowRect) }
+        return card == nil ? placed.map(\.rect) : ([cardTextRect] + actionRects)
     }
+
+    /// Test hook: the row rects, so a click can be aimed at one.
+    var listRowRects: [NSRect] { listMode ? (0..<visibleRows).map(rowRect) : [] }
 
     /// Also computed — same reasoning as `placed`.
     var actionRects: [NSRect] {
@@ -477,6 +545,10 @@ final class NotchStripView: NSView {
         NSColor(white: 0.04, alpha: 0.97).setFill()
         bounds.fill()
 
+        if listMode, !cards.isEmpty {
+            drawList()
+            return
+        }
         if let card {
             drawCard(card)
             return
@@ -496,6 +568,40 @@ final class NotchStripView: NSView {
                     path.lineWidth = 1.5
                     path.stroke()
                 }
+        }
+    }
+
+    /// Hover: every session at once, one line each. Rows sit BELOW the housing
+    /// — the band above is plate only, because there is no display behind the
+    /// camera and anything drawn there never reaches the glass.
+    private func drawList() {
+        let title: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.white]
+        let sub: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.55)]
+        let p = NSMutableParagraphStyle()
+        p.lineBreakMode = .byTruncatingTail
+
+        for i in 0..<visibleRows {
+            let r = rowRect(i)
+            let c = cards[i]
+            if hoveredRow == i {
+                NSColor.white.withAlphaComponent(0.08).setFill()
+                NSBezierPath(roundedRect: r.insetBy(dx: -4, dy: 0), xRadius: 5, yRadius: 5).fill()
+            }
+            // State dot, then the session, then what it is doing — right-aligned
+            // so the eye can scan states down one column.
+            c.accent.setFill()
+            NSBezierPath(ovalIn: NSRect(x: r.minX, y: r.midY - 3.5, width: 7, height: 7)).fill()
+
+            let subText = c.subtitle as NSString
+            let subW = min(subText.size(withAttributes: sub).width, r.width * 0.5)
+            subText.draw(in: NSRect(x: r.maxX - subW, y: r.minY + 5, width: subW, height: 14),
+                         withAttributes: sub.merging([.paragraphStyle: p]) { a, _ in a })
+            (c.title as NSString).draw(
+                in: NSRect(x: r.minX + 14, y: r.minY + 4, width: r.width - 14 - subW - 8, height: 15),
+                withAttributes: title.merging([.paragraphStyle: p]) { a, _ in a })
         }
     }
 
@@ -560,6 +666,12 @@ final class NotchStripView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        if listMode, !cards.isEmpty {
+            let p = convert(event.locationInWindow, from: nil)
+            let row = (0..<visibleRows).first { rowRect($0).insetBy(dx: -4, dy: 0).contains(p) }
+            if row != hoveredRow { hoveredRow = row; needsDisplay = true }
+            return
+        }
         let layout = placed
         let h = hit(event)
         let idx = h.flatMap { x in layout.firstIndex { $0.source == x.source && $0.mark == x.mark } }
@@ -577,6 +689,13 @@ final class NotchStripView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if listMode, !cards.isEmpty {
+            let p = convert(event.locationInWindow, from: nil)
+            if let row = (0..<visibleRows).first(where: { rowRect($0).insetBy(dx: -4, dy: 0).contains(p) }) {
+                onClick?(NotchStrip.Placed(source: listSource, mark: row, rect: rowRect(row)))
+            }
+            return
+        }
         if card != nil {
             let p = convert(event.locationInWindow, from: nil)
             if let card, let i = actionRects.firstIndex(where: { $0.contains(p) }),

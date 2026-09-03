@@ -1039,6 +1039,43 @@ case "dockoverlay-preview":
         }
     }
 
+case "notchstrip-preview":
+    // Offscreen render of the strip against a synthetic housing, as
+    // dockoverlay-preview does. Flags: "list" (hover shape), "card"
+    // (notification shape); default is the collapsed strip.
+    let out = args.count >= 2 ? args[1] : "notchstrip-preview.png"
+    let shape = args.contains("list") ? "list" : (args.contains("card") ? "card" : "min")
+    MainActor.assumeIsolated {
+        let field = PadDock.Field(visible: NSRect(x: 0, y: 0, width: 1800, height: 1130),
+                                  notch: NSRect(x: 790, y: 1131, width: 220, height: 38))
+        let states: [(String, String, NSColor)] = [
+            ("grc-power-tools", "needs permission", NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)),
+            ("gridops-ft-kyaw", "working…", NSColor(srgbRed: 0.25, green: 0.55, blue: 0.95, alpha: 1)),
+            ("libre-crm-cci", "idle", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)),
+            ("gridops-ft-njaw", "done — unseen", NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)),
+            ("grc-todo", "failed", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)),
+        ]
+        let marks = states.map { NotchStrip.Mark(color: $0.2, ring: $0.1 != "idle" && $0.1 != "working…") }
+        let cards = states.map { NotchStrip.Card(title: $0.0, subtitle: $0.1, accent: $0.2) }
+        let v = NotchStripView()
+        switch shape {
+        case "list": v.configure(groups: [marks], cards: cards, listMode: true, field: field)
+        case "card":
+            var one = cards[0]
+            one.actions = [("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1), {}),
+                           ("✕", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1), {})]
+            v.configure(groups: [marks], cards: [one], listMode: false, field: field)
+        default: v.configure(groups: [marks], cards: [], listMode: false, field: field)
+        }
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out) — \(shape) \(Int(v.frame.width))x\(Int(v.frame.height))")
+        }
+    }
+
 case "notchstrip-live-test":
     // The notch strip, driven headlessly. The assertion that matters is the
     // CUTOUT one, and it is deliberately geometric rather than a screenshot:
@@ -1080,9 +1117,14 @@ case "notchstrip-live-test":
             id: "agents", priority: 0, maxMarks: 5,
             marks: { (0..<agentCount).map { i in
                 NotchStrip.Mark(color: .systemBlue, ring: i == 0, tooltip: "s\(i)") } },
-            card: { i in NotchStrip.Card(title: "session \(i)", subtitle: "needs permission",
-                                         accent: .systemOrange,
-                                         actions: [("✓", .systemGreen, {}), ("✕", .systemRed, {})]) },
+            // Mirrors the real source: no card past the last real session, so
+            // the overflow dot's index cannot conjure one.
+            card: { i in
+                guard i < agentCount else { return nil }
+                return NotchStrip.Card(title: "session \(i)", subtitle: "needs permission",
+                                       accent: .systemOrange,
+                                       actions: [("✓", .systemGreen, {}), ("✕", .systemRed, {})])
+            },
             activate: { clicked.append(("agents", $0)) }))
         strip.register(NotchStrip.Source(
             id: "quota", priority: 10, maxMarks: 1,
@@ -1175,6 +1217,46 @@ case "notchstrip-live-test":
         // 7: master off ⇒ gone.
         strip.apply(master: false, enabled: ["agents", "quota"]); pump(0.2)
         check(!strip.isVisible, "7: master switch off ⇒ no window")
+
+        // 9: the HOVER shape — every session at once, not one at a time.
+        agentCount = 8
+        quotaOn = false
+        strip.apply(master: true, enabled: ["agents"]); pump(0.3)
+        strip.openList(source: 0); pump(0.4)
+        let list = strip.frame
+        let rows = strip.testSurface?.view.listRowRects ?? []
+        // 8 sessions cap to 5 marks + an overflow dot; the overflow has no card,
+        // so the list shows the 5 real ones.
+        check(rows.count == NotchStrip.maxListRows,
+              "9a: hover lists sessions up to the row cap (\(rows.count) rows for 8 sessions)")
+        let listCap = field.notch.height + NotchStrip.listPad * 2
+            + CGFloat(NotchStrip.maxListRows) * NotchStrip.listRow
+        check(list.height <= listCap + 1,
+              "9b: list height \(Int(list.height)) within the \(Int(listCap))pt cap — still Mid, never Max")
+        check(list.width <= field.notch.width * NotchStrip.midWidthFactor + 1,
+              "9c: list width \(Int(list.width)) within the Mid cap")
+        let listBad = strip.contentRectsInScreen.filter { $0.intersects(field.notch) }
+        check(listBad.isEmpty, "9d: list rows clear of the housing")
+        check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
+              "9e: list rows entirely BELOW the housing")
+
+        // 10: a row click routes to that row's session, not the hovered dot's.
+        clicked.removeAll()
+        if let (panel, view) = strip.testSurface, rows.count > 2 {
+            let r = rows[2]
+            let p = view.convert(NSPoint(x: r.midX, y: r.midY), to: nil)
+            let ev = NSEvent.mouseEvent(with: .leftMouseDown, location: p, modifierFlags: [],
+                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: panel.windowNumber, context: nil,
+                                        eventNumber: 0, clickCount: 1, pressure: 1)!
+            view.mouseDown(with: ev)
+            pump(0.1)
+            check(clicked.last?.0 == "agents" && clicked.last?.1 == 2,
+                  "10: click on row 3 routed to agents[2] — got \(clicked.last.map { "\($0.0)[\($0.1)]" } ?? "nothing")")
+        } else {
+            check(false, "10: no rows to click")
+        }
+        strip.collapse(); pump(0.3)
 
         // 8: berth migration, including idempotence.
         let fake: [String: [String: Any]] = [
