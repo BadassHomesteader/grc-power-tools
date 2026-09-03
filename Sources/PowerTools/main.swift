@@ -732,6 +732,8 @@ case "agentpad-preview":
     let out = args.count >= 2 ? args[1] : "agentpad-preview.png"
     let dark = !args.contains("light")
     let mini = args.contains("mini")
+    // "berth" previews the notch shell (square top, rounded below, housing black).
+    let berth = args.contains("berth")
     MainActor.assumeIsolated {
         func fake(_ id: String, _ cwd: String, _ label: String, _ state: ClaudeSession.State,
                   _ detail: String, ageSec: Double,
@@ -762,7 +764,7 @@ case "agentpad-preview":
         ])
         let v = AgentPadView(dark: dark)
         v.configure(sessions: sessions, dark: dark, hotkeyName: "Option + Shift", hooksInstalled: true,
-                    mini: mini)
+                    mini: mini, berth: berth, shellWidth: berth ? 268 : 0)
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
         if !mini { v.previewState(hoverRow: 2, hoverButton: nil) }
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }

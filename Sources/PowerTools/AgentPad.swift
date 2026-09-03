@@ -466,22 +466,39 @@ final class AgentPad: NSObject {
 
     private func render(on screen: NSScreen? = nil) {
         guard let panel, let view = padView else { return }
+        // Only the SHELF berth swallows the housing; the shoulders keep their
+        // natural width. The screen is the controller's to know, not the view's.
+        let shellWidth: CGFloat = dockAnchor?.absorbsNotch == true
+            ? PadDock.Field(screen: screen ?? panel.screen ?? NSScreen.main ?? NSScreen.screens[0]).shellWidth
+            : 0
         view.configure(sessions: sessions, dark: dark, hotkeyName: hotkeyName,
                        hooksInstalled: hooksInstalled, mini: miniActive,
                        peeking: miniPreferred && !miniActive && !maxedForPermission,
-                       berth: dockAnchor?.isNotch == true)
+                       berth: dockAnchor?.isNotch == true, shellWidth: shellWidth)
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
         // A panel shadow over the menu bar is the loudest tell that this is a
         // floating window rather than a bar item.
-        panel.hasShadow = !view.inBar
+        panel.hasShadow = !view.berth
 
         // Docked: pin to the anchor for whatever size this render came out at,
         // so the mini strip parks in the same corner as the full pad.
         if let dockAnchor, let padScreen = screen ?? panel.screen ?? NSScreen.main {
             savedTopLeft = nil
             let origin = dockAnchor.origin(for: size, in: PadDock.Field(screen: padScreen))
-            panel.setFrame(NSRect(origin: origin, size: size), display: true)
+            let target = NSRect(origin: origin, size: size)
+            // Berthed: grow and shrink OUT OF the notch instead of cutting to
+            // the new size. The top edge is pinned to the screen, so animating
+            // the frame reads as the housing itself opening and closing.
+            if dockAnchor.isNotch, panel.isVisible, panel.frame.size != size {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.22
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    panel.animator().setFrame(target, display: true)
+                }
+            } else {
+                panel.setFrame(target, display: true)
+            }
             return
         }
 
@@ -583,11 +600,12 @@ final class AgentPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(sessions: [ClaudeSession], dark: Bool, hotkeyName: String, hooksInstalled: Bool,
-                   mini: Bool = false, peeking: Bool = false, berth: Bool = false) {
+                   mini: Bool = false, peeking: Bool = false, berth: Bool = false, shellWidth: CGFloat = 0) {
         self.sessions = sessions
         self.dark = dark
         self.mini = mini
         self.berth = berth
+        self.shellWidth = shellWidth
         self.peeking = peeking
         self.hotkeyName = hotkeyName
         self.hooksInstalled = hooksInstalled
@@ -605,16 +623,25 @@ final class AgentPadView: NSView {
     /// (above it, when a notch berth turns the strip on its side).
     private static let miniBarSpan: CGFloat = 6
     /// Parked on a notch berth: the strip lies down into a row (a column would
-    /// drape off the menu bar and down the screen) and, collapsed, dresses like
-    /// the menu bar rather than like a floating panel — see `inBar`.
-    private var berth = false
+    /// drape off the menu bar and down the screen) and the pad takes on the
+    /// housing's silhouette and black — see `shellClip`.
+    private(set) var berth = false
+    /// On the SHELF berth the pad pads out to at least this wide so the
+    /// housing disappears into it; 0 elsewhere. Set by the controller,
+    /// which is the side that knows the screen.
+    private var shellWidth: CGFloat = 0
 
     /// The status square for light `i` — the strip runs down on the edge
     /// anchors and across on the notch berths, identity bar on the near side.
     private func miniLight(_ i: Int) -> NSRect {
         let step = CGFloat(i) * (Self.sq + Self.sqGap)
+        // Centred in the shell: on the shelf the pill is padded out to swallow
+        // the notch, so the lights belong in the middle of it.
+        let n = CGFloat(max(sessions.count, 1))
+        let run = n * Self.sq + (n - 1) * Self.sqGap
+        let lead = max((bounds.width - run) / 2, Self.miniPad)
         return berth
-            ? NSRect(x: Self.miniPad + step, y: Self.miniPad + Self.miniBarSpan,
+            ? NSRect(x: lead + step, y: Self.miniPad + Self.miniBarSpan,
                      width: Self.sq, height: Self.sq)
             : NSRect(x: Self.miniPad + Self.miniBarSpan, y: Self.miniPad + step,
                      width: Self.sq, height: Self.sq)
@@ -625,7 +652,7 @@ final class AgentPadView: NSView {
             let n = CGFloat(max(sessions.count, 1))
             let run = n * Self.sq + (n - 1) * Self.sqGap
             return berth
-                ? NSSize(width: Self.miniPad * 2 + run,
+                ? NSSize(width: max(Self.miniPad * 2 + run, shellWidth),
                          height: Self.miniPad * 2 + Self.miniBarSpan + Self.sq)
                 : NSSize(width: Self.miniPad * 2 + Self.miniBarSpan + Self.sq,
                          height: Self.miniPad * 2 + run)
@@ -638,21 +665,29 @@ final class AgentPadView: NSView {
     }
 
 
-    /// A collapsed pad parked on a berth sits INSIDE the menu bar, so it dresses
-    /// like the bar instead of like a floating panel: the bar's light/dark comes
-    /// from the SYSTEM (and the wallpaper behind it), never from this app's own
-    /// Dark/Lite setting — a Lite pad in a Dark bar is a white brick — and its
-    /// plate goes translucent so the bar reads through it. `render` drops the
-    /// window shadow to match.
-    var inBar: Bool { berth && mini }
-    private var onDark: Bool {
-        inBar ? NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua : dark
+
+    /// Parked on a notch berth, the pad wears the housing's own silhouette and
+    /// colour: square against the top edge of the screen, rounded below, in
+    /// black. The app's Dark/Lite setting does not enter into it — the camera
+    /// housing is black on every Mac in every appearance, and matching it is
+    /// what makes the pad read as the notch having grown rather than as a panel
+    /// that happens to be parked nearby.
+    private var shellRadius: CGFloat { mini ? 12 : 18 }
+
+    /// Overshooting the top edge by the corner radius leaves ONLY the bottom
+    /// corners rounded — the top butts flush against the screen edge.
+    private func shellClip() -> NSBezierPath {
+        NSBezierPath(roundedRect: NSRect(x: 0, y: -shellRadius, width: bounds.width,
+                                         height: bounds.height + shellRadius),
+                     xRadius: shellRadius, yRadius: shellRadius)
     }
 
+    private var onDark: Bool { berth ? true : dark }
+
     private var bg: NSColor {
-        (onDark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1)
-                : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 1))
-            .withAlphaComponent(inBar ? 0.55 : 0.98)
+        if berth { return NSColor(white: 0.04, alpha: 0.97) }
+        return dark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 0.98)
+                    : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 0.98)
     }
     private var fg: NSColor { onDark ? .white : .black }
     private var dim: NSColor { (onDark ? NSColor.white : .black).withAlphaComponent(0.5) }
@@ -774,7 +809,8 @@ final class AgentPadView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSBezierPath(roundedRect: bounds, xRadius: mini ? 9 : 14, yRadius: mini ? 9 : 14).setClip()
+        (berth ? shellClip()
+               : NSBezierPath(roundedRect: bounds, xRadius: mini ? 9 : 14, yRadius: mini ? 9 : 14)).setClip()
         bg.setFill()
         bounds.fill()
 

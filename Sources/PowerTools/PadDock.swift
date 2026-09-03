@@ -18,6 +18,10 @@ enum PadDock: String, CaseIterable, Codable {
     /// the notch leaves behind.
     var isNotch: Bool { self == .notchLeft || self == .notchRight || self == .notchBelow }
 
+    /// The shelf sits centred ON the housing rather than beside it, so it pads
+    /// out to `Field.shellWidth` and the notch disappears into the pad.
+    var absorbsNotch: Bool { self == .notchBelow }
+
     /// The screen geometry anchors resolve against. The eight edge anchors sit
     /// inside the working area; the notch berths hug the camera housing, which
     /// lives ABOVE it in the menu-bar strip — so visibleFrame alone can't
@@ -54,6 +58,11 @@ enum PadDock: String, CaseIterable, Codable {
 
         var hasNotch: Bool { notch.width > 0 }
 
+        /// What a pad on the SHELF berth has to span to swallow the housing and
+        /// read as one piece with it — the notch plus a shoulder either side.
+        /// Narrower than this and it looks like a tab stuck under the notch.
+        var shellWidth: CGFloat { notch.width + PadDock.margin * 4 }
+
         /// visibleFrame plus the menu-bar strip — every point an anchor can put
         /// a pad, and therefore the canvas the drag overlay has to cover.
         var canvas: NSRect {
@@ -82,13 +91,11 @@ enum PadDock: String, CaseIterable, Codable {
         case .topLeft, .topMid, .topRight: y = vf.maxY - m - size.height
         case .midLeft, .midRight: y = vf.midY - size.height / 2
         case .bottomLeft, .bottomMid, .bottomRight: y = vf.minY + m
-        // Shoulders: centred in the menu-bar row when the pad is short enough to
-        // live there, otherwise flush with the top of the screen and hanging
-        // down (a full-size pad can't fit in 38pt).
-        case .notchLeft, .notchRight:
-            y = size.height <= notch.height ? notch.midY - size.height / 2 : notch.maxY - size.height
-        // Shelf: immediately under the housing.
-        case .notchBelow: y = notch.minY - size.height
+        // All three berths HANG FROM THE TOP EDGE of the screen. That flush top
+        // is the whole trick: square against the screen edge, rounded below, in
+        // the housing's own black, the pad stops reading as a panel parked near
+        // the notch and starts reading as the notch itself having grown.
+        case .notchLeft, .notchRight, .notchBelow: y = notch.maxY - size.height
         }
         return NSPoint(x: x, y: y)
     }

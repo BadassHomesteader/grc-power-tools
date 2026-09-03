@@ -242,25 +242,42 @@ final class MacroPad {
         // configure() and forces the next scan to re-OCR.
         let hits = preservingHighlights ? view.suggested : []
         if !preservingHighlights { lastCapture = nil }
+        // Only the SHELF berth swallows the housing; the shoulders keep their
+        // natural width. The screen is the controller's to know, not the view's.
+        let shellWidth: CGFloat = dockAnchor?.absorbsNotch == true
+            ? PadDock.Field(screen: screen ?? panel.screen ?? NSScreen.main ?? NSScreen.screens[0]).shellWidth
+            : 0
         var current: Config.MacroProfile?
         if let id = currentBundleID { current = profile(for: id) }
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
                        buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName,
                        mini: miniActive, peeking: miniPreferred && !miniActive,
-                       berth: dockAnchor?.isNotch == true)
+                       berth: dockAnchor?.isNotch == true, shellWidth: shellWidth)
         view.suggested = hits
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
         // A panel shadow over the menu bar is the loudest tell that this is a
         // floating window rather than a bar item.
-        panel.hasShadow = !view.inBar
+        panel.hasShadow = !view.berth
 
         // Docked: pin to the anchor for whatever size this render came out at,
         // so the mini strip parks in the same corner as the full pad.
         if let dockAnchor, let padScreen = screen ?? panel.screen ?? NSScreen.main {
             savedTopLeft = nil
             let origin = dockAnchor.origin(for: size, in: PadDock.Field(screen: padScreen))
-            panel.setFrame(NSRect(origin: origin, size: size), display: true)
+            let target = NSRect(origin: origin, size: size)
+            // Berthed: grow and shrink OUT OF the notch instead of cutting to
+            // the new size. The top edge is pinned to the screen, so animating
+            // the frame reads as the housing itself opening and closing.
+            if dockAnchor.isNotch, panel.isVisible, panel.frame.size != size {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.22
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    panel.animator().setFrame(target, display: true)
+                }
+            } else {
+                panel.setFrame(target, display: true)
+            }
             refreshSuggestions()
             notifyState()
             return
@@ -452,9 +469,13 @@ final class MacroPadView: NSView {
     private var dark: Bool
     private var mini = false
     /// Parked on a notch berth: the strip lies down into a row (a column would
-    /// drape off the menu bar and down the screen) and, collapsed, dresses like
-    /// the menu bar rather than like a floating panel — see `inBar`.
-    private var berth = false
+    /// drape off the menu bar and down the screen) and the pad takes on the
+    /// housing's silhouette and black — see `shellClip`.
+    private(set) var berth = false
+    /// On the SHELF berth the pad pads out to at least this wide so the
+    /// housing disappears into it; 0 elsewhere. Set by the controller,
+    /// which is the side that knows the screen.
+    private var shellWidth: CGFloat = 0
     private var peeking = false   // hover-expanded from the strip; – becomes □
     private var hotkeyName = ""
     private var hovered: Int?
@@ -478,12 +499,13 @@ final class MacroPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(appName: String, buttons: [Config.MacroButton], dark: Bool, hotkeyName: String = "",
-                   mini: Bool = false, peeking: Bool = false, berth: Bool = false) {
+                   mini: Bool = false, peeking: Bool = false, berth: Bool = false, shellWidth: CGFloat = 0) {
         self.appName = appName
         self.buttons = buttons
         self.dark = dark
         self.mini = mini
         self.berth = berth
+        self.shellWidth = shellWidth
         self.peeking = peeking
         self.hotkeyName = hotkeyName
         hovered = nil
@@ -502,7 +524,7 @@ final class MacroPadView: NSView {
             let n = CGFloat(max(buttons.count, 1))
             let run = n * Self.sq + (n - 1) * Self.sqGap
             return berth
-                ? NSSize(width: Self.miniPad * 2 + run, height: Self.miniPad * 2 + Self.sq)
+                ? NSSize(width: max(Self.miniPad * 2 + run, shellWidth), height: Self.miniPad * 2 + Self.sq)
                 : NSSize(width: Self.miniPad * 2 + Self.sq, height: Self.miniPad * 2 + run)
         }
         let content = buttons.isEmpty
@@ -512,22 +534,30 @@ final class MacroPadView: NSView {
     }
 
 
-    /// A collapsed pad parked on a berth sits INSIDE the menu bar, so it dresses
-    /// like the bar instead of like a floating panel: the bar's light/dark comes
-    /// from the SYSTEM (and the wallpaper behind it), never from this app's own
-    /// Dark/Lite setting — a Lite pad in a Dark bar is a white brick — and its
-    /// plate goes translucent so the bar reads through it. `render` drops the
-    /// window shadow to match.
-    var inBar: Bool { berth && mini }
-    private var onDark: Bool {
-        inBar ? NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua : dark
+
+    /// Parked on a notch berth, the pad wears the housing's own silhouette and
+    /// colour: square against the top edge of the screen, rounded below, in
+    /// black. The app's Dark/Lite setting does not enter into it — the camera
+    /// housing is black on every Mac in every appearance, and matching it is
+    /// what makes the pad read as the notch having grown rather than as a panel
+    /// that happens to be parked nearby.
+    private var shellRadius: CGFloat { mini ? 12 : 18 }
+
+    /// Overshooting the top edge by the corner radius leaves ONLY the bottom
+    /// corners rounded — the top butts flush against the screen edge.
+    private func shellClip() -> NSBezierPath {
+        NSBezierPath(roundedRect: NSRect(x: 0, y: -shellRadius, width: bounds.width,
+                                         height: bounds.height + shellRadius),
+                     xRadius: shellRadius, yRadius: shellRadius)
     }
+
+    private var onDark: Bool { berth ? true : dark }
 
     // Same palette as the other panels so everything feels like one system.
     private var bg: NSColor {
-        (onDark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 1)
-                : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 1))
-            .withAlphaComponent(inBar ? 0.55 : 0.98)
+        if berth { return NSColor(white: 0.04, alpha: 0.97) }
+        return dark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 0.98)
+                    : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 0.98)
     }
     private var fg: NSColor { onDark ? .white : .black }
     private var dim: NSColor { (dark ? NSColor.white : .black).withAlphaComponent(0.5) }
@@ -543,7 +573,8 @@ final class MacroPadView: NSView {
     private var minimizeRect: NSRect { NSRect(x: Self.width - Self.pad - 62, y: Self.pad + 2, width: 18, height: 18) }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSBezierPath(roundedRect: bounds, xRadius: mini ? 9 : 14, yRadius: mini ? 9 : 14).setClip()
+        (berth ? shellClip()
+               : NSBezierPath(roundedRect: bounds, xRadius: mini ? 9 : 14, yRadius: mini ? 9 : 14)).setClip()
         bg.setFill()
         bounds.fill()
 
@@ -560,7 +591,11 @@ final class MacroPadView: NSView {
             }
             for i in buttons.indices {
                 let step = CGFloat(i) * (Self.sq + Self.sqGap)
-                let r = NSRect(x: Self.miniPad + (berth ? step : 0),
+                // Centred in the shell: on the shelf the pill is padded out to
+                // swallow the notch, so the lights belong in the middle of it.
+                let run = CGFloat(buttons.count) * Self.sq + CGFloat(buttons.count - 1) * Self.sqGap
+                let lead = berth ? max((bounds.width - run) / 2, Self.miniPad) : Self.miniPad
+                let r = NSRect(x: berth ? lead + step : Self.miniPad,
                                y: Self.miniPad + (berth ? 0 : step),
                                width: Self.sq, height: Self.sq)
                 let path = NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4)
@@ -571,7 +606,7 @@ final class MacroPadView: NSView {
                 } else {
                     // In the bar there's no plate to read the empty slots
                     // against, so they carry their own contrast.
-                    (onDark ? NSColor.white : .black).withAlphaComponent(inBar ? 0.28 : 0.12).setFill()
+                    (onDark ? NSColor.white : .black).withAlphaComponent(berth ? 0.22 : 0.12).setFill()
                 }
                 path.fill()
                 if suggested.contains(i) {
