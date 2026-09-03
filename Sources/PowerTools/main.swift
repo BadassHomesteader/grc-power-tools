@@ -615,7 +615,8 @@ case "macropad-live-test":
                                                    windowNumber: panel.windowNumber, context: nil,
                                                    eventNumber: 0, clickCount: 1, pressure: 1)!)
         pump(0.1)
-        let overlayUp = app.windows.contains { $0.ignoresMouseEvents && $0.frame == vf }
+        let canvas = PadDock.Field(screen: screen).canvas
+        let overlayUp = app.windows.contains { $0.ignoresMouseEvents && $0.frame == canvas }
         print("14 mid-drag: overlay \(overlayUp ? "VISIBLE" : "MISSING (expected VISIBLE)")")
         view.mouseUp(with: NSEvent.mouseEvent(with: .leftMouseUp, location: dragLoc,
                                               modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -623,11 +624,40 @@ case "macropad-live-test":
                                               eventNumber: 0, clickCount: 1, pressure: 1)!)
         pump()
         report("15 dropped near midLeft via real drag path (expect snap to x=12)")
-        let overlayGone = !app.windows.contains { $0.ignoresMouseEvents && $0.frame == vf && $0.isVisible }
+        let overlayGone = !app.windows.contains { $0.ignoresMouseEvents && $0.frame == canvas && $0.isVisible }
         print("16 after drop: overlay \(overlayGone ? "hidden" : "STILL UP (expected hidden)")")
 
-        // 17: restart simulation — a FRESH MacroPad instance must restore the
-        // left dock from pad-placement.json.
+        // 17-19: the three notch berths — drop a pad just off each side of the
+        // camera housing and just under it; a full pad hangs from the top of the
+        // SCREEN (above visibleFrame, over the menu bar).
+        let field = PadDock.Field(screen: screen)
+        print("   screen frame=\(screen.frame) visible=\(vf) notch=\(field.notch) hasNotch=\(field.hasNotch)")
+        print("   anchors offered: \(PadDock.anchors(in: field).map(\.rawValue).joined(separator: ", "))")
+        for (tag, anchor) in [("17 drop beside notch (left)", PadDock.notchLeft),
+                              ("18 drop beside notch (right)", PadDock.notchRight),
+                              ("19 drop below notch", PadDock.notchBelow)] {
+            size = panel.frame.size   // still pinned full from step 14
+            let want = anchor.origin(for: size, in: field)
+            panel.setFrame(NSRect(origin: NSPoint(x: want.x + 20, y: want.y - 20), size: size), display: true)
+            pad.snapAfterDrag(); pump()
+            report(tag)
+            print("   expected origin=(\(Int(want.x)),\(Int(want.y))) top edge \(Int(want.y + size.height)) (screen top \(Int(screen.frame.maxY)), menu bar \(Int(field.notch.minY))…\(Int(field.notch.maxY)))")
+        }
+
+        // 20: minimized on a berth, the strip must lie DOWN — a row of lights
+        // inside the menu-bar band, not a column draped over the window below.
+        size = panel.frame.size
+        let berth = PadDock.notchRight.origin(for: size, in: field)
+        panel.setFrame(NSRect(origin: berth, size: size), display: true)
+        pad.snapAfterDrag(); pump()
+        clickMinimize()
+        report("20 minimized on the right berth")
+        let strip = panel.frame
+        print("   horizontal: \(strip.width > strip.height ? "YES" : "NO (expected YES)")  " +
+              "inside the menu bar band: \(strip.minY >= field.notch.minY && strip.maxY <= field.notch.maxY ? "YES" : "NO (expected YES)")")
+
+        // 21: restart simulation — a FRESH MacroPad instance must restore the
+        // dock from pad-placement.json.
         pad.dismiss(); pump()
         let pad2 = MacroPad()
         pad2.present(profiles: [profile], dark: true, screen: screen, hotkeyName: "test",
@@ -637,9 +667,9 @@ case "macropad-live-test":
             .first(where: { $0.contentView is MacroPadView && $0.isVisible }) {
             let f = panel2.frame
             let side = f.midX < vf.midX ? "LEFT" : "RIGHT"
-            print("17 fresh instance after restart: origin=(\(Int(f.minX)),\(Int(f.minY))) \(side) (expect LEFT dock x=12)")
+            print("21 fresh instance after restart: origin=(\(Int(f.minX)),\(Int(f.minY))) \(side) (expect the notchRight berth from step 20)")
         } else {
-            print("17 fresh instance: NO PANEL")
+            print("21 fresh instance: NO PANEL")
         }
         pad2.dismiss()
         finish(0)
@@ -684,10 +714,11 @@ case "dockoverlay-preview":
     let out = args.count >= 2 ? args[1] : "dockoverlay-preview.png"
     let dark = !args.contains("light")
     MainActor.assumeIsolated {
-        let vf = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let field = PadDock.Field(visible: NSRect(x: 0, y: 0, width: 1440, height: 862),
+                                  notch: NSRect(x: 610, y: 862, width: 220, height: 38))
         let v = PadDockOverlayView()
-        v.frame = vf
-        v.configure(vf: vf, padFrame: NSRect(x: 30, y: 320, width: 220, height: 202), dark: dark)
+        v.frame = field.canvas
+        v.configure(field: field, padFrame: NSRect(x: 30, y: 320, width: 220, height: 202), dark: dark)
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
         v.cacheDisplay(in: v.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {

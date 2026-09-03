@@ -132,10 +132,14 @@ final class MacroPad {
     /// Internal (not private) so the macropad-live-test harness can invoke it
     /// without a real mouse drag.
     func snapAfterDrag() {
-        guard let panel, let vf = (panel.screen ?? NSScreen.main)?.visibleFrame else { return }
-        if let hit = PadDock.nearest(to: panel.frame.origin, size: panel.frame.size, in: vf) {
+        guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
+        let field = PadDock.Field(screen: screen)
+        if let hit = PadDock.nearest(to: panel.frame.origin, size: panel.frame.size, in: field) {
             dockAnchor = hit.anchor
             panel.setFrame(NSRect(origin: hit.origin, size: panel.frame.size), display: true, animate: true)
+            // A notch berth flips the mini strip horizontal, so re-render at the
+            // new size and let the anchor re-place it.
+            render(preservingHighlights: true)
         } else {
             dockAnchor = nil
         }
@@ -242,16 +246,18 @@ final class MacroPad {
         if let id = currentBundleID { current = profile(for: id) }
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
                        buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName,
-                       mini: miniActive, peeking: miniPreferred && !miniActive)
+                       mini: miniActive, peeking: miniPreferred && !miniActive,
+                       miniHorizontal: dockAnchor?.isNotch == true)
         view.suggested = hits
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
 
         // Docked: pin to the anchor for whatever size this render came out at,
         // so the mini strip parks in the same corner as the full pad.
-        if let dockAnchor, let vf = (screen ?? panel.screen ?? NSScreen.main)?.visibleFrame {
+        if let dockAnchor, let padScreen = screen ?? panel.screen ?? NSScreen.main {
             savedTopLeft = nil
-            panel.setFrame(NSRect(origin: dockAnchor.origin(for: size, in: vf), size: size), display: true)
+            let origin = dockAnchor.origin(for: size, in: PadDock.Field(screen: padScreen))
+            panel.setFrame(NSRect(origin: origin, size: size), display: true)
             refreshSuggestions()
             notifyState()
             return
@@ -442,6 +448,9 @@ final class MacroPadView: NSView {
     private var buttons: [Config.MacroButton] = []
     private var dark: Bool
     private var mini = false
+    /// Notch berths park the strip in the menu-bar band, where a column of
+    /// lights would drape down the screen — so there the lights run in a row.
+    private var miniHorizontal = false
     private var peeking = false   // hover-expanded from the strip; – becomes □
     private var hotkeyName = ""
     private var hovered: Int?
@@ -465,11 +474,12 @@ final class MacroPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(appName: String, buttons: [Config.MacroButton], dark: Bool, hotkeyName: String = "",
-                   mini: Bool = false, peeking: Bool = false) {
+                   mini: Bool = false, peeking: Bool = false, miniHorizontal: Bool = false) {
         self.appName = appName
         self.buttons = buttons
         self.dark = dark
         self.mini = mini
+        self.miniHorizontal = miniHorizontal
         self.peeking = peeking
         self.hotkeyName = hotkeyName
         hovered = nil
@@ -486,8 +496,10 @@ final class MacroPadView: NSView {
     override var fittingSize: NSSize {
         if mini {
             let n = CGFloat(max(buttons.count, 1))
-            return NSSize(width: Self.miniPad * 2 + Self.sq,
-                          height: Self.miniPad * 2 + n * Self.sq + (n - 1) * Self.sqGap)
+            let run = n * Self.sq + (n - 1) * Self.sqGap
+            return miniHorizontal
+                ? NSSize(width: Self.miniPad * 2 + run, height: Self.miniPad * 2 + Self.sq)
+                : NSSize(width: Self.miniPad * 2 + Self.sq, height: Self.miniPad * 2 + run)
         }
         let content = buttons.isEmpty
             ? Self.emptyH
@@ -515,8 +527,8 @@ final class MacroPadView: NSView {
         bg.setFill()
         bounds.fill()
 
-        // Traffic lights: one square per macro, stacked in button order (same
-        // vertical axis as the full pad's buttons); a square lights up when its
+        // Traffic lights: one square per macro in button order — a column on the
+        // edge anchors, a row on the notch berths; a square lights up when its
         // keywords are on screen, so the collapsed strip still signals a match.
         if mini {
             if buttons.isEmpty {
@@ -527,7 +539,9 @@ final class MacroPadView: NSView {
                 return
             }
             for i in buttons.indices {
-                let r = NSRect(x: Self.miniPad, y: Self.miniPad + CGFloat(i) * (Self.sq + Self.sqGap),
+                let step = CGFloat(i) * (Self.sq + Self.sqGap)
+                let r = NSRect(x: Self.miniPad + (miniHorizontal ? step : 0),
+                               y: Self.miniPad + (miniHorizontal ? 0 : step),
                                width: Self.sq, height: Self.sq)
                 let path = NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4)
                 if i == pressed {

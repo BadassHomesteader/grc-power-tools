@@ -47,10 +47,14 @@ final class AgentPad: NSObject {
     /// After a drag: snap to the nearest anchor when dropped close enough,
     /// otherwise stay free-floating; either way the placement is persisted.
     private func snapAfterDrag() {
-        guard let panel, let vf = (panel.screen ?? NSScreen.main)?.visibleFrame else { return }
-        if let hit = PadDock.nearest(to: panel.frame.origin, size: panel.frame.size, in: vf) {
+        guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
+        let field = PadDock.Field(screen: screen)
+        if let hit = PadDock.nearest(to: panel.frame.origin, size: panel.frame.size, in: field) {
             dockAnchor = hit.anchor
             panel.setFrame(NSRect(origin: hit.origin, size: panel.frame.size), display: true, animate: true)
+            // A notch berth flips the mini strip horizontal, so re-render at the
+            // new size and let the anchor re-place it.
+            render()
         } else {
             dockAnchor = nil
         }
@@ -437,15 +441,17 @@ final class AgentPad: NSObject {
         guard let panel, let view = padView else { return }
         view.configure(sessions: sessions, dark: dark, hotkeyName: hotkeyName,
                        hooksInstalled: hooksInstalled, mini: miniActive,
-                       peeking: miniPreferred && !miniActive && !maxedForPermission)
+                       peeking: miniPreferred && !miniActive && !maxedForPermission,
+                       miniHorizontal: dockAnchor?.isNotch == true)
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
 
         // Docked: pin to the anchor for whatever size this render came out at,
         // so the mini strip parks in the same corner as the full pad.
-        if let dockAnchor, let vf = (screen ?? panel.screen ?? NSScreen.main)?.visibleFrame {
+        if let dockAnchor, let padScreen = screen ?? panel.screen ?? NSScreen.main {
             savedTopLeft = nil
-            panel.setFrame(NSRect(origin: dockAnchor.origin(for: size, in: vf), size: size), display: true)
+            let origin = dockAnchor.origin(for: size, in: PadDock.Field(screen: padScreen))
+            panel.setFrame(NSRect(origin: origin, size: size), display: true)
             return
         }
 
@@ -545,10 +551,11 @@ final class AgentPadView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(sessions: [ClaudeSession], dark: Bool, hotkeyName: String, hooksInstalled: Bool,
-                   mini: Bool = false, peeking: Bool = false) {
+                   mini: Bool = false, peeking: Bool = false, miniHorizontal: Bool = false) {
         self.sessions = sessions
         self.dark = dark
         self.mini = mini
+        self.miniHorizontal = miniHorizontal
         self.peeking = peeking
         self.hotkeyName = hotkeyName
         self.hooksInstalled = hooksInstalled
@@ -562,14 +569,33 @@ final class AgentPadView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    /// Mini strip: agent identity bar (3px) + gap beside each status square.
+    /// Mini strip: agent identity bar (3px) + gap beside each status square
+    /// (above it, when a notch berth turns the strip on its side).
     private static let miniBarSpan: CGFloat = 6
+    /// Notch berths park the strip in the menu-bar band, where a column of
+    /// lights would drape down the screen — so there the lights run in a row.
+    private var miniHorizontal = false
+
+    /// The status square for light `i` — the strip runs down on the edge
+    /// anchors and across on the notch berths, identity bar on the near side.
+    private func miniLight(_ i: Int) -> NSRect {
+        let step = CGFloat(i) * (Self.sq + Self.sqGap)
+        return miniHorizontal
+            ? NSRect(x: Self.miniPad + step, y: Self.miniPad + Self.miniBarSpan,
+                     width: Self.sq, height: Self.sq)
+            : NSRect(x: Self.miniPad + Self.miniBarSpan, y: Self.miniPad + step,
+                     width: Self.sq, height: Self.sq)
+    }
 
     override var fittingSize: NSSize {
         if mini {
             let n = CGFloat(max(sessions.count, 1))
-            return NSSize(width: Self.miniPad * 2 + Self.miniBarSpan + Self.sq,
-                          height: Self.miniPad * 2 + n * Self.sq + (n - 1) * Self.sqGap)
+            let run = n * Self.sq + (n - 1) * Self.sqGap
+            return miniHorizontal
+                ? NSSize(width: Self.miniPad * 2 + run,
+                         height: Self.miniPad * 2 + Self.miniBarSpan + Self.sq)
+                : NSSize(width: Self.miniPad * 2 + Self.miniBarSpan + Self.sq,
+                         height: Self.miniPad * 2 + run)
         }
         let content = sessions.isEmpty
             ? Self.emptyH
@@ -663,27 +689,26 @@ final class AgentPadView: NSView {
         bg.setFill()
         bounds.fill()
 
-        // Traffic lights: one status square per session, stacked vertically in
-        // the same triage order as the rows (most urgent on top), so each
-        // light sits where its row lands when hover expands the full pad.
+        // Traffic lights: one status square per session in the same triage order
+        // as the rows (most urgent first) — a column on the edge anchors, a row
+        // on the notch berths.
         if mini {
             if sessions.isEmpty {
                 dim.withAlphaComponent(0.3).setFill()
-                NSBezierPath(roundedRect: NSRect(x: Self.miniPad + Self.miniBarSpan, y: Self.miniPad,
-                                                 width: Self.sq, height: Self.sq),
-                             xRadius: 4, yRadius: 4).fill()
+                NSBezierPath(roundedRect: miniLight(0), xRadius: 4, yRadius: 4).fill()
                 return
             }
             for (i, session) in sessions.enumerated() {
-                let y = Self.miniPad + CGFloat(i) * (Self.sq + Self.sqGap)
                 let stale = session.state == .idle
                     && session.stateChanged.timeIntervalSinceNow < -3600
-                // Same identity bar as the full rows, scaled to the square.
+                let r = miniLight(i)
+                // Same identity bar as the full rows, scaled to the square —
+                // beside it in a column, over it in a row.
                 Self.agentColor(session).withAlphaComponent(stale ? 0.35 : 1).setFill()
-                NSBezierPath(roundedRect: NSRect(x: Self.miniPad, y: y + 1, width: 3, height: Self.sq - 2),
-                             xRadius: 1.5, yRadius: 1.5).fill()
-                let r = NSRect(x: Self.miniPad + Self.miniBarSpan, y: y,
-                               width: Self.sq, height: Self.sq)
+                let bar = miniHorizontal
+                    ? NSRect(x: r.minX + 1, y: Self.miniPad, width: Self.sq - 2, height: 3)
+                    : NSRect(x: Self.miniPad, y: r.minY + 1, width: 3, height: Self.sq - 2)
+                NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
                 Self.stateColor(session.state).withAlphaComponent(stale ? 0.35 : 0.9).setFill()
                 let path = NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4)
                 path.fill()
