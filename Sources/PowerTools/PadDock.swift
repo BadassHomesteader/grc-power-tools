@@ -95,13 +95,13 @@ enum PadDock: String, CaseIterable, Codable {
         return NSPoint(x: x, y: y)
     }
 
-    /// The anchors on offer for `field`. The top-centre slot is EITHER the notch
-    /// shelf or plain topMid, never both: their origins sit ~12pt apart, so
-    /// offering the pair would make every drop near the top centre a coin flip.
-    /// A display with no housing keeps topMid and drops the notch berths, which
-    /// would otherwise pile up three-deep on the same centre line.
+    /// The anchors a pad may be dropped on. The notch is no longer one of them:
+    /// `NotchStrip` is the single citizen of the housing now, so a pad parking
+    /// there would sit on top of it. The berth cases survive in the enum for two
+    /// reasons — `PadPlacement` has to keep decoding saved files that name them
+    /// (see `migrateNotchAnchors`), and `notchBelow` still places the strip.
     static func anchors(in field: Field) -> [PadDock] {
-        allCases.filter { field.hasNotch ? $0 != .topMid : !$0.isNotch }
+        allCases.filter { !$0.isNotch }
     }
 
     /// The anchor nearest to a panel dropped at `origin`, or nil when none is
@@ -151,6 +151,38 @@ struct PadPlacement: Codable {
         all[key] = PadPlacement(anchor: anchor, x: topLeft?.x, y: topLeft?.y, mini: mini,
                                 open: open, seen: seen)
         if let data = try? JSONEncoder().encode(all) { try? data.write(to: url, options: .atomic) }
+    }
+
+    /// Move pads off the retired notch berths onto the nearest ordinary anchor.
+    ///
+    /// Run once, guarded by `Config.notchStripMigrated`. Note the shape of the
+    /// hazard this avoids: `load` decodes the WHOLE dictionary in one go, so if
+    /// the berth cases were simply deleted from the enum, a saved file naming
+    /// one would throw and BOTH pads would lose their placement — not just the
+    /// berthed one. Keeping the cases and rewriting the file is the safe order.
+    ///
+    /// Returns the pad keys that were sitting in the notch, so the caller can
+    /// switch on the matching strip sources: what was in the notch stays in the
+    /// notch, just as a published mark rather than a pad.
+    @discardableResult
+    static func migrateNotchAnchors() -> Set<String> {
+        guard let data = try? Data(contentsOf: url),
+              var all = try? JSONDecoder().decode([String: PadPlacement].self, from: data)
+        else { return [] }
+        var moved: Set<String> = []
+        for (key, var placement) in all {
+            guard let anchor = placement.anchor, anchor.isNotch else { continue }
+            switch anchor {
+            case .notchLeft: placement.anchor = .topLeft
+            case .notchRight: placement.anchor = .topRight
+            default: placement.anchor = .topMid
+            }
+            all[key] = placement   // mini/open/seen/x/y ride along untouched
+            moved.insert(key)
+        }
+        guard !moved.isEmpty else { return [] }
+        if let out = try? JSONEncoder().encode(all) { try? out.write(to: url, options: .atomic) }
+        return moved
     }
 }
 
@@ -214,9 +246,8 @@ final class PadDockOverlayView: NSView {
         let active = PadDock.nearest(to: padFrame.origin, size: padFrame.size, in: field)?.anchor
         let accent = NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1)
         let base = dark ? NSColor.white : NSColor.black
+        let markerSize = NSSize(width: 34, height: 34)
         for anchor in PadDock.anchors(in: field) {
-            // Notch berths take a horizontal strip, so their marker is one.
-            let markerSize = anchor.isNotch ? NSSize(width: 46, height: 22) : NSSize(width: 34, height: 34)
             let o = anchor.origin(for: markerSize, in: field)
             let r = NSRect(origin: NSPoint(x: o.x - canvas.minX, y: o.y - canvas.minY), size: markerSize)
             let path = NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8)

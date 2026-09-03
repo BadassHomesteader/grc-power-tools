@@ -90,6 +90,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     // Agent Pad
     private let agentPadCheck = NSButton(checkboxWithTitle: "Agent Pad — floating agent-session panel (hold hotkey + J, or menu bar)", target: nil, action: nil)
+    private let notchStripCheck = NSButton(checkboxWithTitle: "Notch strip — a live glance in the camera housing", target: nil, action: nil)
+    private let notchAgentsCheck = NSButton(checkboxWithTitle: "Agent sessions — one dot each, and a banner when one needs an answer", target: nil, action: nil)
+    private let notchQuotaCheck = NSButton(checkboxWithTitle: "Quota — a dot once a usage window is running low", target: nil, action: nil)
     private let agentCodexCheck = NSButton(checkboxWithTitle: "Watch Codex — ChatGPT/Codex threads as rows (watch-only, click to focus)", target: nil, action: nil)
     private let agentCursorCheck = NSButton(checkboxWithTitle: "Watch Cursor — cloud agents + Agents Window sessions (watch-only)", target: nil, action: nil)
     private let hooksStatus = NSTextField(labelWithString: " ")
@@ -191,6 +194,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         powerRingCheck.action = #selector(powerRingToggled)
         agentPadCheck.target = self
         agentPadCheck.action = #selector(agentPadToggled)
+        for (box, sel) in [(notchStripCheck, #selector(notchStripToggled)),
+                           (notchAgentsCheck, #selector(notchAgentsToggled)),
+                           (notchQuotaCheck, #selector(notchQuotaToggled))] {
+            box.target = self
+            box.action = sel
+        }
         agentCodexCheck.target = self
         agentCodexCheck.action = #selector(agentCodexToggled)
         agentCursorCheck.target = self
@@ -242,6 +251,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             ("Keys", "keyboard", keysTab),
             ("Macro Pad", "square.grid.2x2", macroPadTab),
             ("Agent Pad", "terminal", agentPadTab),
+            ("Notch", "menubar.rectangle", notchTab),
             ("Connections", "link", connectionsTab),
             ("Permissions", "checkmark.shield", permissionsTab),
         ]
@@ -1079,6 +1089,43 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         ])
     }
 
+    private func notchTab() -> NSView {
+        let note = NSTextField(wrappingLabelWithString:
+            "One surface lives in the notch, and features publish into it. It draws nothing "
+            + "when there is nothing to say, so a quiet machine shows an empty menu bar. "
+            + "Hover a dot for detail; click it to open the full pad.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.preferredMaxLayoutWidth = 500
+        let quotaNote = NSTextField(wrappingLabelWithString:
+            "Quota stays silent until a window passes \(config.notchQuotaAt)% used.")
+        quotaNote.font = .systemFont(ofSize: 11)
+        quotaNote.textColor = .secondaryLabelColor
+        quotaNote.preferredMaxLayoutWidth = 500
+        return vstack([
+            section("Notch strip", [notchStripCheck, note], width: 540),
+            section("What it shows", [notchAgentsCheck, notchQuotaCheck, quotaNote], width: 540),
+        ])
+    }
+
+    @objc private func notchStripToggled() {
+        config.notchStrip = (notchStripCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func notchAgentsToggled() {
+        config.notchAgents = (notchAgentsCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func notchQuotaToggled() {
+        config.notchQuota = (notchQuotaCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
     private func refreshHooksStatus() {
         hooksStatus.stringValue = ClaudeHooksInstaller.isInstalled()
             ? "Hooks installed ✓ — sessions report live on port \(config.agentPadPort)."
@@ -1234,6 +1281,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroPadCheck.state = config.macroPad ? .on : .off
         macroSummonCheck.state = config.macroPadThreeFingerTap ? .on : .off
         agentPadCheck.state = config.agentPad ? .on : .off
+        notchStripCheck.state = config.notchStrip ? .on : .off
+        notchAgentsCheck.state = config.notchAgents ? .on : .off
+        notchQuotaCheck.state = config.notchQuota ? .on : .off
         agentCodexCheck.state = config.agentPadCodex ? .on : .off
         agentCursorCheck.state = config.agentPadCursor ? .on : .off
         refreshHooksStatus()

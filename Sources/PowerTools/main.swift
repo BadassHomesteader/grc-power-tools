@@ -664,45 +664,46 @@ case "macropad-live-test":
         let overlayGone = !app.windows.contains { $0.ignoresMouseEvents && $0.frame == canvas && $0.isVisible }
         print("16 after drop: overlay \(overlayGone ? "hidden" : "STILL UP (expected hidden)")")
 
-        // 17-19: the three notch berths — drop a pad just off each side of the
-        // camera housing and just under it; a full pad hangs from the top of the
-        // SCREEN (above visibleFrame, over the menu bar).
+        // 17-19: the notch is NOT a pad berth any more — NotchStrip owns the
+        // housing. A pad aimed at each retired berth must land on an ordinary
+        // anchor instead of on top of the strip.
         let field = PadDock.Field(screen: screen)
+        let offered = PadDock.anchors(in: field)
         print("   screen frame=\(screen.frame) visible=\(vf) notch=\(field.notch) hasNotch=\(field.hasNotch)")
-        print("   anchors offered: \(PadDock.anchors(in: field).map(\.rawValue).joined(separator: ", "))")
-        for (tag, anchor) in [("17 drop beside notch (left)", PadDock.notchLeft),
-                              ("18 drop beside notch (right)", PadDock.notchRight),
-                              ("19 drop below notch", PadDock.notchBelow)] {
+        print("   anchors offered: \(offered.map(\.rawValue).joined(separator: ", "))")
+        print("17 no notch anchor is offered: \(offered.contains(where: \.isNotch) ? "FAIL" : "PASS") · " +
+              "topMid restored on a notched display: \(offered.contains(.topMid) ? "PASS" : "FAIL")")
+
+        for (tag, retired) in [("18 aim at the old left shoulder", PadDock.notchLeft),
+                               ("19 aim at the old shelf", PadDock.notchBelow)] {
             size = panel.frame.size   // still pinned full from step 14
-            let aim = anchor.origin(for: size, in: field)
-            panel.setFrame(NSRect(origin: NSPoint(x: aim.x + 20, y: aim.y - 20), size: size), display: true)
-            pad.snapAfterDrag(); pump(0.45)   // outlast the 0.22s grow-out-of-the-notch
+            let aim = retired.origin(for: size, in: field)
+            panel.setFrame(NSRect(origin: aim, size: size), display: true)
+            pad.snapAfterDrag(); pump(0.3)
             report(tag)
-            // The shelf reserves the housing's dead band, so the pad is taller
-            // after the snap than it was when we aimed — judge the landing
-            // against the size it actually ended up at.
-            let landed = panel.frame.size
-            let want = anchor.origin(for: landed, in: field)
-            let ok = abs(panel.frame.minX - want.x) < 1 && abs(panel.frame.minY - want.y) < 1
-            print("   expected origin=(\(Int(want.x)),\(Int(want.y))) for \(Int(landed.width))x\(Int(landed.height)) — \(ok ? "MATCH" : "MISMATCH") · top edge \(Int(want.y + landed.height)) vs screen top \(Int(screen.frame.maxY))")
+            let landed = offered.first { anchor in
+                let o = anchor.origin(for: panel.frame.size, in: field)
+                return abs(panel.frame.minX - o.x) < 1 && abs(panel.frame.minY - o.y) < 1
+            }
+            // Free-floating is a fine outcome too — what must NEVER happen is
+            // the pad coming to rest inside the housing band, where it would
+            // sit on top of the strip.
+            let inBand = panel.frame.maxY > field.notch.minY
+            print("   landed on \(landed?.rawValue ?? "free-float") · clear of the housing band: " +
+                  "\(inBand ? "FAIL" : "PASS")")
         }
 
-        // 20: minimized on a berth, the strip must lie DOWN — a row of lights
-        // inside the menu-bar band, not a column draped over the window below.
-        size = panel.frame.size
-        let berth = PadDock.notchRight.origin(for: size, in: field)
-        panel.setFrame(NSRect(origin: berth, size: size), display: true)
-        pad.snapAfterDrag(); pump(0.45)
-        clickMinimize(); pump(0.45)
-        report("20 minimized on the right berth")
+        // 20: collapsed, the pad is a plain vertical column again — the notch
+        // strip took the horizontal flanking layout with it.
+        clickMinimize(); pump(0.3)
+        report("20 minimized")
         let strip = panel.frame
         let lights = view.buttonCount
-        print("   \(lights) light(s) · horizontal: " +
-              "\(lights < 2 ? "n/a (a single light is square)" : (strip.width > strip.height ? "YES" : "NO (expected YES)"))  " +
-              "inside the menu bar band: \(strip.minY >= field.notch.minY && strip.maxY <= field.notch.maxY ? "YES" : "NO (expected YES)")")
+        print("   \(lights) light(s) · vertical column: " +
+              "\(lights < 2 ? "n/a (a single light is square)" : (strip.height > strip.width ? "PASS" : "FAIL"))")
 
-        // 21: restart simulation — a FRESH MacroPad instance must restore the
-        // dock from pad-placement.json.
+        // 21: restart simulation — a FRESH MacroPad instance restores the dock
+        // from pad-placement.json.
         pad.dismiss(); pump()
         let pad2 = MacroPad()
         pad2.present(profiles: [profile], dark: true, screen: screen, hotkeyName: "test",
@@ -711,8 +712,8 @@ case "macropad-live-test":
         if let panel2 = app.windows.compactMap({ $0 as? NSPanel })
             .first(where: { $0.contentView is MacroPadView && $0.isVisible }) {
             let f = panel2.frame
-            let side = f.midX < vf.midX ? "LEFT" : "RIGHT"
-            print("21 fresh instance after restart: origin=(\(Int(f.minX)),\(Int(f.minY))) \(side) (expect the notchRight berth from step 20)")
+            print("21 fresh instance after restart: origin=(\(Int(f.minX)),\(Int(f.minY))) " +
+                  "clear of the housing band: \(f.maxY > field.notch.minY ? "FAIL" : "PASS")")
         } else {
             print("21 fresh instance: NO PANEL")
         }
@@ -1038,14 +1039,169 @@ case "dockoverlay-preview":
         }
     }
 
+case "notchstrip-live-test":
+    // The notch strip, driven headlessly. The assertion that matters is the
+    // CUTOUT one, and it is deliberately geometric rather than a screenshot:
+    // `screencapture` reads the framebuffer, which faithfully contains the
+    // pixels behind the camera housing that no human can ever see. A
+    // screenshot-based check would pass on precisely the bug it exists to
+    // catch — five marks were once drawn dead centre of the housing and looked
+    // perfect in a capture.
+    MainActor.assumeIsolated {
+        // Shield BOTH state files: this test writes placement and config.
+        let placementURL = Config.appSupportDir.appendingPathComponent("pad-placement.json")
+        let placementBackup = try? Data(contentsOf: placementURL)
+        func finish(_ code: Int32) -> Never {
+            if let placementBackup { try? placementBackup.write(to: placementURL, options: .atomic) }
+            else { try? FileManager.default.removeItem(at: placementURL) }
+            exit(code)
+        }
+        var failures = 0
+        func check(_ ok: Bool, _ label: String) {
+            print("\(ok ? "PASS" : "FAIL") — \(label)")
+            if !ok { failures += 1 }
+        }
+        func pump(_ s: Double = 0.2) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+
+        guard let screen = NSScreen.screens.first(where: { PadDock.Field(screen: $0).hasNotch }) else {
+            print("no notched display — the strip is only ever built on one, nothing to test")
+            finish(0)
+        }
+        let field = PadDock.Field(screen: screen)
+        print("housing \(Int(field.notch.minX))…\(Int(field.notch.maxX)) x \(Int(field.notch.minY))…\(Int(field.notch.maxY))")
+
+        // Fake sources: counts are driven from here so the sweep can push the
+        // layout well past its caps.
+        var agentCount = 3
+        var quotaOn = false
+        var clicked: [(String, Int)] = []
+        let strip = NotchStrip()
+        strip.register(NotchStrip.Source(
+            id: "agents", priority: 0, maxMarks: 5,
+            marks: { (0..<agentCount).map { i in
+                NotchStrip.Mark(color: .systemBlue, ring: i == 0, tooltip: "s\(i)") } },
+            card: { i in NotchStrip.Card(title: "session \(i)", subtitle: "needs permission",
+                                         accent: .systemOrange,
+                                         actions: [("✓", .systemGreen, {}), ("✕", .systemRed, {})]) },
+            activate: { clicked.append(("agents", $0)) }))
+        strip.register(NotchStrip.Source(
+            id: "quota", priority: 10, maxMarks: 1,
+            marks: { quotaOn ? [NotchStrip.Mark(color: .systemOrange, tooltip: "82%")] : [] },
+            card: { _ in NotchStrip.Card(title: "82% used", subtitle: "resets in 2h", accent: .systemOrange) },
+            activate: { clicked.append(("quota", $0)) }))
+
+        // 1: nothing to say ⇒ no pixels at all.
+        agentCount = 0
+        strip.apply(master: true, enabled: ["agents", "quota"])
+        pump()
+        check(!strip.isVisible, "1: zero marks ⇒ no window (no placeholder dot)")
+
+        // 2: Min geometry.
+        agentCount = 3
+        strip.refresh(); pump(0.4)
+        let minFrame = strip.frame
+        check(strip.isVisible, "2a: marks ⇒ window")
+        check(abs(minFrame.maxY - screen.frame.maxY) < 1, "2b: flush with the top of the screen")
+        // Min is NOT centred: each shoulder is sized for its own cluster, so a
+        // lopsided set of sources does not pay for empty plate on the quiet
+        // side. What must hold is that the pill straddles the housing.
+        check(minFrame.minX <= field.notch.minX + 1 && minFrame.maxX >= field.notch.maxX - 1,
+              "2c: straddles the housing (\(Int(minFrame.minX))…\(Int(minFrame.maxX)))")
+        check(minFrame.width < field.notch.width + 200,
+              "2c2: no empty plate on a shoulder with nothing on it")
+        check(minFrame.height <= field.notch.height + 1, "2d: Min fits inside the menu-bar band")
+
+        // 3: THE cutout sweep — no drawn content may land behind the housing,
+        // at any count, in any combination of sources, in either state.
+        var worstOverlap = 0
+        for on in [Set(["agents"]), Set(["quota"]), Set(["agents", "quota"])] {
+            for n in 0...12 {
+                agentCount = n
+                quotaOn = on.contains("quota")
+                strip.apply(master: true, enabled: on)
+                // Outlast the 0.22s Min↔Mid morph: mid-animation `panel.frame`
+                // is an in-flight value, so mapping view rects through it
+                // reports positions the settled layout never occupies.
+                pump(0.3)
+                let bad = strip.contentRectsInScreen.filter { $0.intersects(field.notch) }
+                worstOverlap += bad.count
+                if !bad.isEmpty {
+                    print("   overlap: sources=\(on.sorted()) agents=\(n) rects=\(bad.map { "\(Int($0.minX))…\(Int($0.maxX))" })")
+                }
+            }
+        }
+        check(worstOverlap == 0, "3: nothing drawn behind the housing across 39 layouts (Min)")
+
+        // 4: Mid is CAPPED — the notch must never reach full-panel size.
+        agentCount = 3
+        quotaOn = true
+        strip.apply(master: true, enabled: ["agents", "quota"])
+        pump(0.1)
+        strip.open(source: 0, mark: 0, hold: nil)
+        pump(0.4)
+        let mid = strip.frame
+        let midCap = field.notch.width * NotchStrip.midWidthFactor
+        let heightCap = field.notch.height + NotchStrip.midCardHeightWithActions
+        check(mid.width <= midCap + 1, "4a: Mid width \(Int(mid.width)) within the \(Int(midCap))pt cap")
+        check(mid.height <= heightCap + 1, "4b: Mid height \(Int(mid.height)) within the \(Int(heightCap))pt cap")
+        check(abs(mid.maxY - screen.frame.maxY) < 1, "4c: Mid still hangs from the screen edge")
+        check(abs(mid.midX - field.notch.midX) < 1, "4c2: Mid IS centred on the housing")
+        let midBad = strip.contentRectsInScreen.filter { $0.intersects(field.notch) }
+        check(midBad.isEmpty, "4d: Mid card content sits clear of the housing")
+        check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
+              "4e: Mid card content is entirely BELOW the housing")
+
+        // 5: collapse returns to Min.
+        strip.collapse(); pump(0.4)
+        check(abs(strip.frame.height - minFrame.height) < 1, "5: collapse returns to Min height")
+
+        // 6: click routing — synthesised against the real view, so hit-testing
+        // and drawing are proven to read the same layout array.
+        if let (panel, view) = strip.testSurface, let target = strip.placedMarks.last {
+            let p = view.convert(NSPoint(x: target.rect.midX, y: target.rect.midY), to: nil)
+            let ev = NSEvent.mouseEvent(with: .leftMouseDown, location: p, modifierFlags: [],
+                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: panel.windowNumber, context: nil,
+                                        eventNumber: 0, clickCount: 1, pressure: 1)!
+            view.mouseDown(with: ev)
+            pump(0.1)
+            let expected = target.source == 0 ? "agents" : "quota"
+            check(clicked.last?.0 == expected && clicked.last?.1 == target.mark,
+                  "6: click on the last mark routed to \(expected)[\(target.mark)] — got \(clicked.last.map { "\($0.0)[\($0.1)]" } ?? "nothing")")
+        } else {
+            check(false, "6: no surface to click")
+        }
+
+        // 7: master off ⇒ gone.
+        strip.apply(master: false, enabled: ["agents", "quota"]); pump(0.2)
+        check(!strip.isVisible, "7: master switch off ⇒ no window")
+
+        // 8: berth migration, including idempotence.
+        let fake: [String: [String: Any]] = [
+            "agent": ["anchor": "notchLeft", "mini": true, "open": true, "x": 12, "y": 616],
+            "macro": ["anchor": "midLeft", "mini": false, "open": false],
+        ]
+        try? JSONSerialization.data(withJSONObject: fake).write(to: placementURL, options: .atomic)
+        let moved = PadPlacement.migrateNotchAnchors()
+        let agent = PadPlacement.load("agent")
+        let macro = PadPlacement.load("macro")
+        check(moved == ["agent"], "8a: only the berthed pad moved")
+        check(agent?.anchor == .topLeft, "8b: notchLeft → topLeft")
+        check(agent?.mini == true && agent?.open == true, "8c: mini/open rode along")
+        check(macro?.anchor == .midLeft, "8d: the other pad is untouched")
+        let again = PadPlacement.migrateNotchAnchors()
+        check(again.isEmpty, "8e: migration is idempotent")
+
+        print(failures == 0 ? "\nALL PASS" : "\n\(failures) FAILURE(S)")
+        finish(failures == 0 ? 0 : 1)
+    }
+
 case "agentpad-preview":
     // Offscreen render of the Agent Pad for design checks (fake sessions in
     // every state; second row hovered). Flags: "light", "mini" (traffic strip).
     let out = args.count >= 2 ? args[1] : "agentpad-preview.png"
     let dark = !args.contains("light")
     let mini = args.contains("mini")
-    // "berth" previews the notch shell (square top, rounded below, housing black).
-    let berth = args.contains("berth")
     MainActor.assumeIsolated {
         func fake(_ id: String, _ cwd: String, _ label: String, _ state: ClaudeSession.State,
                   _ detail: String, ageSec: Double,
@@ -1076,8 +1232,7 @@ case "agentpad-preview":
         ])
         let v = AgentPadView(dark: dark)
         v.configure(sessions: sessions, dark: dark, hotkeyName: "Option + Shift", hooksInstalled: true,
-                    mini: mini, berth: berth, shelf: berth,
-                    notchSpan: berth ? 220 : 0, notchHeight: berth ? 38 : 0)
+                    mini: mini)
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
         if !mini { v.previewState(hoverRow: 2, hoverButton: nil) }
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }

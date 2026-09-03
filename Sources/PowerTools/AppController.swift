@@ -36,6 +36,7 @@ final class AppController {
             trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
             if !config.agentPadCodex { claudeRegistry.setExternal(kind: "codex", []) }
             if !config.agentPadCursor { claudeRegistry.setExternal(kind: "cursor", []) }
+            applyNotchConfig()
         }
     }
 
@@ -61,6 +62,7 @@ final class AppController {
     private let powerRing = PowerRing()
     private let whiteboard = Whiteboard()
     private let agentPad = AgentPad()
+    private let notchStrip = NotchStrip()
     private let claudeRegistry = ClaudeSessionRegistry()
     private let hookServer = ClaudeHookServer()
     private lazy var clipboardWatcher = ClipboardHistory(store: store, enabled: config.clipboardHistory)
@@ -309,6 +311,8 @@ final class AppController {
             claudeRegistry.onChange = { [weak self] sessions in
                 guard let self else { return }
                 self.agentPad.updateSessions(sessions, hooksInstalled: ClaudeHooksInstaller.isInstalled())
+                self.notchStrip.refresh()
+                self.announceWaiting(sessions)
                 self.revealAgentPadIfWaiting(sessions)
             }
             agentPad.onRefresh = { [weak self] in
@@ -321,6 +325,7 @@ final class AppController {
             // user opens the pad again themselves.
             agentPad.onDismiss = { [weak self] in self?.padClosedByUser = true }
         }
+        startNotchStrip()
         // Pads that were open when the app last quit (updates included) come
         // back in their persisted dock/mini state.
         if config.restorePads {
@@ -897,10 +902,128 @@ final class AppController {
     /// Reveal the Agent Pad when a session needs the user's approval — this
     /// maxes the one pad surface instead of spawning a separate popup for
     /// permissions. Only ever fires on a pad the user hasn't closed.
+    ///
+    /// Gated when the notch strip is carrying agents: the strip already banners
+    /// the ask with ✓/✕ on it, and flinging the whole pad open as well is two
+    /// notifications for one event.
     private func revealAgentPadIfWaiting(_ sessions: [ClaudeSession]) {
+        guard !stripShowsAgents else { return }
         guard config.agentPad, !padClosedByUser, !agentPad.isVisible,
               sessions.contains(where: { $0.state == .needsPermission }) else { return }
         openAgentPad(on: NSScreen.main)
+    }
+
+    private var stripShowsAgents: Bool { config.notchStrip && config.notchAgents }
+
+    // MARK: Notch strip
+
+    /// The sessions the strip publishes — same visibility and triage rules the
+    /// pad uses, so a dot and its row are never a different set.
+    private var stripSessions: [ClaudeSession] {
+        AgentPad.triageSorted(AgentPad.visible(claudeRegistry.ordered))
+    }
+
+    private func startNotchStrip() {
+        // Pads that were parked in the notch move to an ordinary anchor — the
+        // strip is the only citizen of the housing now. What was in the notch
+        // stays in the notch, as a published mark.
+        if !config.notchStripMigrated {
+            let moved = PadPlacement.migrateNotchAnchors()
+            if moved.contains("agent") { config.notchAgents = true; config.notchStrip = true }
+            config.notchStripMigrated = true
+            config.save()
+            if !moved.isEmpty { log("notch: migrated \(moved.sorted().joined(separator: ", ")) off the berths") }
+        }
+
+        notchStrip.register(NotchStrip.Source(
+            id: "agents", priority: 0, maxMarks: 5,
+            marks: { [weak self] in
+                (self?.stripSessions ?? []).map { s in
+                    NotchStrip.Mark(
+                        color: AgentPadView.stateColor(s.state),
+                        ring: s.state == .needsPermission || s.state == .needsInput
+                            || s.state == .unseen || s.state == .error,
+                        dim: s.state == .idle && s.stateChanged.timeIntervalSinceNow < -3600,
+                        tooltip: "\(s.projectName) · \(s.state.label)")
+                }
+            },
+            card: { [weak self] i in
+                guard let self, i < self.stripSessions.count else { return nil }
+                let s = self.stripSessions[i]
+                var card = NotchStrip.Card(
+                    title: s.displayTitle,
+                    subtitle: s.detail.isEmpty ? "\(s.projectName) · \(s.state.label)"
+                                               : s.detail.replacingOccurrences(of: "\n", with: " "),
+                    accent: AgentPadView.stateColor(s.state))
+                // The whole reason Mid exists: answer the ask without opening
+                // anything. Only a permission gets buttons.
+                if s.state == .needsPermission, !s.isWatchOnly {
+                    card.actions = [
+                        ("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1),
+                         { [weak self] in self?.handleAgentPadAction(s, .accept) }),
+                        ("✕", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1),
+                         { [weak self] in self?.handleAgentPadAction(s, .deny) }),
+                    ]
+                }
+                return card
+            },
+            activate: { [weak self] _ in self?.toggleAgentPad() }))
+
+        notchStrip.register(NotchStrip.Source(
+            id: "quota", priority: 10, maxMarks: 1,
+            marks: { [weak self] in
+                guard let self, let worst = Self.worstQuota() else { return [] }
+                // Silent until it is news: a dot parked in the menu bar
+                // permanently is exactly the flourish this app avoids.
+                guard worst >= self.config.notchQuotaAt else { return [] }
+                let color = worst >= 90 ? NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
+                                        : NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+                let stale = (UsageReader.shared.fetchedAt.map { Date().timeIntervalSince($0) > 7200 }) ?? true
+                return [NotchStrip.Mark(color: color, ring: worst >= 90, dim: stale,
+                                        tooltip: "quota \(worst)% used")]
+            },
+            card: { _ in
+                guard let worst = Self.worstQuota() else { return nil }
+                let window = UsageReader.shared.providers
+                    .flatMap { p in p.windows.map { (p.name, $0) } }
+                    .max { $0.1.usedPercent < $1.1.usedPercent }
+                return NotchStrip.Card(
+                    title: "\(worst)% used",
+                    subtitle: [window?.0, window?.1.label, window?.1.resetDescription]
+                        .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
+                    accent: worst >= 90 ? NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
+                                        : NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1))
+            },
+            activate: { [weak self] _ in self?.toggleAgentPad() }))
+
+        // ONE owner for the reader's single update closure, fanned out here.
+        UsageReader.shared.onUpdate = { [weak self] in
+            self?.agentPad.usageDidUpdate()
+            self?.notchStrip.refresh()
+        }
+        applyNotchConfig()
+        notchStrip.start()
+    }
+
+    private static func worstQuota() -> Int? {
+        UsageReader.shared.providers.flatMap(\.windows).map(\.usedPercent).max()
+    }
+
+    func applyNotchConfig() {
+        var on: Set<String> = []
+        if config.notchAgents { on.insert("agents") }
+        if config.notchQuota { on.insert("quota") }
+        notchStrip.apply(master: config.notchStrip, enabled: on)
+    }
+
+    /// Banner a session that wants an answer — once per ask, so a permission
+    /// left on screen doesn't re-present on every refresh.
+    private func announceWaiting(_ sessions: [ClaudeSession]) {
+        guard stripShowsAgents else { return }
+        let shown = stripSessions
+        notchStrip.forgetAnnounced(keeping: Set(shown.filter { $0.state == .needsPermission }.map(\.id)))
+        guard let i = shown.firstIndex(where: { $0.state == .needsPermission }) else { return }
+        notchStrip.announce(sessionID: shown[i].id, source: "agents", mark: i)
     }
 
     func toggleAgentPad() {

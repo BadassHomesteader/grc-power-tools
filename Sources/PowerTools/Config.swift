@@ -352,6 +352,19 @@ struct Config: Codable {
     var agentPadCursor: Bool = true
     /// Reopen pads that were open when the app last quit (updates included).
     var restorePads: Bool = true
+
+    /// The notch strip — the one surface allowed to live in the camera housing.
+    /// On by default is safe because it draws NOTHING when no source has
+    /// anything to say (no sessions, quota quiet ⇒ no pixels at all).
+    var notchStrip: Bool = true
+    var notchAgents: Bool = true
+    /// Off by default: quota would otherwise be a dot permanently parked in the
+    /// menu bar. On, it still only appears once a window passes `notchQuotaAt`.
+    var notchQuota: Bool = false
+    var notchQuotaAt: Int = 60
+    /// One-shot guard for moving pads off the retired notch berths, so the
+    /// migration can never re-enable a source the user later switched off.
+    var notchStripMigrated: Bool = false
     /// Power Ring: hold hotkey + right-click → radial menu. Slots are catalog
     /// ids, clockwise from the top (see PowerRingCatalog).
     var powerRing: Bool = true
@@ -441,6 +454,7 @@ struct Config: Codable {
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs, macroPadThreeFingerTap
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, restorePads
+        case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case powerRing, powerRingSlots
         case whiteboard
         case pronunciations
@@ -515,6 +529,11 @@ struct Config: Codable {
         agentPadCodex = field(.agentPadCodex, true)
         agentPadCursor = field(.agentPadCursor, true)
         restorePads = field(.restorePads, true)
+        notchStrip = field(.notchStrip, true)
+        notchAgents = field(.notchAgents, true)
+        notchQuota = field(.notchQuota, false)
+        notchQuotaAt = field(.notchQuotaAt, 60)
+        notchStripMigrated = field(.notchStripMigrated, false)
         powerRing = field(.powerRing, true)
         powerRingSlots = field(.powerRingSlots, PowerRingCatalog.defaultSlots)
         whiteboard = field(.whiteboard, true)
