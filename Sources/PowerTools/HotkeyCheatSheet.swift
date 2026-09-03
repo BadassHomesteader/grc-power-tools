@@ -84,6 +84,7 @@ final class HotkeyCheatSheetView: NSView {
             ]),
             ("Pads & panels", [
                 ("B", "Macro Pad"),
+                ("3-finger tap", "Macro Pad at the cursor"),
                 ("1…0", "fire macro button (pad open)"),
                 ("J", "Agent Pad (Claude Code)"),
                 ("r-click", "Power Ring"),
@@ -113,7 +114,7 @@ final class HotkeyCheatSheetView: NSView {
     private static let headerH: CGFloat = 26
     private static let sectionH: CGFloat = 24
     private static let rowH: CGFloat = 19
-    private static let keyW: CGFloat = 52
+    private static let keyW: CGFloat = 76   // fits "3-finger tap"
 
     private var bg: NSColor { dark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 0.98) : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 0.98) }
     private var fg: NSColor { dark ? .white : .black }

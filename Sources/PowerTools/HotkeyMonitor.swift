@@ -45,6 +45,8 @@ final class HotkeyMonitor {
         case activityMonitor              // ⌃⇧⎋ — open Activity Monitor (Task Manager)
         case macroPad                     // hold + B — toggle the per-app macro pad
         case macroPadDigit(Int)           // hold + 1…9/0 while the pad is open — fire that button
+        case macroPadSummon               // hold + three-finger tap — the pad beside the cursor
+        case macroPadSummonClose          // leader-held Esc while a summoned pad is up — dismiss it
         case agentPad                     // hold + J — toggle the Claude Code session pad
         case cheatSheet                   // hold + Q — toggle the hotkey cheat sheet
         case cheatSheetClose              // Esc while the sheet is up — close it
@@ -88,6 +90,11 @@ final class HotkeyMonitor {
     var whiteboardVisible = false
     /// Buttons in the pad's current profile — digits ≥ this pass through.
     var macroPadButtonCount = 0
+    /// Three-finger-tap summon: feature flag + "a summoned pad is up" mirror
+    /// (same discipline). Both written from main; the tap itself arrives from
+    /// the multitouch thread via `trackpadThreeFingerTap()`.
+    var macroPadSummonEnabled = true
+    var macroPadSummoned = false
 
     /// keyCode → pad button index for the digit row (1…9 then 0 = tenth).
     private static let macroDigitIndex: [Int64: Int] = [
@@ -143,6 +150,21 @@ final class HotkeyMonitor {
     /// A leader right-click was swallowed for the Power Ring — its paired
     /// rightMouseUp must be swallowed too (apps must never see an orphan up).
     private var ringSwallowUp = false
+    /// When that swallow was armed — a paired up that never arrives (tap died
+    /// mid-click) must not leave the NEXT right-click's up eaten.
+    private var ringSwallowArmedAt: CFAbsoluteTime = 0
+
+    /// Hold + three-finger tap (TrackpadTapDetector, on the multitouch
+    /// thread): summon the macro pad beside the cursor. `windowMode` is
+    /// written off the tap thread here — the health timer already does the
+    /// same — so the leader release ends quietly instead of dictating. If the
+    /// release beats this write, the controller's summon path calls
+    /// interruptDictation() and the stray recording is dropped; nothing wedges.
+    func trackpadThreeFingerTap() {
+        guard held, macroPadSummonEnabled, !interrupted else { return }
+        windowMode = true
+        dispatch(.macroPadSummon)
+    }
 
     private static let kVK_Function: Int64 = 63
     private static let kVK_RightOption: Int64 = 61
@@ -239,6 +261,7 @@ final class HotkeyMonitor {
                 self.windowMode = false
                 self.pending = .none
                 self.swallowedKeyUps.removeAll()
+                self.ringSwallowUp = false
                 self.dispatch(.cancel)
             }
         }
@@ -276,13 +299,15 @@ final class HotkeyMonitor {
             guard held, powerRingEnabled else { return Unmanaged.passUnretained(event) }
             windowMode = true
             ringSwallowUp = true
+            ringSwallowArmedAt = CFAbsoluteTimeGetCurrent()
             dispatch(.powerRing)
             return nil
         }
         if type == .rightMouseUp {
             if ringSwallowUp {
                 ringSwallowUp = false
-                return nil
+                // Stale arm (its own up got lost) → this is a fresh click's up.
+                if CFAbsoluteTimeGetCurrent() - ringSwallowArmedAt < 0.5 { return nil }
             }
             return Unmanaged.passUnretained(event)
         }
@@ -470,6 +495,9 @@ final class HotkeyMonitor {
                 if cheatSheetVisible { dispatch(.cheatSheetClose) }
                 if powerRingVisible { dispatch(.powerRingClose) }
                 if whiteboardVisible { dispatch(.whiteboardClose) }
+                // Leader-held only: a summoned pad stays open like the docked
+                // pad, so plain Esc must keep reaching the app in front.
+                if macroPadSummoned { dispatch(.macroPadSummonClose) }
                 dispatch(.cancel)
                 return nil // swallow so it doesn't close the user's dialogs
             case Self.kVK_ANSI_T:

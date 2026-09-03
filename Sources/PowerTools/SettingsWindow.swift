@@ -84,6 +84,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     // Macro Pad: enable toggle + the Outlook folder-button editor.
     private let macroPadCheck = NSButton(checkboxWithTitle: "Macro Pad — floating per-app buttons (hold hotkey + B, or menu bar ▸ Macro Pad)", target: nil, action: nil)
+    private let macroSummonCheck = NSButton(checkboxWithTitle: "Summon to the cursor — hold hotkey + three-finger tap on the trackpad", target: nil, action: nil)
     private let macroFoldersView = NSTextView()
     private let macroPadStatus = NSTextField(labelWithString: " ")
 
@@ -631,6 +632,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         note.preferredMaxLayoutWidth = 520
         macroPadCheck.target = self
         macroPadCheck.action = #selector(macroPadToggled)
+        macroSummonCheck.target = self
+        macroSummonCheck.action = #selector(macroSummonToggled)
 
         let example = NSTextField(labelWithString: "One folder per line, optional keywords:   Projects | acme, quarterly")
         example.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
@@ -712,7 +715,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroEditorStatus.textColor = .secondaryLabelColor
 
         return vstack([
-            section("Macro Pad", [note, macroPadCheck], width: 560),
+            section("Macro Pad", [note, macroPadCheck, macroSummonCheck], width: 560),
             section("Outlook folders", [example, scroll, saveBtn, macroPadStatus], width: 560),
             section("All profiles & buttons", [
                 editorNote,
@@ -956,6 +959,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func macroPadToggled() {
         config.macroPad = (macroPadCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func macroSummonToggled() {
+        config.macroPadThreeFingerTap = (macroSummonCheck.state == .on)
         config.save()
         onConfigChange(config)
     }
@@ -1223,6 +1232,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         claudeKeyField.placeholderString = Keychain.has("claude") ? "•••••• saved — paste to replace" : "sk-ant-…"
         openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
         macroPadCheck.state = config.macroPad ? .on : .off
+        macroSummonCheck.state = config.macroPadThreeFingerTap ? .on : .off
         agentPadCheck.state = config.agentPad ? .on : .off
         agentCodexCheck.state = config.agentPadCodex ? .on : .off
         agentCursorCheck.state = config.agentPadCursor ? .on : .off
@@ -1274,7 +1284,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  D   new document — Word / Excel / … in the current Finder folder
         •  N   quick capture — send a line to your connection (todo app, webhook)
         •  M   find my mouse — spotlight the cursor
-        •  B   macro pad — floating per-app buttons (Outlook folder filing); while it's open, hold + 1…9 fires that button
+        •  B   macro pad — floating per-app buttons (Outlook folder filing); while it's open, hold + 1…9 fires that button; hold + three-finger tap summons it to the cursor
         •  W   snap palette — halves · quarters · thirds · mini-grid
         •  ← → ↑ ↓   snap window (repeat = resize · chain ← ↑ = corner)
         •  ⏎   maximize   ·   3   draw-a-grid placement

@@ -95,6 +95,8 @@ public sealed class Config
     public bool MacroPad = true;
     public List<MacroProfile> MacroPadProfiles = new();
     public int MacroPadStepDelayMs = 350;
+    /// Mac-only (three-finger-tap summon of the Macro Pad); preserved for schema parity.
+    public bool MacroPadThreeFingerTap = true;
     public bool AgentPad = true;
     public int AgentPadPort = 8377;
     public bool AgentPadCodex = true;
@@ -222,6 +224,7 @@ public sealed class Config
         c.MacroPad = Bool(root, "macroPad", true);
         c.MacroPadProfiles = ParseProfiles(root);
         c.MacroPadStepDelayMs = Int(root, "macroPadStepDelayMs", 350);
+        c.MacroPadThreeFingerTap = Bool(root, "macroPadThreeFingerTap", true);
         c.AgentPad = Bool(root, "agentPad", true);
         c.AgentPadPort = Int(root, "agentPadPort", 8377);
         c.AgentPadCodex = Bool(root, "agentPadCodex", true);
@@ -309,6 +312,7 @@ public sealed class Config
                 }).ToArray()),
             }).ToArray()),
             ["macroPadStepDelayMs"] = MacroPadStepDelayMs,
+            ["macroPadThreeFingerTap"] = MacroPadThreeFingerTap,
             ["agentPad"] = AgentPad,
             ["agentPadPort"] = AgentPadPort,
             ["agentPadCodex"] = AgentPadCodex,

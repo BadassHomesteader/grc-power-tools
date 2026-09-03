@@ -32,6 +32,8 @@ final class AppController {
             macroPad.update(enabled: config.macroPad, profiles: config.macroPadProfiles,
                             dark: config.appearance.isDark)
             hotkey?.powerRingEnabled = config.powerRing
+            hotkey?.macroPadSummonEnabled = config.macroPad && config.macroPadThreeFingerTap
+            trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
             if !config.agentPadCodex { claudeRegistry.setExternal(kind: "codex", []) }
             if !config.agentPadCursor { claudeRegistry.setExternal(kind: "cursor", []) }
         }
@@ -54,6 +56,7 @@ final class AppController {
     private let readAloud = ReadAloud()
     private let grabAndMove = GrabAndMove()
     private let macroPad = MacroPad()
+    private let trackpadTap = TrackpadTapDetector()
     private let cheatSheet = HotkeyCheatSheet()
     private let powerRing = PowerRing()
     private let whiteboard = Whiteboard()
@@ -199,6 +202,10 @@ final class AppController {
                 self.toggleMacroPad()
             case .macroPadDigit(let idx):
                 self.fireMacroPadDigit(idx)
+            case .macroPadSummon:
+                self.summonMacroPad()
+            case .macroPadSummonClose:
+                self.macroPad.dismiss()
             case .agentPad:
                 self.toggleAgentPad()
             case .cheatSheet:
@@ -229,6 +236,7 @@ final class AppController {
         monitor.finderDeleteTrash = config.finderDeleteTrash
         monitor.taskManagerShortcut = config.taskManagerShortcut
         monitor.powerRingEnabled = config.powerRing
+        monitor.macroPadSummonEnabled = config.macroPad && config.macroPadThreeFingerTap
         monitor.finderFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
         // The tap only intercepts leader-digits while the pad is shown, and
         // only for digits that map to a real button of the current profile.
@@ -246,6 +254,14 @@ final class AppController {
         whiteboard.onVisibility = { [weak self] visible in
             self?.hotkey?.whiteboardVisible = visible
         }
+        macroPad.onSummonChanged = { [weak self] summoned in
+            self?.hotkey?.macroPadSummoned = summoned
+        }
+        // The three-finger tap lands on the multitouch thread; the monitor's
+        // entry point is built for that (reads `held`, dispatches to main
+        // itself) — no actor hop, so the monitor is captured directly.
+        trackpadTap.onTap = { monitor.trackpadThreeFingerTap() }
+        trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] note in
@@ -768,6 +784,28 @@ final class AppController {
     func toggleMacroPad() {
         interruptDictation()
         if macroPad.isVisible { macroPad.dismiss(); return }
+        presentMacroPad(at: nil)
+    }
+
+    /// hold + three-finger tap on the trackpad: the pad beside the cursor.
+    /// Hidden → opens there; docked → moves there; already summoned → closes
+    /// (a second tap toggles it away, like hold + B).
+    func summonMacroPad() {
+        interruptDictation()
+        if macroPad.isVisible {
+            if macroPad.isSummoned { macroPad.dismiss(); return }
+            overlay.hide()
+            let mouse = NSEvent.mouseLocation
+            guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
+                ?? NSScreen.main else { return }
+            macroPad.summon(to: mouse, on: screen)
+            return
+        }
+        presentMacroPad(at: NSEvent.mouseLocation)
+    }
+
+    /// Shared open path: `cursor` nil = the pad's berth, non-nil = summoned there.
+    private func presentMacroPad(at cursor: NSPoint?) {
         guard config.macroPad else {
             overlay.showError("Macro Pad is off — enable it in Settings ▸ Macro Pad")
             return
@@ -779,7 +817,7 @@ final class AppController {
         guard let screen else { return }
         macroPad.present(
             profiles: config.macroPadProfiles, dark: config.appearance.isDark, screen: screen,
-            hotkeyName: config.hotkey.displayName, frontApp: app,
+            hotkeyName: config.hotkey.displayName, frontApp: app, at: cursor,
             onAction: { [weak self] button, bundleID in self?.runMacroButton(button, targetBundleID: bundleID) }
         )
         // Keyword suggestions ride on SCK window capture — without the Screen

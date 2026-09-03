@@ -41,6 +41,18 @@ final class MacroPad {
     private var dockAnchor: PadDock?
     private let dockOverlay = PadDockOverlay()
     private static let placementKey = "macro"
+    /// Summoned: hold hotkey + three-finger tap parks the FULL pad beside the
+    /// cursor for this showing only. The berth / free-float spot stays the
+    /// pad's home — never overwritten while summoned — and a drag, a dismiss,
+    /// or the header "–" ends the summon. Single source of truth for the
+    /// tap's `macroPadSummoned` mirror: every clear path notifies.
+    private var summonPoint: NSPoint? {
+        didSet {
+            if (oldValue != nil) != (summonPoint != nil) { onSummonChanged?(summonPoint != nil) }
+        }
+    }
+    var isSummoned: Bool { summonPoint != nil }
+    var onSummonChanged: ((Bool) -> Void)?
     private var suggestTask: Task<Void, Never>?
     private var suggestTimer: Timer?
     /// Generation counter: a scan may only touch shared state (suggestTask,
@@ -74,8 +86,10 @@ final class MacroPad {
         padView?.flash(index)
     }
 
+    /// `cursor` non-nil = summoned: the full pad beside that point, home untouched.
     func present(profiles: [Config.MacroProfile], dark: Bool, screen: NSScreen,
                  hotkeyName: String, frontApp: NSRunningApplication?,
+                 at cursor: NSPoint? = nil,
                  onAction: @escaping (Config.MacroButton, String) -> Void) {
         self.profiles = profiles
         self.dark = dark
@@ -96,15 +110,34 @@ final class MacroPad {
             miniPreferred = saved.mini ?? false
             miniActive = miniPreferred
         }
+        if let cursor {
+            summonPoint = cursor
+            miniActive = false   // a summoned pad is always the full pad
+        }
         buildPanel(on: screen)
         render(on: screen)   // render ends with notifyState()
         startSuggestTimer()
         persistPlacement()   // open=true — survives quits/deploys for launch restore
     }
 
+    /// An already-open pad: bring it beside the cursor. A free-floating pad's
+    /// current spot becomes its remembered home first (a docked pad's home is
+    /// its anchor, which the summon never touches).
+    func summon(to point: NSPoint, on screen: NSScreen) {
+        guard let panel else { return }
+        if dockAnchor == nil, summonPoint == nil {
+            savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        }
+        summonPoint = point
+        miniActive = false
+        render(on: screen, preservingHighlights: true)
+    }
+
     func dismiss() {
         if let panel {
-            savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+            // A summoned pad's frame is the cursor spot, not its home — keep the
+            // remembered home and only flip the open flag.
+            if summonPoint == nil { savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY) }
             persistPlacement(open: false)
         }
         dockOverlay.hide()
@@ -116,12 +149,30 @@ final class MacroPad {
         panel = nil
         padView = nil
         notifyState()
+        if summonPoint != nil {
+            miniActive = miniPreferred
+            summonPoint = nil
+        }
     }
 
     /// open defaults true — every save except the user's explicit dismiss
     /// happens while the pad is up, so a quit/deploy leaves open=true behind.
     private func persistPlacement(open: Bool = true) {
         guard let panel else { return }
+        if summonPoint != nil {
+            // Summoned: the frame is the cursor spot. Rewrite only the open
+            // flag over the record on disk so the home (anchor or x/y) and the
+            // mini preference come through untouched.
+            if let saved = PadPlacement.load(Self.placementKey) {
+                let home = saved.x.flatMap { x in saved.y.map { NSPoint(x: x, y: $0) } }
+                PadPlacement.save(Self.placementKey, anchor: saved.anchor, topLeft: home,
+                                  mini: saved.mini ?? miniPreferred, open: open, seen: saved.seen ?? [])
+            } else {
+                PadPlacement.save(Self.placementKey, anchor: dockAnchor, topLeft: savedTopLeft,
+                                  mini: miniPreferred, open: open)
+            }
+            return
+        }
         PadPlacement.save(Self.placementKey, anchor: dockAnchor,
                           topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY),
                           mini: miniPreferred, open: open)
@@ -133,6 +184,11 @@ final class MacroPad {
     /// without a real mouse drag.
     func snapAfterDrag() {
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
+        // A drag is an explicit placement: it ends a summon, and the remembered
+        // home goes with it (a stale savedTopLeft would teleport the pad back
+        // there on the next render).
+        summonPoint = nil
+        savedTopLeft = nil
         let field = PadDock.Field(screen: screen)
         if let hit = PadDock.nearest(to: panel.frame.origin, size: panel.frame.size, in: field) {
             dockAnchor = hit.anchor
@@ -194,6 +250,14 @@ final class MacroPad {
         }
         view.onMinimize = { [weak self] in
             guard let self else { return }
+            // Summoned: "–" sends the pad home to its berth in its usual state
+            // instead of collapsing a strip at the cursor.
+            if self.summonPoint != nil {
+                self.summonPoint = nil
+                self.miniActive = self.miniPreferred
+                self.render(preservingHighlights: true)
+                return
+            }
             // Toggle: from full → traffic lights; from a peeked pad (hover-
             // expanded strip) → pin it back to full-time.
             self.miniPreferred.toggle()
@@ -207,7 +271,10 @@ final class MacroPad {
             self.render(preservingHighlights: true)
         }
         view.onCollapse = { [weak self] in
-            guard let self, self.miniPreferred, !self.miniActive else { return }
+            // Load-bearing summon guard: a summoned pad runs with miniActive
+            // false even when mini is preferred, so mouse-exit must not
+            // collapse it into a strip at the cursor.
+            guard let self, self.summonPoint == nil, self.miniPreferred, !self.miniActive else { return }
             self.miniActive = true
             self.render(preservingHighlights: true)
         }
@@ -256,17 +323,42 @@ final class MacroPad {
         }
         var current: Config.MacroProfile?
         if let id = currentBundleID { current = profile(for: id) }
+        // Summoned = the plain full pad: no strip, no berth dressing.
+        let summoned = summonPoint != nil
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
                        buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName,
-                       mini: miniActive, peeking: miniPreferred && !miniActive,
-                       berth: dockAnchor?.isNotch == true, shelf: shelf,
-                       notchSpan: notchSpan, notchHeight: notchHeight)
+                       mini: !summoned && miniActive,
+                       peeking: !summoned && miniPreferred && !miniActive,
+                       berth: !summoned && dockAnchor?.isNotch == true, shelf: !summoned && shelf,
+                       notchSpan: summoned ? 0 : notchSpan, notchHeight: summoned ? 0 : notchHeight)
         view.suggested = hits
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
         // A panel shadow over the menu bar is the loudest tell that this is a
         // floating window rather than a bar item.
         panel.hasShadow = !view.berth
+
+        // Summoned: beside the cursor, with the cursor just OUTSIDE the pad's
+        // top-left corner — inside it would sit on the header drag zone, where
+        // the same three fingers moving on would start a drag and re-anchor
+        // the pad. Flips to the other side when the preferred side won't fit,
+        // then clamps. The home spot (anchor / savedTopLeft) is left alone.
+        if let summonPoint {
+            let padScreen = screen ?? NSScreen.screens.first { NSMouseInRect(summonPoint, $0.frame, false) }
+                ?? panel.screen ?? NSScreen.main
+            var frame = NSRect(x: summonPoint.x + 10, y: summonPoint.y - 10 - size.height,
+                               width: size.width, height: size.height)
+            if let vf = padScreen?.visibleFrame {
+                if frame.maxX > vf.maxX - 8 { frame.origin.x = summonPoint.x - 10 - size.width }
+                if frame.minY < vf.minY + 8 { frame.origin.y = summonPoint.y + 10 }
+                frame.origin.x = min(max(frame.minX, vf.minX + 8), vf.maxX - frame.width - 8)
+                frame.origin.y = min(max(frame.minY, vf.minY + 8), vf.maxY - frame.height - 8)
+            }
+            panel.setFrame(frame, display: true)
+            refreshSuggestions()
+            notifyState()
+            return
+        }
 
         // Docked: pin to the anchor for whatever size this render came out at,
         // so the mini strip parks in the same corner as the full pad.

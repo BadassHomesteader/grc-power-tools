@@ -22,6 +22,33 @@ final class ResultBox<T>: @unchecked Sendable {
     var result: Result<T, Error>?
 }
 
+/// Helpers for `trackpad-tap-test` — a C event-tap callback can't capture, so
+/// the timestamp base and the formatter live here at file scope.
+enum TapProbe {
+    nonisolated(unsafe) static var t0: CFAbsoluteTime = 0
+    static func stamp() -> String { String(format: "%7.3f", CFAbsoluteTimeGetCurrent() - t0) }
+    static func line(type: CGEventType, event: CGEvent) -> String {
+        let name: String
+        switch type {
+        case .leftMouseDown: name = "L-down"
+        case .leftMouseUp: name = "L-up"
+        case .rightMouseDown: name = "R-down"
+        case .rightMouseUp: name = "R-up"
+        case .otherMouseDown: name = "M-down"
+        case .otherMouseUp: name = "M-up"
+        default: name = "type\(type.rawValue)"
+        }
+        var mods = ""
+        if event.flags.contains(.maskAlternate) { mods += "⌥" }
+        if event.flags.contains(.maskShift) { mods += "⇧" }
+        if event.flags.contains(.maskCommand) { mods += "⌘" }
+        if event.flags.contains(.maskControl) { mods += "⌃" }
+        let clicks = event.getIntegerValueField(.mouseEventClickState)
+        let p = event.location
+        return "\(stamp())  mouse \(name)\(mods.isEmpty ? "" : " " + mods)  clicks=\(clicks)  at=(\(Int(p.x)),\(Int(p.y)))"
+    }
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 
 func usage() -> Never {
@@ -33,6 +60,7 @@ func usage() -> Never {
       grc-whisper transcribe <file> [--engine apple|parakeet]   transcribe an audio file (engine test)
       grc-whisper polish <text>       run the cleanup pipeline on text (LLM test)
       grc-whisper doctor              check permissions and on-device models
+      grc-whisper trackpad-tap-test [seconds]   probe the three-finger-tap detector + mouse events
       grc-whisper dict add <term> [misheard,variants]
       grc-whisper dict rm <term>
       grc-whisper dict list
@@ -692,6 +720,187 @@ case "macropad-live-test":
         finish(0)
     }
 
+case "macropad-summon-test":
+    // Summon (hold + three-finger tap) geometry + persistence harness: presents
+    // a REAL pad summoned at a fake cursor point, then walks summon-from-dock,
+    // send-home via the header "–", drag-ends-summon, edge flipping, and the
+    // no-collapse-on-mouse-exit guard — asserting after every step that the
+    // saved berth in pad-placement.json never changes except its open flag.
+    // No trackpad needed. Backs up / restores the user's live placement file.
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let placementURL = Config.appSupportDir.appendingPathComponent("pad-placement.json")
+        let placementBackup = try? Data(contentsOf: placementURL)
+        var failures = 0
+        func finish() -> Never {
+            if let placementBackup { try? placementBackup.write(to: placementURL, options: .atomic) }
+            else { try? FileManager.default.removeItem(at: placementURL) }
+            print(failures == 0 ? "ALL GREEN" : "\(failures) FAILURE(S)")
+            exit(failures == 0 ? 0 : 1)
+        }
+        func check(_ ok: Bool, _ what: String) {
+            if !ok { failures += 1 }
+            print("  [\(ok ? "ok" : "FAIL")] \(what)")
+        }
+        let front = [NSWorkspace.shared.frontmostApplication]
+            .compactMap { $0 }
+            .first { $0.bundleIdentifier != "com.grc.whisper" }
+            ?? NSWorkspace.shared.runningApplications.first {
+                $0.activationPolicy == .regular && $0.bundleIdentifier != "com.grc.whisper"
+            }
+        let buttons = ["Invoices", "Projects", "Receipts", "Travel", "Archive"]
+            .map { Config.MacroButton(title: $0, chord: "cmd+shift+m", text: $0, pressReturn: true) }
+        let profile = Config.MacroProfile(bundleID: front?.bundleIdentifier ?? "com.apple.finder",
+                                          name: front?.localizedName ?? "Finder", buttons: buttons)
+        guard let screen = NSScreen.main else { print("no screen"); finish() }
+        let vf = screen.visibleFrame
+        func pump(_ s: Double = 0.25) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+        func saved() -> PadPlacement? { PadPlacement.load("macro") }
+        func describe(_ p: PadPlacement?) -> String {
+            guard let p else { return "(none)" }
+            return "anchor=\(p.anchor?.rawValue ?? "nil") x=\(p.x.map { Int($0) }.map(String.init) ?? "nil") y=\(p.y.map { Int($0) }.map(String.init) ?? "nil") mini=\(p.mini ?? false) open=\(p.open ?? false)"
+        }
+        // The home record may legitimately carry the strip's x/y beside its
+        // anchor (a normal open persists the frame) — the invariant is that a
+        // summon changes NOTHING but the open flag.
+        func homeUnchanged(_ tag: String, since before: PadPlacement?, expectOpen: Bool) {
+            let p = saved()
+            let same = p?.anchor == before?.anchor && p?.x == before?.x && p?.y == before?.y
+                && (p?.mini ?? false) == (before?.mini ?? false)
+            check(same && p?.open == expectOpen,
+                  "\(tag): saved berth intact (\(describe(p))) vs before (\(describe(before)))")
+        }
+        func panelFor(_ pad: MacroPad) -> (NSPanel, MacroPadView)? {
+            guard let panel = app.windows.compactMap({ $0 as? NSPanel })
+                    .first(where: { $0.contentView is MacroPadView && $0.isVisible }),
+                  let view = panel.contentView as? MacroPadView else { return nil }
+            return (panel, view)
+        }
+        func frameStr(_ f: NSRect) -> String { "origin=(\(Int(f.minX)),\(Int(f.minY))) size=\(Int(f.width))x\(Int(f.height))" }
+        func besideCursor(_ f: NSRect, _ c: NSPoint) -> Bool {
+            let outside = !f.contains(c)
+            let near = abs(f.minX - (c.x + 10)) < 1 && abs(f.maxY - (c.y - 10)) < 1
+            return outside && near
+        }
+
+        // Seed the user's real-world state: docked mid-left, mini strip, closed.
+        PadPlacement.save("macro", anchor: .midLeft, topLeft: nil, mini: true, open: false)
+        let seeded = saved()
+        var summonEvents: [Bool] = []
+
+        // 1: summon from CLOSED at a mid-screen cursor.
+        let cursor = NSPoint(x: vf.midX, y: vf.midY)
+        let pad = MacroPad()
+        pad.onSummonChanged = { summonEvents.append($0) }
+        pad.present(profiles: [profile], dark: true, screen: screen, hotkeyName: "test",
+                    frontApp: front, at: cursor, onAction: { _, _ in })
+        pump()
+        guard let (panel, view) = panelFor(pad) else { print("NO PANEL"); finish() }
+        print("1 summon from closed: \(frameStr(panel.frame)) cursor=(\(Int(cursor.x)),\(Int(cursor.y)))")
+        check(pad.isSummoned, "1: isSummoned")
+        check(summonEvents == [true], "1: onSummonChanged fired true once (\(summonEvents))")
+        check(besideCursor(panel.frame, cursor), "1: pad beside the cursor, cursor outside it")
+        check(panel.frame.width >= 200 && panel.frame.height > 100, "1: full pad, not a strip")
+        check(view.buttonCount == 5, "1: five buttons rendered (\(view.buttonCount))")
+        homeUnchanged("1", since: seeded, expectOpen: true)
+
+        // 2: mouse-exit must NOT collapse a summoned pad (mini is preferred).
+        let sizeBefore = panel.frame.size
+        view.mouseExited(with: NSEvent.mouseEvent(with: .mouseMoved, location: NSPoint(x: -30, y: -30),
+                                                  modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: panel.windowNumber, context: nil,
+                                                  eventNumber: 0, clickCount: 1, pressure: 1)!)
+        pump()
+        check(panel.frame.size == sizeBefore, "2: no collapse on mouse-exit while summoned")
+
+        // 3: an app switch re-renders (an app with no profile = the short empty
+        // pad) — the summoned TOP-LEFT must hold while the height changes.
+        let f3 = panel.frame
+        pad.frontmostChanged(bundleID: "com.example.other", name: "Other")
+        pump()
+        check(abs(panel.frame.minX - f3.minX) < 1 && abs(panel.frame.maxY - f3.maxY) < 1,
+              "3: summoned top-left holds across an app switch (\(frameStr(panel.frame)))")
+        pad.frontmostChanged(bundleID: profile.bundleID, name: profile.name)
+        pump()
+
+        // 4: dismiss — home untouched, open=false, summon cleared.
+        pad.dismiss(); pump()
+        check(!pad.isSummoned, "4: summon cleared on dismiss")
+        check(summonEvents == [true, false], "4: onSummonChanged fired false (\(summonEvents))")
+        homeUnchanged("4", since: seeded, expectOpen: false)
+
+        // 5: normal open → must land on the mid-left berth as the strip.
+        pad.present(profiles: [profile], dark: true, screen: screen, hotkeyName: "test",
+                    frontApp: front, onAction: { _, _ in })
+        pump()
+        guard let (panel5, view5) = panelFor(pad) else { print("NO PANEL (5)"); finish() }
+        print("5 normal open: \(frameStr(panel5.frame))")
+        check(abs(panel5.frame.minX - (vf.minX + 12)) < 1 && panel5.frame.width < 60, "5: docked mid-left as a strip")
+        check(!pad.isSummoned, "5: not summoned")
+        let docked = saved()
+
+        // 6: summon the DOCKED pad to a cursor → full pad beside it, berth intact.
+        let cursor6 = NSPoint(x: vf.midX + 100, y: vf.midY - 80)
+        pad.summon(to: cursor6, on: screen); pump()
+        print("6 summon from dock: \(frameStr(panel5.frame))")
+        check(pad.isSummoned && besideCursor(panel5.frame, cursor6), "6: full pad beside the cursor")
+        check(panel5.frame.width >= 200, "6: full pad, not a strip")
+        homeUnchanged("6", since: docked, expectOpen: true)
+
+        // 7: header "–" while summoned = send it home (strip on the berth).
+        func synth(_ type: NSEvent.EventType, at pView: NSPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: view5.convert(pView, to: nil), modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime,
+                               windowNumber: panel5.windowNumber, context: nil,
+                               eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        view5.mouseDown(with: synth(.leftMouseDown, at: NSPoint(x: 157, y: 21))); pump()
+        print("7 after header –: \(frameStr(panel5.frame))")
+        check(!pad.isSummoned, "7: summon ended by –")
+        check(abs(panel5.frame.minX - (vf.minX + 12)) < 1 && panel5.frame.width < 60, "7: back on the mid-left berth as the strip")
+        homeUnchanged("7", since: docked, expectOpen: true)
+
+        // 8: summon again, then a REAL drag (mouseDown → dragged → up) to the
+        // right half — the drag ends the summon and becomes the new placement;
+        // a following app switch must not teleport it anywhere.
+        pad.summon(to: cursor6, on: screen); pump()
+        let grabView = NSPoint(x: 110, y: panel5.frame.height - 12)
+        view5.mouseDown(with: synth(.leftMouseDown, at: grabView))
+        let grabWin = view5.convert(grabView, to: nil)
+        let target = NSPoint(x: vf.midX + 300, y: vf.midY - 200)
+        let o = panel5.frame.origin
+        let dragLoc = NSPoint(x: grabWin.x + target.x - o.x, y: grabWin.y + target.y - o.y)
+        let drag = NSEvent.mouseEvent(with: .leftMouseDragged, location: dragLoc, modifierFlags: [],
+                                      timestamp: ProcessInfo.processInfo.systemUptime,
+                                      windowNumber: panel5.windowNumber, context: nil,
+                                      eventNumber: 0, clickCount: 1, pressure: 1)!
+        view5.mouseDragged(with: drag); pump(0.1)
+        view5.mouseUp(with: NSEvent.mouseEvent(with: .leftMouseUp, location: dragLoc, modifierFlags: [],
+                                               timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: panel5.windowNumber, context: nil,
+                                               eventNumber: 0, clickCount: 1, pressure: 1)!)
+        pump()
+        print("8 after drag: \(frameStr(panel5.frame)) saved: \(describe(saved()))")
+        check(!pad.isSummoned, "8: drag ended the summon")
+        let f8 = panel5.frame
+        let p8 = saved()
+        check(p8?.anchor != .midLeft, "8: placement is no longer the mid-left berth (explicit drag wins)")
+        pad.frontmostChanged(bundleID: "com.example.other", name: "Other"); pump()
+        pad.frontmostChanged(bundleID: profile.bundleID, name: profile.name); pump()
+        check(abs(panel5.frame.minX - f8.minX) < 1 && abs(panel5.frame.maxY - f8.maxY) < 1,
+              "8: no teleport after an app switch (\(frameStr(panel5.frame)))")
+
+        // 9: cursor in the bottom-right corner → pad flips left/up and stays on-screen.
+        let corner = NSPoint(x: vf.maxX - 4, y: vf.minY + 4)
+        pad.summon(to: corner, on: screen); pump()
+        print("9 corner summon: \(frameStr(panel5.frame))")
+        check(vf.contains(panel5.frame), "9: pad fully on-screen")
+        check(!panel5.frame.contains(corner), "9: cursor outside the pad")
+        pad.dismiss(); pump()
+        finish()
+    }
+
 case "cheatsheet-preview":
     // Offscreen render of the hold+Q hotkey cheat sheet.
     let out = args.count >= 2 ? args[1] : "cheatsheet-preview.png"
@@ -724,6 +933,46 @@ case "powerring-preview":
             try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
         }
     }
+
+case "trackpad-tap-test":
+    // Probe for the three-finger-tap summon: runs the detector standalone (no
+    // hotkey gating) and prints contact-count transitions + TAP lines, plus
+    // every mouse-button event the system emits meanwhile through a pass-
+    // through CGEventTap (Accessibility, which a trusted terminal passes
+    // down) — so we can see whether Three-Finger Drag turns a quick tap into
+    // a synthetic click, and whether that click lands before or after TAP.
+    let seconds = args.count >= 2 ? Double(args[1]) ?? 20 : 20
+    TapProbe.t0 = CFAbsoluteTimeGetCurrent()
+    let probe = TrackpadTapDetector.probe()
+    print("AXIsProcessTrusted: \(AXIsProcessTrusted())  MultitouchSupport: \(probe.available ? "loaded" : "MISSING")  devices: \(probe.devices)")
+    let detector = TrackpadTapDetector()
+    detector.onContactChange = { n in print("\(TapProbe.stamp())  contacts=\(n)") }
+    detector.onTap = { print("\(TapProbe.stamp())  TAP (three-finger)") }
+    detector.update(enabled: true)
+    let probeMask: CGEventMask =
+        (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.leftMouseUp.rawValue)
+        | (1 << CGEventType.rightMouseDown.rawValue) | (1 << CGEventType.rightMouseUp.rawValue)
+        | (1 << CGEventType.otherMouseDown.rawValue) | (1 << CGEventType.otherMouseUp.rawValue)
+    if let tap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+        eventsOfInterest: probeMask,
+        callback: { _, type, event, _ in
+            print(TapProbe.line(type: type, event: event))
+            return Unmanaged.passUnretained(event)
+        },
+        userInfo: nil
+    ) {
+        let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+    } else {
+        print("mouse tap unavailable (this process isn't Accessibility-trusted) — contact log only")
+    }
+    print("listening \(Int(seconds))s — do: 3× three-finger tap · 3× with the hotkey held · a three-finger window drag")
+    RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    detector.update(enabled: false)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    print("done")
 
 case "dockoverlay-preview":
     // Offscreen render of the drag-time dock-target overlay (fake 1440x900

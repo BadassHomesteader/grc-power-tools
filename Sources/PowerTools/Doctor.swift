@@ -73,6 +73,17 @@ enum Doctor {
             detail: screen ? "granted" : "needed for screenshot→text (⌥⌘T) — System Settings ▸ Privacy & Security ▸ Screen Recording"
         ))
 
+        // Informational: no trackpad / no private framework just means the
+        // three-finger-tap summon is off — never a failure.
+        let pad = TrackpadTapDetector.probe()
+        checks.append(Check(
+            name: "Trackpad gestures",
+            ok: true,
+            detail: pad.available
+                ? "MultitouchSupport loaded, \(pad.devices) multitouch device(s) — hold hotkey + three-finger tap summons the Macro Pad"
+                : "not available (private MultitouchSupport framework missing) — three-finger-tap summon is off"
+        ))
+
         let secure = IsSecureEventInputEnabled()
         checks.append(Check(
             name: "Secure input",
