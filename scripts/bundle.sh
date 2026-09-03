@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 BUNDLE_ID="com.grc.whisper"
 APP_NAME="Power Tools"
 OLD_APP_NAME="GRC Whisper"
-VERSION="1.30.1"
+VERSION="1.31.0"
 DIST="dist"
 APP="$DIST/$APP_NAME.app"
 

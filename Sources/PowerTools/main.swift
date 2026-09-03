@@ -734,22 +734,29 @@ case "agentpad-preview":
     let mini = args.contains("mini")
     MainActor.assumeIsolated {
         func fake(_ id: String, _ cwd: String, _ label: String, _ state: ClaudeSession.State,
-                  _ detail: String, ageSec: Double) -> ClaudeSession {
+                  _ detail: String, ageSec: Double,
+                  branch: String = "", model: String = "", msgs: Int = 0, tokens: Int = 0) -> ClaudeSession {
             var s = ClaudeSession(id: id)
             s.cwd = cwd; s.label = label; s.state = state; s.detail = detail
+            s.branch = branch; s.model = model; s.msgs = msgs; s.tokens = tokens
             s.stateChanged = Date().addingTimeInterval(-ageSec)
             return s
         }
-        var codexRow = fake("codex-1", "/Users/dev/livevox", "Assess GridOps_Cal for refactors", .busy, "", ageSec: 30)
+        var codexRow = fake("codex-1", "/Users/dev/livevox", "Assess GridOps_Cal for refactors", .busy,
+                            "Reading livevox/client.js", ageSec: 30, branch: "main", model: "GPT", msgs: 9, tokens: 14_100)
         codexRow.kind = "codex"
         var cursorRow = fake("cursor-1", "/dev/bees-bots-balance", "Chapter 2 improvements", .unseen, "cloud · ch02b-migrations", ageSec: 210)
         cursorRow.kind = "cursor"
         let sessions = AgentPad.triageSorted([
-            fake("1", "/Users/dev/gridops-ft-kyaw", "Fix the daypart call columns rebuild", .busy, "", ageSec: 45),
-            fake("2", "/Users/dev/grc-power-tools", "Review macropad idea for Power Tools", .needsPermission, "Bash: scripts/bundle.sh", ageSec: 12),
-            fake("3", "/Users/dev/libre-crm-cci", "I need to make a CRM for CCI", .idle, "", ageSec: 300),
-            fake("4", "/Users/dev/grc-todo", "", .error, "rate_limit", ageSec: 660),
-            fake("5", "/Users/dev/gridops-ft-njaw", "Reconcile the corr-index blanks", .idle, "", ageSec: 90_000),
+            fake("1", "/Users/dev/gridops-ft-kyaw", "Fix the daypart call columns rebuild", .busy,
+                 "Editing css-report.js", ageSec: 45, branch: "fix/daypart-columns", model: "Sonnet", msgs: 41, tokens: 88_300),
+            fake("2", "/Users/dev/grc-power-tools", "Snap points for macro and agent pads", .needsPermission,
+                 "Bash: scripts/bundle.sh", ageSec: 12, branch: "main", model: "Opus", msgs: 28, tokens: 50_400),
+            fake("3", "/Users/dev/libre-crm-cci", "I need to make a CRM for CCI", .idle,
+                 "", ageSec: 300, branch: "feature/pipeline-sheet", model: "Opus", msgs: 12, tokens: 21_300),
+            fake("4", "/Users/dev/grc-todo", "", .error, "rate_limit", ageSec: 660, branch: "main", model: "Haiku", msgs: 4, tokens: 900),
+            fake("5", "/Users/dev/gridops-ft-njaw", "Reconcile the corr-index blanks", .idle,
+                 "", ageSec: 90_000, branch: "main", model: "Sonnet", msgs: 133, tokens: 1_240_000),
             codexRow,
             cursorRow,
         ])

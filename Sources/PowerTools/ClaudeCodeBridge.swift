@@ -28,6 +28,19 @@ struct ClaudeSession: Codable {
         case needsInput       // Claude asked a question / sat idle
         case error            // the turn died (rate limit, billing, …)
 
+        /// Short form for the row's status chip — `label` is the prose version
+        /// used on the detail line.
+        var chip: String {
+            switch self {
+            case .busy: return "Running"
+            case .idle: return "Idle"
+            case .unseen: return "Done"
+            case .needsPermission: return "Permission"
+            case .needsInput: return "Waiting"
+            case .error: return "Failed"
+            }
+        }
+
         var label: String {
             switch self {
             case .busy: return "working…"
@@ -59,6 +72,17 @@ struct ClaudeSession: Codable {
     /// transcript or captured from UserPromptSubmit.
     var label: String = ""
     var labelBackfillStarted = false
+    /// Row metadata folded out of the transcript / working copy on refresh —
+    /// see TranscriptStats and GitBranch. All best-effort: an empty value just
+    /// means the row draws one less chip.
+    var branch: String = ""
+    /// The model the transcript LAST ran with — not the configured default, so
+    /// a mid-session /model switch shows up.
+    var model: String = ""
+    /// Assistant turns, and input+output tokens (cache reads excluded, same as
+    /// the number Claude Code itself reports).
+    var msgs: Int = 0
+    var tokens: Int = 0
     var started = Date()
     var stateChanged = Date()
 
@@ -77,6 +101,15 @@ struct ClaudeSession: Codable {
     var isCursor: Bool { kind == "cursor" }
     /// No injection channel (Electron hosts): row = presence + state + focus.
     var isWatchOnly: Bool { isCodex || isCursor }
+
+    /// Where Claude Code keeps this session's transcript. The path is fully
+    /// determined by cwd + id (~/.claude/projects/<cwd with / and . dashed>/
+    /// <id>.jsonl), so nothing has to be threaded through the hook payloads.
+    var transcriptPath: String {
+        guard !cwd.isEmpty, !id.isEmpty else { return "" }
+        let slug = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
+        return NSHomeDirectory() + "/.claude/projects/" + slug + "/" + id + ".jsonl"
+    }
 
     /// Short tty tag ("s003") to tell two sessions in the same project apart.
     var ttyTag: String {

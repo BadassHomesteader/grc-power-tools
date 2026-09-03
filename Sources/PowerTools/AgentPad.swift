@@ -78,7 +78,22 @@ final class AgentPad: NSObject {
 
     /// Re-derive the visible rows from the raw list (drop long-idle, triage).
     private func applyVisible() {
-        sessions = Self.triageSorted(Self.visible(allSessions))
+        sessions = Self.triageSorted(Self.visible(allSessions)).map(Self.enriched)
+    }
+
+    /// Fold in the row metadata the pad draws but the hooks never send: branch,
+    /// model, turns, tokens, and Claude Code's own session title. Both readers
+    /// are cached and incremental, so this runs on every 10s refresh.
+    private static func enriched(_ session: ClaudeSession) -> ClaudeSession {
+        var s = session
+        s.branch = GitBranch.shared.branch(forCwd: s.cwd)
+        let totals = TranscriptStats.shared.totals(for: s.transcriptPath)
+        s.model = totals.model
+        s.msgs = totals.msgs
+        s.tokens = totals.tokens
+        // Claude Code's generated title beats the first-prompt backfill.
+        if !totals.title.isEmpty { s.label = totals.title }
+        return s
     }
 
     var isVisible: Bool { panel != nil }
@@ -116,8 +131,20 @@ final class AgentPad: NSObject {
 
     /// Filter out long-idle sessions before they reach the pad, so the full
     /// rows, the mini traffic-light strip, and the header counts all agree.
+    /// Long-idle sessions aren't live work, but deleting them from the pad threw
+    /// away the answer to "what was I just doing?" — they fold under a Recent
+    /// header instead, capped so a week of chats can't push the pad off-screen.
+    nonisolated static func isRecent(_ s: ClaudeSession) -> Bool {
+        s.state == .idle && s.stateChanged.timeIntervalSinceNow < -hideIdleAfter
+    }
+    nonisolated private static let maxRecent = 3
+
     nonisolated static func visible(_ sessions: [ClaudeSession]) -> [ClaudeSession] {
-        sessions.filter { !($0.state == .idle && $0.stateChanged.timeIntervalSinceNow < -hideIdleAfter) }
+        let live = sessions.filter { !isRecent($0) }
+        let recent = sessions.filter(isRecent)
+            .sorted { $0.stateChanged > $1.stateChanged }
+            .prefix(maxRecent)
+        return live + recent
     }
 
     /// Triage order: blocked sessions first, then everything else by how fresh
@@ -129,7 +156,7 @@ final class AgentPad: NSObject {
             case .needsInput, .unseen: return 1
             case .error: return 2
             case .busy: return 3
-            case .idle: return 4
+            case .idle: return isRecent(s) ? 5 : 4
             }
         }
         return sessions.sorted {
@@ -533,11 +560,13 @@ final class AgentPadView: NSView {
     private var hoveredCloseRow: Int?
     private var pressedRow: Int?
 
-    private static let width: CGFloat = 224
+    // Three lines per row — identity+chips, task, activity+spend — need more
+    // width than the old two-line row; 300 still tucks beside the notch.
+    private static let width: CGFloat = 300
     private static let pad: CGFloat = 10
     private static let headerH: CGFloat = 30
-    private static let rowH: CGFloat = 46        // resting: title + state line
-    private static let rowHTall: CGFloat = 68    // needs-permission: ✓/✕ get their own line
+    private static let rowH: CGFloat = 58        // repo/chips · task · activity
+    private static let rowHTall: CGFloat = 80    // needs-permission: ✓/✕ get their own line
     private static let gap: CGFloat = 5
     private static let emptyH: CGFloat = 64
     private static let footerH: CGFloat = 30
@@ -603,7 +632,8 @@ final class AgentPadView: NSView {
         }
         let content = sessions.isEmpty
             ? Self.emptyH
-            : sessions.indices.reduce(0) { $0 + rowHeight($1) } + CGFloat(sessions.count - 1) * Self.gap + Self.footerH
+            : sessions.indices.reduce(0) { $0 + rowHeight($1) } + CGFloat(sessions.count - 1) * Self.gap
+                + (firstRecent == nil ? 0 : Self.recentHeaderH) + Self.footerH
         return NSSize(width: Self.width, height: Self.pad + Self.headerH + content + Self.pad)
     }
 
@@ -639,13 +669,52 @@ final class AgentPadView: NSView {
         }
     }
 
+    /// A small pill: the row's dense-metadata language, one per fact.
+    /// Returns the x to continue at.
+    @discardableResult
+    private func drawChip(_ text: String, at x: CGFloat, y: CGFloat, color: NSColor) -> CGFloat {
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9, weight: .semibold), .foregroundColor: color]
+        let w = (text as NSString).size(withAttributes: attrs).width
+        let r = NSRect(x: x, y: y, width: w + 9, height: 13)
+        color.withAlphaComponent(0.18).setFill()
+        NSBezierPath(roundedRect: r, xRadius: 3.5, yRadius: 3.5).fill()
+        (text as NSString).draw(at: NSPoint(x: x + 4.5, y: y + 1), withAttributes: attrs)
+        return r.maxX + 4
+    }
+
+    /// One tint per model family, so "which of these is on Opus" is a glance.
+    private static func modelColor(_ model: String) -> NSColor {
+        switch model {
+        case "Opus": return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+        case "Sonnet": return NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1)
+        case "Haiku": return NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)
+        default: return NSColor(srgbRed: 0.6, green: 0.55, blue: 0.75, alpha: 1)
+        }
+    }
+
+    /// 50421 → "50.4k". The row has no room for digits nobody reads.
+    private static func compact(_ n: Int) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+        if n >= 1_000 { return String(format: "%.1fk", Double(n) / 1_000) }
+        return "\(n)"
+    }
+
     private func rowHeight(_ i: Int) -> CGFloat {
         sessions[i].state == .needsPermission ? Self.rowHTall : Self.rowH
+    }
+
+    private static let recentHeaderH: CGFloat = 17
+
+    /// Index of the first long-idle row, i.e. where the Recent group starts.
+    private var firstRecent: Int? {
+        sessions.firstIndex(where: AgentPad.isRecent)
     }
 
     private func rowRect(_ i: Int) -> NSRect {
         var y = Self.pad + Self.headerH
         for j in 0..<i { y += rowHeight(j) + Self.gap }
+        if let firstRecent, i >= firstRecent { y += Self.recentHeaderH }
         return NSRect(x: Self.pad, y: y, width: Self.width - Self.pad * 2, height: rowHeight(i))
     }
 
@@ -796,6 +865,14 @@ final class AgentPadView: NSView {
             return
         }
 
+        if let firstRecent {
+            let r = rowRect(firstRecent)
+            ("Recent" as NSString).draw(
+                at: NSPoint(x: r.minX + 3, y: r.minY - Self.recentHeaderH + 2),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 9, weight: .semibold),
+                                 .foregroundColor: dim.withAlphaComponent(0.55)])
+        }
+
         for (i, session) in sessions.enumerated() {
             // Rows parked idle for over an hour recede so live work pops;
             // hovering restores full strength for reading.
@@ -834,46 +911,90 @@ final class AgentPadView: NSView {
             NSBezierPath(roundedRect: NSRect(x: r.minX + 4, y: r.minY + 6, width: 3, height: r.height - 12),
                          xRadius: 1.5, yRadius: 1.5).fill()
 
-            // Title — the row tint itself is the status indicator.
             let btns = buttons(for: session)
-            let textMaxX = r.maxX - 10
-            (session.displayTitle as NSString).draw(
-                in: NSRect(x: r.minX + 13, y: r.minY + 6, width: rowCloseRect(i).minX - 4 - (r.minX + 13), height: 16),
-                withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg,
-                                 .paragraphStyle: truncating])
+            let x0 = r.minX + 13
+            let rightEdge = r.maxX - 10
 
-            // Row ✕ — close a stale chat.
+            // LINE 1 — identity: repo, what it is doing, what it is doing it
+            // with. Branch sits at the right until hover swaps in the ✕.
+            var x = x0
+            let repoAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg,
+                .paragraphStyle: truncating]
+            let repo = session.projectName as NSString
+            let repoW = min(repo.size(withAttributes: repoAttrs).width, 110)
+            repo.draw(in: NSRect(x: x, y: r.minY + 5, width: repoW, height: 15), withAttributes: repoAttrs)
+            x += repoW + 6
+            x = drawChip(session.state.chip, at: x, y: r.minY + 6, color: Self.stateColor(session.state))
+            if !session.model.isEmpty {
+                x = drawChip(session.model, at: x, y: r.minY + 6, color: Self.modelColor(session.model))
+            }
+
+            // Row ✕ on hover only — otherwise that corner carries the branch,
+            // which is what tells two sessions in one repo apart.
             let cr = rowCloseRect(i)
-            let closeColor: NSColor = hoveredCloseRow == i
-                ? NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1) : dim.withAlphaComponent(0.4)
-            let closeGlyph = "✕" as NSString
-            let closeAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: closeColor]
-            let closeSize = closeGlyph.size(withAttributes: closeAttrs)
-            closeGlyph.draw(at: NSPoint(x: cr.midX - closeSize.width / 2, y: cr.midY - closeSize.height / 2),
-                            withAttributes: closeAttrs)
+            if i == hoveredRow {
+                let closeColor: NSColor = hoveredCloseRow == i
+                    ? NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1) : dim.withAlphaComponent(0.5)
+                let closeGlyph = "✕" as NSString
+                let closeAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: closeColor]
+                let closeSize = closeGlyph.size(withAttributes: closeAttrs)
+                closeGlyph.draw(at: NSPoint(x: cr.midX - closeSize.width / 2, y: cr.midY - closeSize.height / 2),
+                                withAttributes: closeAttrs)
+            } else if !session.branch.isEmpty {
+                let bAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim.withAlphaComponent(0.7),
+                    .paragraphStyle: truncating]
+                let room = rightEdge - x - 4
+                // Shed the prefix before shedding characters: "feature/pipeline-sheet"
+                // reads as "pipeline-sheet", never as "…eature/pipeline-sheet".
+                var text = "⑂ \(session.branch)"
+                if (text as NSString).size(withAttributes: bAttrs).width > room,
+                   let tail = session.branch.split(separator: "/").last {
+                    text = "⑂ \(tail)"
+                }
+                let w = min((text as NSString).size(withAttributes: bAttrs).width, room)
+                if w > 26 {
+                    (text as NSString).draw(in: NSRect(x: rightEdge - w, y: r.minY + 7, width: w, height: 12),
+                                            withAttributes: bAttrs)
+                }
+            }
 
-            // Second line: state · age · project (the project folder moves down
-            // here once the title is the prompt; tty tag disambiguates twins).
-            var line2 = "\(session.state.label) · \(Self.age(session.stateChanged))"
-            line2 += " · \(session.kind ?? "claude")"
-            if !session.label.isEmpty {
-                line2 += " · \(session.projectName)"
-            } else if !session.ttyTag.isEmpty,
-                      sessions.contains(where: { $0.id != session.id && $0.projectName == session.projectName }) {
-                line2 += " · \(session.ttyTag)"
-            }
-            if !session.detail.isEmpty {
-                let d = session.detail.replacingOccurrences(of: "\n", with: " ")
-                line2 = "\(session.state.label) · \(d)"
-            }
-            // Hover swaps this line for the buttons — except on rows that have
-            // none (watch-only agents), where it would just blank out.
-            if session.state == .needsPermission || i != hoveredRow || btns.isEmpty {
-                (line2 as NSString).draw(
-                    in: NSRect(x: r.minX + 13, y: r.minY + 24, width: textMaxX - (r.minX + 13), height: 14),
-                    withAttributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: dim,
+            // LINE 2 — the task. LINE 3 — what it is touching right now, in
+            // mono because it is a path or a command. With no task yet, the
+            // activity moves up so the row never carries a dead line.
+            let task = session.label
+            let activity = session.detail.replacingOccurrences(of: "\n", with: " ")
+            var lineY = r.minY + 22
+            if !task.isEmpty {
+                (task as NSString).draw(
+                    in: NSRect(x: x0, y: lineY, width: rightEdge - x0, height: 15),
+                    withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: fg.withAlphaComponent(0.8),
                                      .paragraphStyle: truncating])
+                lineY += 17
+            }
+
+            // Spend, right-aligned on the last line — hover gives the space to
+            // the action buttons instead.
+            // Whatever is on the right of the last line — spend, or the action
+            // buttons — bounds the activity text so the two never overlap.
+            var metricsX = rightEdge
+            if showsActions(i), !btns.isEmpty {
+                metricsX = buttonRect(i, 0, count: btns.count).minX - 6
+            } else if session.msgs > 0 {
+                let mAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim.withAlphaComponent(0.75)]
+                let text = "\(session.msgs) msgs · \(Self.compact(session.tokens)) tok" as NSString
+                let w = text.size(withAttributes: mAttrs).width
+                metricsX = rightEdge - w
+                text.draw(at: NSPoint(x: metricsX, y: lineY + 1), withAttributes: mAttrs)
+            }
+            if !activity.isEmpty {
+                (activity as NSString).draw(
+                    in: NSRect(x: x0, y: lineY, width: max(metricsX - 6 - x0, 20), height: 13),
+                    withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .regular),
+                                     .foregroundColor: dim, .paragraphStyle: truncating])
             }
 
             // Action buttons.
@@ -915,6 +1036,13 @@ final class AgentPadView: NSView {
                                   y: bounds.height - Self.pad - 25 + CGFloat(hi) * 13),
                       withAttributes: hintAttrs)
         }
+    }
+
+    private var truncatingHead: NSParagraphStyle {
+        let p = NSMutableParagraphStyle()
+        p.lineBreakMode = .byTruncatingHead
+        p.alignment = .right
+        return p
     }
 
     private var truncating: NSParagraphStyle {
