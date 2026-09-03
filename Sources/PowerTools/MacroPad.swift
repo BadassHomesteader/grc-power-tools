@@ -48,11 +48,59 @@ final class MacroPad {
     /// tap's `macroPadSummoned` mirror: every clear path notifies.
     private var summonPoint: NSPoint? {
         didSet {
-            if (oldValue != nil) != (summonPoint != nil) { onSummonChanged?(summonPoint != nil) }
+            let now = summonPoint != nil
+            guard (oldValue != nil) != now else { return }
+            onSummonChanged?(now)
+            if now { armClickAway() } else { disarmClickAway() }
         }
     }
     var isSummoned: Bool { summonPoint != nil }
     var onSummonChanged: ((Bool) -> Void)?
+    /// A summon is a loan: a pad that was docked / floating goes back home
+    /// when it ends, a pad that was closed closes again.
+    private var summonReturnsHome = false
+    /// Fire-once, like the Power Ring: a click anywhere ELSE ends the summon.
+    /// A global monitor never sees clicks on our own windows, so the pad's
+    /// buttons and header are unaffected. Armed with a short grace period so
+    /// a synthetic click riding on the summon gesture itself can't kill it.
+    private var clickAway: Any?
+    private var summonArmedAt: CFAbsoluteTime = 0
+
+    private func armClickAway() {
+        disarmClickAway()
+        summonArmedAt = CFAbsoluteTimeGetCurrent()
+        clickAway = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, CFAbsoluteTimeGetCurrent() - self.summonArmedAt > 0.3 else { return }
+                self.endSummon()
+            }
+        }
+    }
+
+    private func disarmClickAway() {
+        if let clickAway { NSEvent.removeMonitor(clickAway) }
+        clickAway = nil
+    }
+
+    /// The summon is over: back to the berth it was borrowed from, or gone.
+    func endSummon() {
+        guard summonPoint != nil else { return }
+        if summonReturnsHome, panel != nil {
+            summonPoint = nil
+            miniActive = miniPreferred
+            render(preservingHighlights: true)
+        } else {
+            dismiss()
+        }
+    }
+
+    /// A macro fired from a summoned pad: one job, then leave — after the
+    /// pressed flash has had a beat to show. The macro itself keeps running
+    /// (it's queued on the controller's chain, not on this panel).
+    func summonFired() {
+        guard summonPoint != nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.endSummon() }
+    }
     private var suggestTask: Task<Void, Never>?
     private var suggestTimer: Timer?
     /// Generation counter: a scan may only touch shared state (suggestTask,
@@ -111,6 +159,7 @@ final class MacroPad {
             miniActive = miniPreferred
         }
         if let cursor {
+            summonReturnsHome = false   // it was closed — it closes again after the job
             summonPoint = cursor
             miniActive = false   // a summoned pad is always the full pad
         }
@@ -128,6 +177,7 @@ final class MacroPad {
         if dockAnchor == nil, summonPoint == nil {
             savedTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
         }
+        summonReturnsHome = true   // borrowed from its berth — it goes back after the job
         summonPoint = point
         miniActive = false
         render(on: screen, preservingHighlights: true)
@@ -242,6 +292,7 @@ final class MacroPad {
                   let profile = self.profile(for: bundleID),
                   index < profile.buttons.count else { return }
             self.onAction?(profile.buttons[index], bundleID)
+            self.summonFired()   // fire-once: a summoned pad leaves after its job
         }
         view.onClose = { [weak self] in self?.dismiss() }
         view.onRescan = { [weak self] in

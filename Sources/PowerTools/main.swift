@@ -898,6 +898,52 @@ case "macropad-summon-test":
         check(vf.contains(panel5.frame), "9: pad fully on-screen")
         check(!panel5.frame.contains(corner), "9: cursor outside the pad")
         pad.dismiss(); pump()
+
+        // 10: FIRE-ONCE from a CLOSED pad — click button 1 → the macro fires
+        // and the pad is gone again (it was closed before the summon).
+        var fired: [String] = []
+        pad.present(profiles: [profile], dark: true, screen: screen, hotkeyName: "test",
+                    frontApp: front, at: cursor, onAction: { b, _ in fired.append(b.title) })
+        pump()
+        guard let (panel10, view10) = panelFor(pad) else { print("NO PANEL (10)"); finish() }
+        func click(_ v: MacroPadView, _ p: NSPanel, at pView: NSPoint) {
+            v.mouseDown(with: NSEvent.mouseEvent(with: .leftMouseDown, location: v.convert(pView, to: nil),
+                                                 modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                 windowNumber: p.windowNumber, context: nil,
+                                                 eventNumber: 0, clickCount: 1, pressure: 1)!)
+        }
+        click(view10, panel10, at: NSPoint(x: 110, y: 55))   // button 1 center (flipped view coords)
+        pump(0.5)
+        check(fired == ["Invoices"], "10: button fired (\(fired))")
+        check(!pad.isVisible && !pad.isSummoned, "10: pad gone after the fire (it was closed before the summon)")
+        check(saved()?.open == false, "10: saved open=false (\(describe(saved())))")
+
+        // 11: FIRE-ONCE from a DOCKED pad — open normally (strip on the berth),
+        // summon, click button 2 → the pad returns to the berth as the strip.
+        pad.present(profiles: [profile], dark: true, screen: screen, hotkeyName: "test",
+                    frontApp: front, onAction: { b, _ in fired.append(b.title) })
+        pump()
+        let dockedAgain = saved()
+        pad.summon(to: cursor6, on: screen); pump()
+        guard let (panel11, view11) = panelFor(pad) else { print("NO PANEL (11)"); finish() }
+        check(pad.isSummoned && panel11.frame.width >= 200, "11: summoned full pad from the dock")
+        click(view11, panel11, at: NSPoint(x: 110, y: 90))   // button 2 center
+        pump(0.5)
+        check(fired == ["Invoices", "Projects"], "11: second button fired (\(fired))")
+        check(pad.isVisible && !pad.isSummoned, "11: pad still open, summon ended")
+        // Home is whatever the record says — after step 8 that is the dragged
+        // free-float spot, not the mid-left berth.
+        let homeX = dockedAgain?.x ?? (vf.minX + 12)
+        check(abs(panel11.frame.minX - homeX) < 1 && panel11.frame.width < 60,
+              "11: back home as the strip (\(frameStr(panel11.frame)) vs home x=\(Int(homeX)))")
+        homeUnchanged("11", since: dockedAgain, expectOpen: true)
+
+        // 12: endSummon() (what plain Esc / click-away / a second tap call)
+        // on a docked-then-summoned pad also returns it home, not away.
+        pad.summon(to: cursor6, on: screen); pump()
+        pad.endSummon(); pump()
+        check(pad.isVisible && !pad.isSummoned && panel11.frame.width < 60, "12: endSummon on a borrowed pad sends it home")
+        pad.dismiss(); pump()
         finish()
     }
 

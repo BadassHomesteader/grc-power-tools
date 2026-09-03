@@ -406,18 +406,21 @@ final class HotkeyMonitor {
             dispatch(.cycleCancel)
             return nil
         }
-        // Plain Esc while the cheat sheet, Power Ring, or whiteboard is up →
-        // close them (swallowed so the frontmost app's dialogs don't also
-        // close). Leader-held Esc keeps its cancel meaning — they close there
-        // too (leader block below).
-        if cheatSheetVisible || powerRingVisible || whiteboardVisible, !held, type == .keyDown,
-           keyCode == Self.kVK_Escape,
+        // Plain Esc while the cheat sheet, Power Ring, whiteboard, or a
+        // SUMMONED macro pad is up → close them (swallowed so the frontmost
+        // app's dialogs don't also close). The summoned pad qualifies because
+        // it is fire-once — it leaves after one macro or the next click
+        // elsewhere, so it can never sit there eating Esc. Leader-held Esc
+        // keeps its cancel meaning — they close there too (leader block below).
+        if cheatSheetVisible || powerRingVisible || whiteboardVisible || macroPadSummoned,
+           !held, type == .keyDown, keyCode == Self.kVK_Escape,
            flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).isEmpty {
             swallowedKeyUps.insert(keyCode)
             if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
                 if cheatSheetVisible { dispatch(.cheatSheetClose) }
                 if powerRingVisible { dispatch(.powerRingClose) }
                 if whiteboardVisible { dispatch(.whiteboardClose) }
+                if macroPadSummoned { dispatch(.macroPadSummonClose) }
             }
             return nil
         }
@@ -495,8 +498,6 @@ final class HotkeyMonitor {
                 if cheatSheetVisible { dispatch(.cheatSheetClose) }
                 if powerRingVisible { dispatch(.powerRingClose) }
                 if whiteboardVisible { dispatch(.whiteboardClose) }
-                // Leader-held only: a summoned pad stays open like the docked
-                // pad, so plain Esc must keep reaching the app in front.
                 if macroPadSummoned { dispatch(.macroPadSummonClose) }
                 dispatch(.cancel)
                 return nil // swallow so it doesn't close the user's dialogs

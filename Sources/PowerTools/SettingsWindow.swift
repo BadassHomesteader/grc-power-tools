@@ -84,7 +84,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     // Macro Pad: enable toggle + the Outlook folder-button editor.
     private let macroPadCheck = NSButton(checkboxWithTitle: "Macro Pad — floating per-app buttons (hold hotkey + B, or menu bar ▸ Macro Pad)", target: nil, action: nil)
-    private let macroSummonCheck = NSButton(checkboxWithTitle: "Summon to the cursor — hold hotkey + three-finger tap on the trackpad", target: nil, action: nil)
+    private let macroSummonCheck = NSButton(checkboxWithTitle: "Summon to the cursor for one macro — hold hotkey + three-finger tap on the trackpad", target: nil, action: nil)
     private let macroFoldersView = NSTextView()
     private let macroPadStatus = NSTextField(labelWithString: " ")
 
@@ -1284,7 +1284,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  D   new document — Word / Excel / … in the current Finder folder
         •  N   quick capture — send a line to your connection (todo app, webhook)
         •  M   find my mouse — spotlight the cursor
-        •  B   macro pad — floating per-app buttons (Outlook folder filing); while it's open, hold + 1…9 fires that button; hold + three-finger tap summons it to the cursor
+        •  B   macro pad — floating per-app buttons (Outlook folder filing); while it's open, hold + 1…9 fires that button; hold + three-finger tap summons it to the cursor for one macro
         •  W   snap palette — halves · quarters · thirds · mini-grid
         •  ← → ↑ ↓   snap window (repeat = resize · chain ← ↑ = corner)
         •  ⏎   maximize   ·   3   draw-a-grid placement

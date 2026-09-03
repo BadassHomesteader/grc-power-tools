@@ -205,7 +205,7 @@ final class AppController {
             case .macroPadSummon:
                 self.summonMacroPad()
             case .macroPadSummonClose:
-                self.macroPad.dismiss()
+                self.macroPad.endSummon()
             case .agentPad:
                 self.toggleAgentPad()
             case .cheatSheet:
@@ -787,13 +787,13 @@ final class AppController {
         presentMacroPad(at: nil)
     }
 
-    /// hold + three-finger tap on the trackpad: the pad beside the cursor.
-    /// Hidden → opens there; docked → moves there; already summoned → closes
-    /// (a second tap toggles it away, like hold + B).
+    /// hold + three-finger tap on the trackpad: the pad beside the cursor for
+    /// ONE macro. Hidden → opens there; docked → moves there; already summoned
+    /// → the summon ends (back to its berth, or away if it was closed).
     func summonMacroPad() {
         interruptDictation()
         if macroPad.isVisible {
-            if macroPad.isSummoned { macroPad.dismiss(); return }
+            if macroPad.isSummoned { macroPad.endSummon(); return }
             overlay.hide()
             let mouse = NSEvent.mouseLocation
             guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
@@ -1044,6 +1044,7 @@ final class AppController {
         guard let (button, bundleID) = macroPad.buttonForDigit(index) else { return }
         macroPad.flashButton(index)
         runMacroButton(button, targetBundleID: bundleID)
+        macroPad.summonFired()   // fire-once for a summoned pad; no-op when docked
     }
 
     /// Runs are chained so rapid leader-digit fires queue and execute in order
