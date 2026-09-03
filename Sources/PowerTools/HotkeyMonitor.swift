@@ -95,6 +95,9 @@ final class HotkeyMonitor {
     /// the multitouch thread via `trackpadThreeFingerTap()`.
     var macroPadSummonEnabled = true
     var macroPadSummoned = false
+    /// True while the pad's Move search box has the caret (same discipline):
+    /// plain Esc must reach the field (clear it) rather than close the pad.
+    var macroPadSearchEditing = false
 
     /// keyCode → pad button index for the digit row (1…9 then 0 = tenth).
     private static let macroDigitIndex: [Int64: Int] = [
@@ -412,7 +415,8 @@ final class HotkeyMonitor {
         // it is fire-once — it leaves after one macro or the next click
         // elsewhere, so it can never sit there eating Esc. Leader-held Esc
         // keeps its cancel meaning — they close there too (leader block below).
-        if cheatSheetVisible || powerRingVisible || whiteboardVisible || macroPadSummoned,
+        let padEsc = macroPadSummoned && !macroPadSearchEditing   // Esc in the search box clears the box
+        if cheatSheetVisible || powerRingVisible || whiteboardVisible || padEsc,
            !held, type == .keyDown, keyCode == Self.kVK_Escape,
            flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).isEmpty {
             swallowedKeyUps.insert(keyCode)
@@ -420,7 +424,7 @@ final class HotkeyMonitor {
                 if cheatSheetVisible { dispatch(.cheatSheetClose) }
                 if powerRingVisible { dispatch(.powerRingClose) }
                 if whiteboardVisible { dispatch(.whiteboardClose) }
-                if macroPadSummoned { dispatch(.macroPadSummonClose) }
+                if padEsc { dispatch(.macroPadSummonClose) }
             }
             return nil
         }

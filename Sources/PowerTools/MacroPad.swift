@@ -2,6 +2,64 @@ import Cocoa
 import ScreenCaptureKit
 import Carbon.HIToolbox
 
+/// One column of the pad: a title and the FLAT indices of the buttons in it
+/// (config order). Columns only map indices to a place on the pad — leader
+/// digits, OCR highlights, `flash`, and the mini strip all keep the flat index.
+struct PadColumn {
+    let title: String
+    let indices: [Int]
+}
+
+enum PadColumns {
+    /// Blank group → automatic: folder-move buttons are Favorites, the rest Actions.
+    static func automaticGroup(_ b: Config.MacroButton) -> String {
+        b.menuPath == Config.MacroButton.moveMenuPath ? "Favorites" : "Actions"
+    }
+
+    /// The column a button lands in — its own group, spelled canonically for
+    /// the two built-ins, else the automatic one.
+    static func effectiveGroup(_ b: Config.MacroButton) -> String {
+        let g = b.group.trimmingCharacters(in: .whitespaces)
+        if g.isEmpty { return automaticGroup(b) }
+        if g.caseInsensitiveCompare("Favorites") == .orderedSame { return "Favorites" }
+        if g.caseInsensitiveCompare("Actions") == .orderedSame { return "Actions" }
+        return g
+    }
+
+    /// Favorites, Actions, then any custom names by first appearance; empty
+    /// groups omitted. `moveSearch` = the profile has folder-move buttons, so
+    /// a "Move" column with a search box is offered.
+    static func columns(for buttons: [Config.MacroButton]) -> (columns: [PadColumn], moveSearch: Bool) {
+        var order: [String] = []
+        var members: [String: [Int]] = [:]
+        for (i, b) in buttons.enumerated() {
+            let g = effectiveGroup(b)
+            if members[g] == nil { order.append(g); members[g] = [] }
+            members[g]?.append(i)
+        }
+        let fixed = ["Favorites", "Actions"].filter { members[$0] != nil }
+        let rest = order.filter { $0 != "Favorites" && $0 != "Actions" }
+        let cols = (fixed + rest).map { PadColumn(title: $0, indices: members[$0] ?? []) }
+        let move = buttons.contains { $0.menuPath == Config.MacroButton.moveMenuPath }
+        return (cols, move)
+    }
+}
+
+/// The pad's panel: borderless AND able to become key (the Move search box
+/// needs it; borderless windows refuse key by default). Still non-activating,
+/// and `becomesKeyOnlyIfNeeded` keeps a plain button click from taking key —
+/// only a click INTO the field does.
+final class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
+/// The Move-search box. Accepts the first click even while the pad's app is
+/// inactive (the pad is non-activating) — a stock NSTextField would spend
+/// that click on making the panel key and never place the caret.
+final class PadSearchField: NSTextField {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 /// On-screen macro pad — a software Stream Deck. A floating, NON-ACTIVATING
 /// panel of buttons that swaps its profile with the frontmost app; clicking a
 /// button never steals focus, so the synthesized keystrokes land in the app
@@ -132,6 +190,44 @@ final class MacroPad {
     /// Brief pressed-state flash so a leader-digit fire is visible on the pad.
     func flashButton(_ index: Int) {
         padView?.flash(index)
+    }
+
+    /// Leader-digit fire: flash + the same funnel a click uses.
+    func fireButton(_ index: Int) {
+        guard let (button, bundleID) = buttonForDigit(index) else { return }
+        padView?.flash(index)
+        fire(button, bundleID: bundleID)
+    }
+
+    /// True while the Move search box has the caret — mirrored into the
+    /// hotkey tap so plain Esc reaches the field instead of closing the pad.
+    var onSearchEditingChanged: ((Bool) -> Void)?
+
+    /// Every fire path funnels here: hand key status back to the app in
+    /// front FIRST (after the search box was used the panel stays the key
+    /// window, and synthesized keystrokes go to whoever owns the key window),
+    /// then run the macro; a summoned pad leaves afterwards (fire-once).
+    private func fire(_ button: Config.MacroButton, bundleID: String) {
+        releaseKey { [weak self] in
+            self?.onAction?(button, bundleID)
+            self?.summonFired()
+        }
+    }
+
+    /// Bounce the panel out and back in when it is the key window — the one
+    /// primitive that actually returns key to the app in front (resignKey is
+    /// a callback, NSApp.deactivate is a no-op for a never-active app, and
+    /// activating the target is a no-op because it already IS frontmost).
+    /// `then` runs after the bounce (next runloop turn), or at once when the
+    /// panel never had key.
+    func releaseKey(then: (() -> Void)? = nil) {
+        padView?.endSearchEditing()
+        guard let panel, panel.isKeyWindow else { then?(); return }
+        panel.orderOut(nil)
+        DispatchQueue.main.async { [weak self] in
+            if let p = self?.panel, p === panel { p.orderFrontRegardless() }   // still open?
+            then?()
+        }
     }
 
     /// `cursor` non-nil = summoned: the full pad beside that point, home untouched.
@@ -301,9 +397,19 @@ final class MacroPad {
             guard let self, let bundleID = self.currentBundleID,
                   let profile = self.profile(for: bundleID),
                   index < profile.buttons.count else { return }
-            self.onAction?(profile.buttons[index], bundleID)
-            self.summonFired()   // fire-once: a summoned pad leaves after its job
+            self.fire(profile.buttons[index], bundleID: bundleID)
         }
+        // Move search: the typed fragment rides the same Message ▸ Move path
+        // as the folder buttons (recent-folder prefix match, else the Choose
+        // Folder picker gets the text + Return).
+        view.onMoveSearch = { [weak self] text in
+            guard let self, let bundleID = self.currentBundleID else { return }
+            let button = Config.MacroButton(title: "Move to \(text)", text: text, pressReturn: true,
+                                            menuPath: Config.MacroButton.moveMenuPath)
+            self.fire(button, bundleID: bundleID)
+        }
+        view.onSearchCancel = { [weak self] in self?.releaseKey() }
+        view.onSearchEditingChanged = { [weak self] editing in self?.onSearchEditingChanged?(editing) }
         view.onClose = { [weak self] in self?.dismiss() }
         view.onRescan = { [weak self] in
             self?.lastCapture = nil
@@ -347,14 +453,15 @@ final class MacroPad {
             self?.dockOverlay.hide()
             self?.snapAfterDrag()
         }
-        let win = NSPanel(contentRect: NSRect(origin: .zero, size: view.fittingSize),
-                          styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let win = KeyablePanel(contentRect: NSRect(origin: .zero, size: view.fittingSize),
+                               styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         win.isOpaque = false
         win.backgroundColor = .clear
         win.level = .statusBar
         win.hasShadow = true
         win.ignoresMouseEvents = false
         win.becomesKeyOnlyIfNeeded = true
+        win.initialFirstResponder = nil   // becoming key must not auto-focus the search box
         win.hidesOnDeactivate = false
         win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         win.contentView = view
@@ -374,10 +481,14 @@ final class MacroPad {
         if let id = currentBundleID { current = profile(for: id) }
         // Summoned = the plain full pad, never the strip.
         let summoned = summonPoint != nil
+        let wasEditing = view.isSearchEditing
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
                        buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName,
                        mini: !summoned && miniActive,
                        peeking: !summoned && miniPreferred && !miniActive)
+        // A profile swap / collapse that hides the search box mid-edit must
+        // also hand key back, or the new app in front gets no keyboard.
+        if wasEditing, !view.searchFieldVisible { releaseKey() }
         view.suggested = hits
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
@@ -555,7 +666,7 @@ final class MacroPad {
 /// The pad canvas: app-name header with rescan (↻) and close (✕), then one
 /// full-width button per macro. Suggested buttons get an accent ring. Empty
 /// area drags the panel.
-final class MacroPadView: NSView {
+final class MacroPadView: NSView, NSTextFieldDelegate {
     var onTap: ((Int) -> Void)?
     var onClose: (() -> Void)?
     var onRescan: (() -> Void)?
@@ -600,6 +711,22 @@ final class MacroPadView: NSView {
     private var buttons: [Config.MacroButton] = []
     private var dark: Bool
     private var mini = false
+    /// Columns (Favorites | Actions | …) plus an optional Move-search column.
+    /// `multi` = more than one column, or a Move column: the pad lays out side
+    /// by side with column titles. A single group with no Move buttons is
+    /// today's one-column pad, byte for byte.
+    private var columns: [PadColumn] = []
+    private var moveSearch = false
+    private var cell: [Int: (col: Int, row: Int)] = [:]
+    private var multi: Bool { !mini && (columns.count > 1 || moveSearch) }
+    /// Move search box — created on first need, hidden unless multi + Move.
+    private var searchFieldStorage: PadSearchField?
+    var onMoveSearch: ((String) -> Void)?
+    var onSearchCancel: (() -> Void)?
+    var onSearchEditingChanged: ((Bool) -> Void)?
+    private(set) var isSearchEditing = false {
+        didSet { if oldValue != isSearchEditing { onSearchEditingChanged?(isSearchEditing) } }
+    }
     /// The pad does not render in the notch any more — `NotchStrip` is the one
     /// citizen of the housing. This is the plain in-window mouse point.
     private func localPoint(_ event: NSEvent) -> NSPoint {
@@ -627,6 +754,11 @@ final class MacroPadView: NSView {
     private static let sq: CGFloat = 14      // traffic-light square
     private static let sqGap: CGFloat = 4
     private static let miniPad: CGFloat = 7
+    // Multi-column layout.
+    private static let colW: CGFloat = 150
+    private static let colGap: CGFloat = 8
+    private static let colHeaderH: CGFloat = 16
+    private static let searchH: CGFloat = 24
 
     init(dark: Bool) {
         self.dark = dark
@@ -645,8 +777,97 @@ final class MacroPadView: NSView {
         hovered = nil
         pressed = nil
         suggested = []
+        let grouped = PadColumns.columns(for: buttons)
+        columns = grouped.columns
+        moveSearch = grouped.moveSearch
+        cell = [:]
+        for (c, col) in columns.enumerated() {
+            for (r, i) in col.indices.enumerated() { cell[i] = (c, r) }
+        }
+        layoutSearchField()
         needsDisplay = true
     }
+
+    // MARK: Move search box
+
+    private var searchField: PadSearchField {
+        if let f = searchFieldStorage { return f }
+        let f = PadSearchField()
+        f.font = .systemFont(ofSize: 11)
+        f.placeholderString = "folder…"
+        f.bezelStyle = .roundedBezel
+        f.focusRingType = .none
+        f.usesSingleLineMode = true
+        f.lineBreakMode = .byTruncatingTail
+        f.delegate = self
+        f.target = self
+        f.action = #selector(searchSubmit)   // NSTextField fires its action on Return only
+        f.isHidden = true
+        addSubview(f)
+        searchFieldStorage = f
+        return f
+    }
+
+    /// The Move column sits after the group columns.
+    private var searchRect: NSRect {
+        NSRect(x: Self.pad + CGFloat(columns.count) * (Self.colW + Self.colGap),
+               y: Self.pad + Self.headerH + Self.colHeaderH, width: Self.colW, height: Self.searchH)
+    }
+
+    private func layoutSearchField() {
+        guard multi, moveSearch else {
+            // Hiding mid-edit: drop the caret first (a hidden first responder
+            // keeps the panel key with nowhere for keystrokes to go).
+            endSearchEditing()
+            searchFieldStorage?.isHidden = true
+            return
+        }
+        searchField.isHidden = false
+        searchField.frame = searchRect
+        // The pad paints its own theme; the box is a real control, so pin its
+        // appearance to the pad's rather than the system's.
+        searchField.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+    }
+
+    /// Drop the caret if the box has it (state only — never a commit).
+    func endSearchEditing() {
+        if searchFieldStorage?.currentEditor() != nil { window?.makeFirstResponder(nil) }
+        isSearchEditing = false
+    }
+
+    @objc private func searchSubmit() { submitSearch(searchField.stringValue) }
+
+    /// The commit path shared by Return and the harness: non-empty text fires
+    /// the Move search; the box is cleared and unfocused either way.
+    func submitSearch(_ raw: String) {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchField.stringValue = ""
+        endSearchEditing()
+        guard !text.isEmpty else { return }
+        onMoveSearch?(text)
+    }
+
+    func controlTextDidBeginEditing(_ obj: Notification) { isSearchEditing = true }
+    /// Focus loss is NOT a commit (it fires on Tab, on makeFirstResponder(nil),
+    /// on window resign) — only the Return action commits.
+    func controlTextDidEndEditing(_ obj: Notification) { isSearchEditing = false }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        if selector == #selector(NSResponder.cancelOperation(_:)) {   // esc: clear, unfocus, hand key back
+            searchField.stringValue = ""
+            endSearchEditing()
+            onSearchCancel?()
+            return true
+        }
+        return false
+    }
+
+    /// Test hooks for the columns harness.
+    var searchFieldVisible: Bool { !(searchFieldStorage?.isHidden ?? true) }
+    var searchFieldFrame: NSRect { searchFieldStorage?.frame ?? .zero }
+    var searchText: String { searchFieldStorage?.stringValue ?? "" }
+    var columnTitles: [String] { columns.map(\.title) }
+    func buttonFrame(_ i: Int) -> NSRect { buttonRect(i) }
 
     override var isFlipped: Bool { true }
     /// First click must register even while another app is active — that's the
@@ -658,6 +879,13 @@ final class MacroPadView: NSView {
             let n = CGFloat(max(buttons.count, 1))
             let run = n * Self.sq + (n - 1) * Self.sqGap
             return NSSize(width: Self.miniPad * 2 + Self.sq, height: Self.miniPad * 2 + run)
+        }
+        if multi {
+            let n = CGFloat(columns.count + (moveSearch ? 1 : 0))
+            let maxRows = CGFloat(columns.map(\.indices.count).max() ?? 0)
+            let rows = max(maxRows * (Self.btnH + Self.gap) - Self.gap, moveSearch ? Self.searchH : 0)
+            return NSSize(width: Self.pad * 2 + n * Self.colW + (n - 1) * Self.colGap,
+                          height: Self.pad + Self.headerH + Self.colHeaderH + rows + Self.footerH + Self.pad)
         }
         let content = buttons.isEmpty
             ? Self.emptyH
@@ -678,13 +906,19 @@ final class MacroPadView: NSView {
     private var accent: NSColor { NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1) }
 
     private func buttonRect(_ i: Int) -> NSRect {
-        NSRect(x: Self.pad, y: Self.pad + Self.headerH + CGFloat(i) * (Self.btnH + Self.gap),
-               width: Self.width - Self.pad * 2, height: Self.btnH)
+        if multi, let c = cell[i] {
+            return NSRect(x: Self.pad + CGFloat(c.col) * (Self.colW + Self.colGap),
+                          y: Self.pad + Self.headerH + Self.colHeaderH + CGFloat(c.row) * (Self.btnH + Self.gap),
+                          width: Self.colW, height: Self.btnH)
+        }
+        return NSRect(x: Self.pad, y: Self.pad + Self.headerH + CGFloat(i) * (Self.btnH + Self.gap),
+                      width: Self.width - Self.pad * 2, height: Self.btnH)
     }
 
-    private var closeRect: NSRect { NSRect(x: Self.width - Self.pad - 18, y: Self.pad + 2, width: 18, height: 18) }
-    private var rescanRect: NSRect { NSRect(x: Self.width - Self.pad - 40, y: Self.pad + 2, width: 18, height: 18) }
-    private var minimizeRect: NSRect { NSRect(x: Self.width - Self.pad - 62, y: Self.pad + 2, width: 18, height: 18) }
+    // Header controls hug the right edge whatever the pad's width is.
+    private var closeRect: NSRect { NSRect(x: bounds.width - Self.pad - 18, y: Self.pad + 2, width: 18, height: 18) }
+    private var rescanRect: NSRect { NSRect(x: bounds.width - Self.pad - 40, y: Self.pad + 2, width: 18, height: 18) }
+    private var minimizeRect: NSRect { NSRect(x: bounds.width - Self.pad - 62, y: Self.pad + 2, width: 18, height: 18) }
 
     override func draw(_ dirtyRect: NSRect) {
         NSBezierPath(roundedRect: bounds, xRadius: mini ? 9 : 14, yRadius: mini ? 9 : 14).setClip()
@@ -734,6 +968,22 @@ final class MacroPadView: NSView {
         // – collapses to traffic lights; □ (while peeking) pins full mode back.
         ((peeking ? "□" : "–") as NSString).draw(in: minimizeRect.offsetBy(dx: 4, dy: 1), withAttributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
+
+        // Column titles (cheat-sheet section style) — only when laid out side by side.
+        if multi {
+            let titleAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 9, weight: .bold),
+                .foregroundColor: dim.withAlphaComponent(0.45)]
+            let titleY = Self.pad + Self.headerH + 2
+            for (c, col) in columns.enumerated() {
+                (col.title.uppercased() as NSString).draw(
+                    at: NSPoint(x: Self.pad + CGFloat(c) * (Self.colW + Self.colGap) + 4, y: titleY),
+                    withAttributes: titleAttrs)
+            }
+            if moveSearch {
+                ("MOVE" as NSString).draw(at: NSPoint(x: searchRect.minX + 4, y: titleY), withAttributes: titleAttrs)
+            }
+        }
 
         if buttons.isEmpty {
             let msg = "No macros for \(appName)\nAdd them in Settings ▸ Macro Pad" as NSString
@@ -830,6 +1080,9 @@ final class MacroPadView: NSView {
         if closeRect.insetBy(dx: -4, dy: -4).contains(p) { onClose?(); return }
         if rescanRect.insetBy(dx: -4, dy: -4).contains(p) { onRescan?(); return }
         if minimizeRect.insetBy(dx: -4, dy: -4).contains(p) { onMinimize?(); return }
+        // The search box is a subview: a real click never reaches here (AppKit
+        // routes it to the field); a direct call from a harness must not drag.
+        if searchFieldVisible, searchRect.contains(p) { return }
         if let i = buttons.indices.first(where: { buttonRect($0).contains(p) }) {
             flash(i)
             onTap?(i)

@@ -111,6 +111,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let macroBtnTextField = NSTextField()
     private let macroBtnReturnCheck = NSButton(checkboxWithTitle: "press Return at the end", target: nil, action: nil)
     private let macroBtnKeywordsField = NSTextField()
+    private let macroBtnGroupField = NSTextField()
     private let macroEditorStatus = NSTextField(labelWithString: " ")
 
     init(store: Store, config: Config, onConfigChange: @escaping (Config) -> Void, onOpenChat: @escaping () -> Void = {}) {
@@ -674,7 +675,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         // General editor: any app, any buttons. The Outlook folders box above is
         // the fast path for filing; this is the full control panel.
-        let editorNote = NSTextField(labelWithString: "Buttons for any app. Pick a profile (or add one from a running app), then edit its buttons: a keystroke chord (e.g. cmd+shift+m, delete, cmd+r), optional text typed after it, an optional Return, and optional suggestion keywords. Button order = digit order (1…9, 0). Changes apply to the pad immediately.")
+        let editorNote = NSTextField(labelWithString: "Buttons for any app. Pick a profile (or add one from a running app), then edit its buttons: a keystroke chord (e.g. cmd+shift+m, delete, cmd+r), optional text typed after it, an optional Return, and optional suggestion keywords. Button order = digit order (1…9, 0). Group = the pad column: blank is automatic (Favorites for folder moves, Actions for everything else); any other name makes its own column. Changes apply to the pad immediately.")
         editorNote.font = .systemFont(ofSize: 11)
         editorNote.textColor = .secondaryLabelColor
         editorNote.lineBreakMode = .byWordWrapping
@@ -689,15 +690,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         for b in [addProfileBtn, removeProfileBtn] { b.bezelStyle = .rounded }
         let appRow = NSStackView(views: [macroAppPopup, addProfileBtn, removeProfileBtn]); appRow.spacing = 8
 
-        let titleCol = NSTableColumn(identifier: .init("mbTitle")); titleCol.title = "Button"; titleCol.width = 110
-        let chordCol = NSTableColumn(identifier: .init("mbChord")); chordCol.title = "Chord"; chordCol.width = 100
-        let textCol = NSTableColumn(identifier: .init("mbText")); textCol.title = "Types"; textCol.width = 110
-        let retCol = NSTableColumn(identifier: .init("mbRet")); retCol.title = "⏎"; retCol.width = 24
-        let kwCol = NSTableColumn(identifier: .init("mbKw")); kwCol.title = "Keywords"; kwCol.width = 120
-        for c in [titleCol, chordCol, textCol, retCol, kwCol] { macroButtonsTable.addTableColumn(c) }
+        let titleCol = NSTableColumn(identifier: .init("mbTitle")); titleCol.title = "Button"; titleCol.width = 95
+        let chordCol = NSTableColumn(identifier: .init("mbChord")); chordCol.title = "Chord"; chordCol.width = 95
+        let textCol = NSTableColumn(identifier: .init("mbText")); textCol.title = "Types"; textCol.width = 90
+        let retCol = NSTableColumn(identifier: .init("mbRet")); retCol.title = "⏎"; retCol.width = 22
+        let kwCol = NSTableColumn(identifier: .init("mbKw")); kwCol.title = "Keywords"; kwCol.width = 85
+        let grpCol = NSTableColumn(identifier: .init("mbGroup")); grpCol.title = "Group"; grpCol.width = 60
+        for c in [titleCol, chordCol, textCol, retCol, kwCol] {
+            // Pinned: AppKit otherwise scales these up and squeezes the last
+            // column to an ellipsis — only Group absorbs the scroll view's width.
+            c.minWidth = c.width; c.maxWidth = c.width; c.resizingMask = []
+            macroButtonsTable.addTableColumn(c)
+        }
+        grpCol.minWidth = 60; grpCol.resizingMask = .autoresizingMask
+        macroButtonsTable.addTableColumn(grpCol)
         macroButtonsTable.dataSource = self
         macroButtonsTable.delegate = self
         macroButtonsTable.usesAlternatingRowBackgroundColors = true
+        // Fixed widths for the five data columns; only Group (last) stretches —
+        // uniform autoresizing squeezed it to an ellipsis.
+        macroButtonsTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         macroButtonsTable.rowHeight = 22
         let btnScroll = NSScrollView()
         btnScroll.documentView = macroButtonsTable
@@ -705,15 +717,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         btnScroll.borderType = .bezelBorder
         btnScroll.translatesAutoresizingMaskIntoConstraints = false
         btnScroll.heightAnchor.constraint(equalToConstant: 140).isActive = true
-        btnScroll.widthAnchor.constraint(equalToConstant: 520).isActive = true
+        btnScroll.widthAnchor.constraint(equalToConstant: 560).isActive = true   // six columns (incl. Group) need the full section width
 
-        for f in [macroBtnTitleField, macroBtnChordField, macroBtnTextField, macroBtnKeywordsField] {
+        for f in [macroBtnTitleField, macroBtnChordField, macroBtnTextField, macroBtnKeywordsField, macroBtnGroupField] {
             f.widthAnchor.constraint(equalToConstant: 260).isActive = true
         }
         macroBtnTitleField.placeholderString = "Archive"
         macroBtnChordField.placeholderString = "ctrl+e — blank = just type text"
         macroBtnTextField.placeholderString = "typed after the chord (blank = nothing)"
         macroBtnKeywordsField.placeholderString = "comma separated — lights the button up"
+        macroBtnGroupField.placeholderString = "blank = automatic (Favorites for folders, Actions otherwise)"
         let addBtn = NSButton(title: "Add button", target: self, action: #selector(addMacroButton))
         let updateBtn = NSButton(title: "Update selected", target: self, action: #selector(updateMacroButton))
         let removeBtn = NSButton(title: "Remove", target: self, action: #selector(removeMacroButton))
@@ -737,6 +750,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                 formRow("Types", macroBtnTextField),
                 formRow("", macroBtnReturnCheck),
                 formRow("Keywords", macroBtnKeywordsField),
+                formRow("Group", macroBtnGroupField),
                 btnRow,
                 macroEditorStatus,
             ], width: 560),
@@ -796,6 +810,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroBtnTextField.stringValue = ""
         macroBtnReturnCheck.state = .off
         macroBtnKeywordsField.stringValue = ""
+        macroBtnGroupField.stringValue = ""
     }
 
     /// Persist the working copy and push it live (pad re-renders via didSet).
@@ -810,10 +825,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroEditorStatus.stringValue = status
         if let touched, touched.caseInsensitiveCompare("com.microsoft.Outlook") == .orderedSame {
             let outlook = macroProfiles.first { $0.bundleID.caseInsensitiveCompare(touched) == .orderedSame }
-            macroFoldersView.string = (outlook?.buttons ?? [])
-                .filter { $0.menuPath == Self.macroMoveMenuPath }
-                .map { $0.keywords.isEmpty ? $0.title : "\($0.title) | \($0.keywords)" }
-                .joined(separator: "\n")
+            macroFoldersView.string = Self.macroFoldersText(for: outlook)
         }
     }
 
@@ -865,7 +877,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             text: macroBtnTextField.stringValue,
             pressReturn: macroBtnReturnCheck.state == .on,
             keywords: macroBtnKeywordsField.stringValue.trimmingCharacters(in: .whitespaces),
-            menuPath: existing?.menuPath ?? "")
+            menuPath: existing?.menuPath ?? "",
+            group: macroBtnGroupField.stringValue.trimmingCharacters(in: .whitespaces))
     }
 
     @objc private func addMacroButton() {
@@ -915,39 +928,107 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     /// dropped its ⌘⇧M shortcut, see Config's migration); buttons with any
     /// OTHER menuPath are custom (Delete, Archive, …) and must survive a
     /// folder-list save.
-    private static let macroMoveMenuPath = "Message,Move"
+    private static let macroMoveMenuPath = Config.MacroButton.moveMenuPath
+
+    /// A group equal to the automatic one is stored blank, so a header the
+    /// user didn't need to type never counts as a change.
+    static func canonicalGroup(_ group: String, for button: Config.MacroButton) -> String {
+        let t = group.trimmingCharacters(in: .whitespaces)
+        return t.caseInsensitiveCompare(PadColumns.automaticGroup(button)) == .orderedSame ? "" : t
+    }
+
+    /// The Outlook quick-box text for a profile: only the folder-move buttons
+    /// (a custom button listed here would become a bogus folder on save),
+    /// `Folder | keywords` per line, with a `Name:` header wherever the column
+    /// changes. A plain list stays plain — no header for the automatic column.
+    static func macroFoldersText(for profile: Config.MacroProfile?) -> String {
+        var lines: [String] = []
+        var header = ""   // "" = the automatic column
+        for b in profile?.buttons ?? [] where b.menuPath == macroMoveMenuPath {
+            let g = canonicalGroup(b.group, for: b)
+            if g != header {
+                lines.append("\(g.isEmpty ? PadColumns.automaticGroup(b) : g):")
+                header = g
+            }
+            lines.append(b.keywords.isEmpty ? b.title : "\(b.title) | \(b.keywords)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Parse the quick-box: `Name:` lines start a group for the folders below.
+    static func macroFolderButtons(from text: String) -> [Config.MacroButton] {
+        var group = ""
+        var out: [Config.MacroButton] = []
+        for raw in text.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
+            if line.hasSuffix(":"), !line.contains("|") {
+                group = String(line.dropLast()).trimmingCharacters(in: .whitespaces)
+                continue
+            }
+            // split omits empty subsequences — a line of just "|" yields [].
+            let parts = line.split(separator: "|", maxSplits: 1)
+            guard let folder = parts.first?.trimmingCharacters(in: .whitespaces), !folder.isEmpty else { continue }
+            let keywords = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
+            var b = Config.MacroButton(title: folder, text: folder, pressReturn: true,
+                                       keywords: keywords, menuPath: macroMoveMenuPath)
+            b.group = canonicalGroup(group, for: b)
+            out.append(b)
+        }
+        return out
+    }
+
+    /// Merge freshly parsed folder buttons into a profile's button list WITHOUT
+    /// moving anything: every button whose title is still listed keeps its slot
+    /// (with the new keywords/group), custom buttons (Delete, Flag…) never move,
+    /// a removed folder vacates its slot, a new title fills the first vacated
+    /// slot (so a rename keeps its digit) and otherwise appends at the tail.
+    /// Digits therefore only ever change for buttons the user added or removed.
+    static func mergeFolderButtons(_ folders: [Config.MacroButton], into existing: [Config.MacroButton]) -> [Config.MacroButton] {
+        func key(_ b: Config.MacroButton) -> String { b.title.lowercased() }
+        var parsed: [String: Config.MacroButton] = [:]
+        for f in folders where parsed[key(f)] == nil { parsed[key(f)] = f }   // duplicates collapse to the first
+        var used = Set<String>()
+        var slots: [Config.MacroButton?] = []
+        for b in existing {
+            guard b.menuPath == macroMoveMenuPath else { slots.append(b); continue }
+            if let f = parsed[key(b)], !used.contains(key(b)) {
+                slots.append(f); used.insert(key(b))
+            } else {
+                slots.append(nil)   // vacated
+            }
+        }
+        var fresh = folders.filter { !used.contains(key($0)) }
+        var seen = Set<String>()
+        fresh = fresh.filter { seen.insert(key($0)).inserted }
+        for i in slots.indices where slots[i] == nil && !fresh.isEmpty { slots[i] = fresh.removeFirst() }
+        return slots.compactMap { $0 } + fresh
+    }
 
     /// Rebuild the Outlook profile's folder-move buttons from the list
     /// ("Name | kw1, kw2" per line). Custom buttons and other apps' profiles
     /// (hand-edited in config.json) are preserved untouched.
     @objc private func saveMacroFolders() {
-        let buttons: [Config.MacroButton] = macroFoldersView.string
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .compactMap { line -> Config.MacroButton? in
-                // split omits empty subsequences — a line of just "|" yields [].
-                let parts = line.split(separator: "|", maxSplits: 1)
-                guard let folder = parts.first?.trimmingCharacters(in: .whitespaces), !folder.isEmpty else { return nil }
-                let keywords = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
-                return Config.MacroButton(title: folder, text: folder,
-                                          pressReturn: true, keywords: keywords, menuPath: Self.macroMoveMenuPath)
-            }
+        let buttons = Self.macroFolderButtons(from: macroFoldersView.string)
         let outlookID = "com.microsoft.Outlook"
         // Case-insensitive to match MacroPad's runtime lookup — a hand-edited
         // lowercase bundle id must not spawn a duplicate profile.
         if let idx = config.macroPadProfiles.firstIndex(where: { $0.bundleID.caseInsensitiveCompare(outlookID) == .orderedSame }) {
             let existing = config.macroPadProfiles[idx].buttons
-            // No-op save must not touch anything: rebuilding would front-load
-            // the folder buttons and silently reshuffle custom buttons' digits.
+            // No-op save must not touch anything. Signatures use the canonical
+            // group so an implied header never reads as a change.
+            func signature(_ b: Config.MacroButton) -> String {
+                "\(b.title)|\(b.keywords)|\(Self.canonicalGroup(b.group, for: b))"
+            }
             let unchanged = existing.filter { $0.menuPath == Self.macroMoveMenuPath }
-                .map { "\($0.title)|\($0.keywords)" } == buttons.map { "\($0.title)|\($0.keywords)" }
+                .map(signature) == buttons.map(signature)
             if unchanged {
                 macroPadStatus.stringValue = "No folder changes"
                 return
             }
-            let custom = existing.filter { $0.menuPath != Self.macroMoveMenuPath }
-            let merged = buttons + custom   // folder buttons keep the low digits
+            // In-place merge: custom buttons (Delete, Flag…) keep their slots,
+            // and therefore their digits.
+            let merged = Self.mergeFolderButtons(buttons, into: existing)
             if merged.isEmpty { config.macroPadProfiles.remove(at: idx) }
             else { config.macroPadProfiles[idx].buttons = merged }
         } else if !buttons.isEmpty {
@@ -1296,12 +1377,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             }
         }
         let outlook = config.macroPadProfiles.first { $0.bundleID.caseInsensitiveCompare("com.microsoft.Outlook") == .orderedSame }
-        // Only the folder-move buttons belong in the editor — a custom button
-        // listed here would be converted into a bogus folder on save.
-        macroFoldersView.string = (outlook?.buttons ?? [])
-            .filter { $0.menuPath == Self.macroMoveMenuPath }
-            .map { $0.keywords.isEmpty ? $0.title : "\($0.title) | \($0.keywords)" }
-            .joined(separator: "\n")
+        macroFoldersView.string = Self.macroFoldersText(for: outlook)
         macroProfiles = config.macroPadProfiles
         reloadMacroProfilesUI()
         connEntries = config.connections
@@ -1665,6 +1741,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                 ? "▸" + b.menuPath.replacingOccurrences(of: ",", with: "▸") : b.chord
             case "mbText": text = b.text
             case "mbRet": text = b.pressReturn ? "⏎" : ""
+            case "mbGroup": text = b.group
             default: text = b.keywords
             }
         } else if tableView === layoutsTable {
@@ -1702,6 +1779,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             macroBtnTextField.stringValue = b.text
             macroBtnReturnCheck.state = b.pressReturn ? .on : .off
             macroBtnKeywordsField.stringValue = b.keywords
+            macroBtnGroupField.stringValue = b.group
             return
         }
         guard (notification.object as? NSTableView) === connTable else { return }

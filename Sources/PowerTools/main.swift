@@ -520,13 +520,23 @@ case "macropad-preview":
     let out = args.count >= 2 ? args[1] : "macropad-preview.png"
     let dark = !args.contains("light")
     let mini = args.contains("mini")
+    let columns = args.contains("columns")   // Outlook-shaped: Favorites | Actions | Move search
     MainActor.assumeIsolated {
-        let buttons = ["Invoices", "Projects", "Receipts", "Travel", "Newsletters", "Archive"]
-            .map { Config.MacroButton(title: $0, chord: "cmd+shift+m", text: $0, pressReturn: true) }
+        _ = NSApplication.shared   // the search box is a real NSTextField; it needs an app to draw
+        let buttons: [Config.MacroButton] = columns
+            ? ["Invoices", "Projects", "Receipts", "Travel", "Newsletters", "Clients"]
+                .map { Config.MacroButton(title: $0, text: $0, pressReturn: true, menuPath: Config.MacroButton.moveMenuPath) }
+              + [Config.MacroButton(title: "Delete", chord: "delete"),
+                 Config.MacroButton(title: "Archive", text: "archive", pressReturn: true,
+                                    menuPath: Config.MacroButton.moveMenuPath, group: "Actions"),
+                 Config.MacroButton(title: "Flag", chord: "ctrl+1")]
+            : ["Invoices", "Projects", "Receipts", "Travel", "Newsletters", "Archive"]
+                .map { Config.MacroButton(title: $0, chord: "cmd+shift+m", text: $0, pressReturn: true) }
         let v = MacroPadView(dark: dark)
         v.configure(appName: "Microsoft Outlook", buttons: buttons, dark: dark,
                     hotkeyName: "Option + Shift", mini: mini)
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        v.layoutSubtreeIfNeeded()
         v.previewState(hover: mini ? nil : 4, suggested: [1])
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
         v.cacheDisplay(in: v.bounds, to: rep)
@@ -945,6 +955,159 @@ case "macropad-summon-test":
         pad.endSummon(); pump()
         check(pad.isVisible && !pad.isSummoned && panel11.frame.width < 60, "12: endSummon on a borrowed pad sends it home")
         pad.dismiss(); pump()
+        finish()
+    }
+
+case "macropad-columns-test":
+    // Columns harness: a REAL pad with the user's Outlook shape (6 folder
+    // moves + Delete + Archive-as-move-in-Actions + Flag) — asserts the
+    // side-by-side geometry, that flat indices survive (digits, clicks), the
+    // Move search box's commit path, a custom group column, the single-
+    // column fallback, the mini strip, and the folders-box round trip / merge
+    // that must keep Delete on its digit. Backs up/restores pad-placement.json.
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let placementURL = Config.appSupportDir.appendingPathComponent("pad-placement.json")
+        let placementBackup = try? Data(contentsOf: placementURL)
+        var failures = 0
+        func finish() -> Never {
+            if let placementBackup { try? placementBackup.write(to: placementURL, options: .atomic) }
+            else { try? FileManager.default.removeItem(at: placementURL) }
+            print(failures == 0 ? "ALL GREEN" : "\(failures) FAILURE(S)")
+            exit(failures == 0 ? 0 : 1)
+        }
+        func check(_ ok: Bool, _ what: String) {
+            if !ok { failures += 1 }
+            print("  [\(ok ? "ok" : "FAIL")] \(what)")
+        }
+        func pump(_ s: Double = 0.25) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+        let front = [NSWorkspace.shared.frontmostApplication]
+            .compactMap { $0 }
+            .first { $0.bundleIdentifier != "com.grc.whisper" }
+            ?? NSWorkspace.shared.runningApplications.first {
+                $0.activationPolicy == .regular && $0.bundleIdentifier != "com.grc.whisper"
+            }
+        let move = Config.MacroButton.moveMenuPath
+        let folders = ["APS", "NJAW", "KYAW", "0_Actions", "MWS", "RFP"]
+            .map { Config.MacroButton(title: $0, text: $0, pressReturn: true, menuPath: move) }
+        let outlookShape = folders + [
+            Config.MacroButton(title: "Delete", chord: "delete"),
+            Config.MacroButton(title: "Archive", text: "archive", pressReturn: true, menuPath: move, group: "Actions"),
+            Config.MacroButton(title: "Flag", chord: "ctrl+1"),
+        ]
+        let bundleID = front?.bundleIdentifier ?? "com.apple.finder"
+        func profile(_ buttons: [Config.MacroButton]) -> Config.MacroProfile {
+            Config.MacroProfile(bundleID: bundleID, name: front?.localizedName ?? "Finder", buttons: buttons)
+        }
+        guard let screen = NSScreen.main else { print("no screen"); finish() }
+        PadPlacement.save("macro", anchor: nil, topLeft: nil, mini: false, open: false)
+
+        // 1: grouping helper on the user's shape.
+        let grouped = PadColumns.columns(for: outlookShape)
+        check(grouped.columns.map(\.title) == ["Favorites", "Actions"], "1: columns \(grouped.columns.map(\.title))")
+        check(grouped.columns[0].indices == [0, 1, 2, 3, 4, 5], "1: Favorites = flat 0…5")
+        check(grouped.columns[1].indices == [6, 7, 8], "1: Actions = flat 6,7,8 (Archive overridden into Actions)")
+        check(grouped.moveSearch, "1: Move search offered")
+
+        // 2: real pad, geometry.
+        var fired: [Config.MacroButton] = []
+        let pad = MacroPad()
+        pad.present(profiles: [profile(outlookShape)], dark: true, screen: screen, hotkeyName: "test",
+                    frontApp: front, onAction: { b, _ in fired.append(b) })
+        pump()
+        guard let panel = app.windows.compactMap({ $0 as? NSPanel })
+                .first(where: { $0.contentView is MacroPadView && $0.isVisible }),
+              let view = panel.contentView as? MacroPadView else { print("NO PANEL"); finish() }
+        print("2 pad: size=\(Int(panel.frame.width))x\(Int(panel.frame.height))")
+        check(Int(panel.frame.width) == 486, "2: width 486 (three 150-pt columns)")
+        check(view.buttonCount == 9, "2: nine buttons")
+        check(view.columnTitles == ["Favorites", "Actions"], "2: view columns \(view.columnTitles)")
+        let b1 = view.buttonFrame(1), b6 = view.buttonFrame(6), b7 = view.buttonFrame(7)
+        check(b1.minX == 10 && b6.minX == 168 && b7.minX == 168, "2: Favorites at x=10, Actions at x=168 (\(Int(b1.minX)),\(Int(b6.minX)))")
+        check(b6.minY == b1.minY - 35 && b7.minY == b1.minY, "2: rows align across columns")
+        check(view.searchFieldVisible && Int(view.searchFieldFrame.minX) == 326, "2: search box in the third column (x=\(Int(view.searchFieldFrame.minX)))")
+
+        // 3: direct clicks fire FLAT indices.
+        func click(_ pView: NSPoint) {
+            view.mouseDown(with: NSEvent.mouseEvent(with: .leftMouseDown, location: view.convert(pView, to: nil),
+                                                    modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                    windowNumber: panel.windowNumber, context: nil,
+                                                    eventNumber: 0, clickCount: 1, pressure: 1)!)
+            pump(0.1)
+        }
+        click(NSPoint(x: b1.midX, y: b1.midY))
+        click(NSPoint(x: b6.midX, y: b6.midY))
+        click(NSPoint(x: b7.midX, y: b7.midY))
+        check(fired.map(\.title) == ["NJAW", "Delete", "Archive"], "3: clicks fired \(fired.map(\.title))")
+        // A direct call at the search box must neither fire nor start a drag.
+        let before = panel.frame.origin
+        click(NSPoint(x: view.searchFieldFrame.midX, y: view.searchFieldFrame.midY))
+        check(fired.count == 3 && panel.frame.origin == before, "3: click on the search box is inert for the view")
+
+        // 4: search commit → a synthetic Move button; box cleared.
+        view.submitSearch("  proj ")
+        pump(0.1)
+        check(fired.count == 4 && fired.last?.text == "proj" && fired.last?.menuPath == move
+              && fired.last?.pressReturn == true, "4: search fired Move to 'proj' (\(fired.last?.title ?? "-"))")
+        check(view.searchText.isEmpty, "4: box cleared after submit")
+        view.submitSearch("   ")
+        pump(0.1)
+        check(fired.count == 4, "4: blank submit fires nothing")
+
+        // 5: a custom group makes its own column after the two built-ins.
+        var custom = outlookShape
+        custom[2].group = "Later"
+        pad.update(enabled: true, profiles: [profile(custom)], dark: true)
+        pump()
+        check(view.columnTitles == ["Favorites", "Actions", "Later"] && Int(panel.frame.width) == 644,
+              "5: custom column (\(view.columnTitles), width \(Int(panel.frame.width)))")
+        check(view.buttonFrame(2).minX == 326, "5: KYAW moved to the Later column, still flat index 2")
+
+        // 6: single group + no Move = today's pad.
+        let teams = [Config.MacroButton(title: "Mute/Unmute", chord: "cmd+shift+m"),
+                     Config.MacroButton(title: "Share", chord: "cmd+shift+e")]
+        pad.update(enabled: true, profiles: [profile(teams)], dark: true)
+        pump()
+        check(Int(panel.frame.width) == 220 && !view.searchFieldVisible && view.columnTitles == ["Actions"],
+              "6: single-column fallback (width \(Int(panel.frame.width)), box hidden)")
+
+        // 7: mini strip is untouched by columns.
+        pad.update(enabled: true, profiles: [profile(outlookShape)], dark: true)
+        pump()
+        let full = panel.frame.size
+        view.mouseDown(with: NSEvent.mouseEvent(with: .leftMouseDown, location: view.convert(NSPoint(x: full.width - 10 - 62 + 9, y: 21), to: nil),
+                                                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: panel.windowNumber, context: nil,
+                                                eventNumber: 0, clickCount: 1, pressure: 1)!)
+        pump()
+        check(panel.frame.width < 40 && view.buttonCount == 9 && !view.searchFieldVisible,
+              "7: strip = 9 squares, box hidden (\(Int(panel.frame.width))x\(Int(panel.frame.height)))")
+        pad.dismiss(); pump()
+
+        // 8: folders-box round trip + merge keeps Delete on digit 7.
+        let text = SettingsWindowController.macroFoldersText(for: profile(outlookShape))
+        print("8 quick-box:\n" + text.split(separator: "\n").map { "     " + $0 }.joined(separator: "\n"))
+        check(!text.hasPrefix("Favorites:") && text.contains("\nActions:\nArchive"),
+              "8: plain Favorites run, Actions: header before Archive")
+        let parsed = SettingsWindowController.macroFolderButtons(from: text)
+        check(parsed.map(\.title) == ["APS", "NJAW", "KYAW", "0_Actions", "MWS", "RFP", "Archive"]
+              && parsed.map(\.group) == ["", "", "", "", "", "", "Actions"], "8: parse round-trips titles + canonical groups")
+        let merged = SettingsWindowController.mergeFolderButtons(parsed, into: outlookShape)
+        check(merged.map(\.title) == outlookShape.map(\.title), "8: no-op merge keeps every slot (\(merged.map(\.title)))")
+        let edited = SettingsWindowController.macroFolderButtons(from: "Favorites:\nAPS\nNJAW\nKYAW\n0_Actions\nMWS\nRFP\nRFP2\nActions:\nArchive")
+        let merged2 = SettingsWindowController.mergeFolderButtons(edited, into: outlookShape)
+        check(merged2.map(\.title) == ["APS", "NJAW", "KYAW", "0_Actions", "MWS", "RFP", "Delete", "Archive", "Flag", "RFP2"],
+              "8: a new folder appends; Delete/Archive/Flag keep their digits (\(merged2.map(\.title)))")
+        let renamed = SettingsWindowController.macroFolderButtons(from: "APS\nNJAW\nKYAW\n0_Actions\nMWS\nRFPs | rfp\nActions:\nArchive")
+        let merged3 = SettingsWindowController.mergeFolderButtons(renamed, into: outlookShape)
+        check(merged3.map(\.title) == ["APS", "NJAW", "KYAW", "0_Actions", "MWS", "RFPs", "Delete", "Archive", "Flag"]
+              && merged3[5].keywords == "rfp", "8: a rename keeps its slot and takes the new keywords (\(merged3.map(\.title)))")
+        let removed = SettingsWindowController.macroFolderButtons(from: "APS\nNJAW\nActions:\nArchive")
+        let merged4 = SettingsWindowController.mergeFolderButtons(removed, into: outlookShape)
+        check(merged4.map(\.title) == ["APS", "NJAW", "Delete", "Archive", "Flag"], "8: removed folders vacate, the rest close up (\(merged4.map(\.title)))")
+        let typedFav = SettingsWindowController.macroFolderButtons(from: "Favorites:\nAPS")
+        check(typedFav.first?.group == "", "8: a typed 'Favorites:' header canonicalizes to blank")
         finish()
     }
 

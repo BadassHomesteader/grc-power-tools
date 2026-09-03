@@ -65,7 +65,7 @@ if (args.Length >= 1 && args[0] == "asr")
     {
         BundleID = "com.microsoft.Outlook",
         Name = "Outlook",
-        Buttons = { new Config.MacroButton { Title = "Move", MenuPath = "Message,Move", PressReturn = true } },
+        Buttons = { new Config.MacroButton { Title = "Move", MenuPath = "Message,Move", PressReturn = true, Group = "Actions" } },
     });
     cfg.Pronunciations["KYAW"] = "K Y A W";
     cfg.Save();
@@ -77,6 +77,7 @@ if (args.Length >= 1 && args[0] == "asr")
     Check(re.AsrEngine == Config.ASREngine.Parakeet, "roundtrip: asrEngine");
     Check(re.Connections.Count == 1 && re.Connections[0].LeaderKey == "N", "roundtrip: connection");
     Check(re.MacroPadProfiles.Count == 1 && re.MacroPadProfiles[0].Buttons[0].MenuPath == "Message,Move", "roundtrip: macro profile");
+    Check(re.MacroPadProfiles[0].Buttons[0].Group == "Actions", "roundtrip: macro button group");
     Check(re.Pronunciations["KYAW"] == "K Y A W", "roundtrip: pronunciations");
     re.Save();
     Check(File.ReadAllBytes(Paths.ConfigFile).SequenceEqual(bytes1), "roundtrip: byte-stable save");

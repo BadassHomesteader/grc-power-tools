@@ -49,6 +49,8 @@ public sealed class Config
         public bool PressReturn;
         public string Keywords = "";
         public string MenuPath = "";
+        /// Pad column; blank = automatic (Favorites for folder moves, Actions otherwise).
+        public string Group = "";
     }
 
     public sealed class MacroProfile
@@ -309,6 +311,7 @@ public sealed class Config
                 {
                     ["title"] = b.Title, ["chord"] = b.Chord, ["text"] = b.Text,
                     ["pressReturn"] = b.PressReturn, ["keywords"] = b.Keywords, ["menuPath"] = b.MenuPath,
+                    ["group"] = b.Group,
                 }).ToArray()),
             }).ToArray()),
             ["macroPadStepDelayMs"] = MacroPadStepDelayMs,
@@ -448,6 +451,7 @@ public sealed class Config
                         PressReturn = Bool(b, "pressReturn", false),
                         Keywords = Str(b, "keywords") ?? "",
                         MenuPath = Str(b, "menuPath") ?? "",
+                        Group = Str(b, "group") ?? "",
                     });
                 }
             }

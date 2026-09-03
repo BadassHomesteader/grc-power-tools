@@ -283,20 +283,29 @@ struct Config: Codable {
     /// light the button up as a suggestion when they appear in the target
     /// window's reading pane.
     struct MacroButton: Codable {
+        /// The menu path the Outlook folder buttons ride (Message ▸ Move) —
+        /// shared by the pad (Favorites column, Move search) and Settings.
+        static let moveMenuPath = "Message,Move"
+
         var title: String
         var chord: String
         var text: String
         var pressReturn: Bool
         var keywords: String
         var menuPath: String
+        /// Column on the pad. Blank = automatic: folder-move buttons →
+        /// "Favorites", everything else → "Actions". Any other name makes
+        /// its own column.
+        var group: String
 
         init(title: String, chord: String = "", text: String = "",
-             pressReturn: Bool = false, keywords: String = "", menuPath: String = "") {
+             pressReturn: Bool = false, keywords: String = "", menuPath: String = "", group: String = "") {
             self.title = title; self.chord = chord; self.text = text
             self.pressReturn = pressReturn; self.keywords = keywords; self.menuPath = menuPath
+            self.group = group
         }
 
-        private enum CodingKeys: String, CodingKey { case title, chord, text, pressReturn, keywords, menuPath }
+        private enum CodingKeys: String, CodingKey { case title, chord, text, pressReturn, keywords, menuPath, group }
 
         // Lenient: a partial/legacy element decodes with defaults instead of throwing.
         init(from decoder: Decoder) throws {
@@ -307,6 +316,7 @@ struct Config: Codable {
             pressReturn = try c.decodeIfPresent(Bool.self, forKey: .pressReturn) ?? false
             keywords = try c.decodeIfPresent(String.self, forKey: .keywords) ?? ""
             menuPath = try c.decodeIfPresent(String.self, forKey: .menuPath) ?? ""
+            group = try c.decodeIfPresent(String.self, forKey: .group) ?? ""
         }
     }
 

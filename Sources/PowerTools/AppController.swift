@@ -259,6 +259,9 @@ final class AppController {
         macroPad.onSummonChanged = { [weak self] summoned in
             self?.hotkey?.macroPadSummoned = summoned
         }
+        macroPad.onSearchEditingChanged = { [weak self] editing in
+            self?.hotkey?.macroPadSearchEditing = editing
+        }
         // The three-finger tap lands on the multitouch thread; the monitor's
         // entry point is built for that (reads `held`, dispatches to main
         // itself) — no actor hop, so the monitor is captured directly.
@@ -1164,10 +1167,9 @@ final class AppController {
         // would leave the state machine wedged in .recording (windowMode
         // release dispatches .windowEnd, never .up/.cancel).
         interruptDictation()
-        guard let (button, bundleID) = macroPad.buttonForDigit(index) else { return }
-        macroPad.flashButton(index)
-        runMacroButton(button, targetBundleID: bundleID)
-        macroPad.summonFired()   // fire-once for a summoned pad; no-op when docked
+        // Same funnel as a click: key handoff → onAction (runMacroButton) →
+        // fire-once for a summoned pad.
+        macroPad.fireButton(index)
     }
 
     /// Runs are chained so rapid leader-digit fires queue and execute in order
