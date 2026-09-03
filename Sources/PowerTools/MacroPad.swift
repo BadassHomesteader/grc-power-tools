@@ -596,7 +596,12 @@ final class MacroPadView: NSView {
             let n = CGFloat(max(buttons.count, 1))
             if flanked {
                 let (lead, trail) = flankSplit(buttons.count)
-                let flank = max(markRun(lead), markRun(trail)) + Self.miniPad
+                // Padding BOTH sides of the cluster: against the housing on the
+                // inside, and against the pill's own edge on the outside. With only
+                // the inner pad reserved, the leading cluster landed at x=0, flush
+                // with the plate edge and bleeding into the menu bar — which reads
+                // as a clipped dot.
+                let flank = max(markRun(lead), markRun(trail)) + Self.miniPad * 2
                 return NSSize(width: notchSpan + flank * 2,
                               height: max(notchHeight, Self.berthSq + Self.miniPad * 2))
             }

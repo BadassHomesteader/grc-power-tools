@@ -717,7 +717,12 @@ final class AgentPadView: NSView {
                 // Symmetric around the housing, because the anchor centres the
                 // pill on it — so both shoulders get the wider cluster's width.
                 let (lead, trail) = flankSplit(sessions.count)
-                let flank = max(markRun(lead), markRun(trail)) + Self.miniPad
+                // Padding BOTH sides of the cluster: against the housing on the
+                // inside, and against the pill's own edge on the outside. With only
+                // the inner pad reserved, the leading cluster landed at x=0, flush
+                // with the plate edge and bleeding into the menu bar — which reads
+                // as a clipped dot.
+                let flank = max(markRun(lead), markRun(trail)) + Self.miniPad * 2
                 return NSSize(width: notchSpan + flank * 2,
                               height: max(notchHeight, Self.berthDot + Self.miniPad * 2))
             }
