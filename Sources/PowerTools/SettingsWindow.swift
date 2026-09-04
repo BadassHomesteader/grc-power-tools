@@ -84,7 +84,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     // Macro Pad: enable toggle + the Outlook folder-button editor.
     private let macroPadCheck = NSButton(checkboxWithTitle: "Macro Pad — floating per-app buttons (hold hotkey + B, or menu bar ▸ Macro Pad)", target: nil, action: nil)
-    private let macroSummonCheck = NSButton(checkboxWithTitle: "Summon to the cursor for one macro — hold hotkey + three-finger tap on the trackpad", target: nil, action: nil)
+    private let macroSummonCheck = NSButton(checkboxWithTitle: "Summon to the cursor for one macro — hold hotkey + a trackpad tap", target: nil, action: nil)
+    private let macroSummonFingers = NSPopUpButton(frame: .zero, pullsDown: false)
     private let macroFoldersView = NSTextView()
     private let macroPadStatus = NSTextField(labelWithString: " ")
 
@@ -663,6 +664,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroPadCheck.action = #selector(macroPadToggled)
         macroSummonCheck.target = self
         macroSummonCheck.action = #selector(macroSummonToggled)
+        macroSummonFingers.addItems(withTitles: ["Three fingers", "Four fingers"])
+        macroSummonFingers.target = self
+        macroSummonFingers.action = #selector(macroSummonFingersChanged)
 
         let example = NSTextField(labelWithString: "One folder per line, optional keywords:   Projects | acme, quarterly")
         example.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
@@ -756,7 +760,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroEditorStatus.textColor = .secondaryLabelColor
 
         return vstack([
-            section("Macro Pad", [note, macroPadCheck, macroSummonCheck], width: 560),
+            section("Macro Pad", [note, macroPadCheck, macroSummonCheck,
+                                  formRow("Summon fingers", macroSummonFingers)], width: 560),
             section("Outlook folders", [example, scroll, saveBtn, macroPadStatus], width: 560),
             section("All profiles & buttons", [
                 editorNote,
@@ -1074,6 +1079,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func macroSummonToggled() {
         config.macroPadThreeFingerTap = (macroSummonCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func macroSummonFingersChanged() {
+        config.macroPadSummonFingers = macroSummonFingers.indexOfSelectedItem + 3   // 0→3, 1→4
         config.save()
         onConfigChange(config)
     }
@@ -1464,6 +1475,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         openaiKeyField.placeholderString = Keychain.has("openai") ? "•••••• saved — paste to replace" : "sk-…"
         macroPadCheck.state = config.macroPad ? .on : .off
         macroSummonCheck.state = config.macroPadThreeFingerTap ? .on : .off
+        macroSummonFingers.selectItem(at: max(0, min(1, config.macroPadSummonFingers - 3)))
         agentPadCheck.state = config.agentPad ? .on : .off
         captureCheck.state = config.showInCaptures ? .on : .off
         notchStripCheck.state = config.notchStrip ? .on : .off

@@ -89,11 +89,15 @@ final class TrackpadTapDetector {
     // Contact state machine — MT thread only, under `lock`. Nothing on the
     // event-tap thread ever takes this lock.
     private let lock = NSLock()
-    private var threeActive = false
+    private var tapActive = false
     private var tooMany = false
-    private var threeSince: Double = 0
+    private var tapSince: Double = 0
     private var lastFire: Double = -1
     private var lastCount: Int32 = -1
+    /// How many fingers make the tap (3 or 4). Set from the main thread, read
+    /// on the MT thread — both under `lock`.
+    private var tapFingers: Int32 = 3
+    func setTapFingers(_ n: Int) { lock.lock(); tapFingers = Int32(max(2, min(5, n))); lock.unlock() }
 
     /// Framework present + device count, without starting anything (Doctor / CLI).
     static func probe() -> (available: Bool, devices: Int) {
@@ -136,7 +140,7 @@ final class TrackpadTapDetector {
         }
         let list = (arr as NSArray) as [AnyObject]
         lock.lock()
-        threeActive = false; tooMany = false; lastCount = -1
+        tapActive = false; tooMany = false; lastCount = -1
         lock.unlock()
         gDetector = self
         for obj in list {
@@ -181,23 +185,24 @@ final class TrackpadTapDetector {
 
         var fire = false
         lock.lock()
+        let target = tapFingers
         let changed = count != lastCount
         lastCount = count
-        if count > 3 {
+        if count > target {
             tooMany = true
-        } else if count == 3 {
-            if !threeActive, !tooMany {
-                threeActive = true
-                threeSince = timestamp
+        } else if count == target {
+            if !tapActive, !tooMany {
+                tapActive = true
+                tapSince = timestamp
             }
         } else if count == 0 {
-            if threeActive, !tooMany,
-               timestamp - threeSince <= tapWindow,
+            if tapActive, !tooMany,
+               timestamp - tapSince <= tapWindow,
                lastFire < 0 || timestamp - lastFire >= cooldown {
                 lastFire = timestamp
                 fire = true
             }
-            threeActive = false
+            tapActive = false
             tooMany = false
         }
         lock.unlock()

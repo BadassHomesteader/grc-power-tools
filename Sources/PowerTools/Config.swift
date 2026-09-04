@@ -346,10 +346,11 @@ struct Config: Codable {
     /// Pause between macro steps (chord → text → Return) — the Outlook Move
     /// dialog needs a beat to open and to filter before Return commits.
     var macroPadStepDelayMs: Int = 350
-    /// Hold hotkey + three-finger tap on the trackpad summons the pad beside
-    /// the cursor (rides the private MultitouchSupport framework; silently
-    /// off when that's unavailable).
+    /// Hold hotkey + a trackpad tap summons the pad beside the cursor (rides the
+    /// private MultitouchSupport framework; silently off when unavailable).
     var macroPadThreeFingerTap: Bool = true
+    /// How many fingers the summon tap needs — 3 or 4.
+    var macroPadSummonFingers: Int = 3
 
     /// Agent Pad (hold hotkey + J): floating Claude Code session panel fed by
     /// hooks POSTing to a loopback server. Port changes need an app relaunch
@@ -491,7 +492,7 @@ struct Config: Codable {
         case keyHomeEnd, finderBackspaceUp, finderDeleteTrash, taskManagerShortcut
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
-        case macroPad, macroPadProfiles, macroPadStepDelayMs, macroPadThreeFingerTap
+        case macroPad, macroPadProfiles, macroPadStepDelayMs, macroPadThreeFingerTap, macroPadSummonFingers
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case showInCaptures
@@ -565,6 +566,7 @@ struct Config: Codable {
         }
         macroPadStepDelayMs = field(.macroPadStepDelayMs, 350)
         macroPadThreeFingerTap = field(.macroPadThreeFingerTap, true)
+        macroPadSummonFingers = min(5, max(2, field(.macroPadSummonFingers, 3)))
         agentPad = field(.agentPad, true)
         agentPadPort = field(.agentPadPort, 8377)
         agentPadCodex = field(.agentPadCodex, true)

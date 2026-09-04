@@ -33,6 +33,7 @@ final class AppController {
                             dark: config.appearance.isDark)
             hotkey?.powerRingEnabled = config.powerRing
             hotkey?.macroPadSummonEnabled = config.macroPad && config.macroPadThreeFingerTap
+            trackpadTap.setTapFingers(config.macroPadSummonFingers)
             trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
             if !config.agentPadCodex { claudeRegistry.setExternal(kind: "codex", []) }
             if !config.agentPadCursor { claudeRegistry.setExternal(kind: "cursor", []) }
@@ -274,6 +275,7 @@ final class AppController {
         // The three-finger tap lands on the multitouch thread; the monitor's
         // entry point is built for that (reads `held`, dispatches to main
         // itself) — no actor hop, so the monitor is captured directly.
+        trackpadTap.setTapFingers(config.macroPadSummonFingers)
         trackpadTap.onTap = { monitor.trackpadThreeFingerTap() }
         trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
         NSWorkspace.shared.notificationCenter.addObserver(
