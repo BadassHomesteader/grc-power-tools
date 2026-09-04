@@ -541,6 +541,9 @@ final class NotchStrip {
     /// so brushing across the row doesn't thrash. Already-open module: no-op.
     private func hoverModule(_ i: Int?) {
         guard let i, i >= 0, i < modules.count else { cancelHover(); return }
+        // Action tiles (Settings opens an 860pt window and folds the notch
+        // away) need a deliberate CLICK — a hover must never launch them.
+        guard modules[i].open == nil else { cancelHover(); return }
         if case .module(i) = mode { cancelHover(); return }
         armHover(0.15) { [weak self] in
             guard let self else { return }

@@ -1664,6 +1664,15 @@ case "notchstrip-live-test":
             moveTo(NSPoint(x: t1.midX, y: t1.midY)); pump(0.35)
             check({ if case .module(1) = strip.mode { return true } else { return false } }(),
                   "15a: hovering a module tile opens that module")
+            // 15a2: hovering the Settings (action) tile must NOT open it — a
+            // window-launching tile needs a deliberate click, not a hover.
+            let before = settingsOpened
+            strip.collapse(); pump(0.2); strip.openPicker(); pump(0.2)
+            let sIdx = strip.moduleCount - 1
+            let st = view.tileRect(sIdx)
+            moveTo(NSPoint(x: st.midX, y: st.midY)); pump(0.35)
+            check(strip.mode == .picker && settingsOpened == before,
+                  "15a2: hovering the Settings tile does NOT open it")
             // 15b: from a session list, hovering the launcher opens the module row.
             strip.collapse(); pump(0.3)
             strip.openList(source: 0); pump(0.3)
