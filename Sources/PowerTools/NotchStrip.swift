@@ -522,13 +522,6 @@ final class NotchStripView: NSView {
         self.tabs = tabs
         hoveredTile = nil
         hoveredTab = nil
-        // A hosted module is a real subview, so the shell has to CLIP rather
-        // than just draw its silhouette — square against the screen edge,
-        // rounded below, same shape either way.
-        wantsLayer = true
-        layer?.cornerRadius = 18
-        layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        layer?.masksToBounds = true
         self.groups = groups
         self.cards = cards
         self.listMode = listMode
@@ -536,6 +529,16 @@ final class NotchStripView: NSView {
         self.notchSpan = field.notch.width
         self.notchHeight = field.notch.height
         self.maxWidth = field.visible.width - PadDock.margin * 2
+        // LAST, not first: shellRadius reads isMid, which depends on cards and
+        // listMode above — computing it earlier used the PREVIOUS state's shape.
+        // The corner set matters too: this view is FLIPPED, so its backing layer
+        // is geometry-flipped and layer minY is the TOP. Masking "MinY" squared
+        // the bottom and rounded the edge against the screen, the exact opposite
+        // of the shell it is meant to match.
+        wantsLayer = true
+        layer?.cornerRadius = shellRadius
+        layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        layer?.masksToBounds = true
         hovered = nil
         needsDisplay = true
     }
@@ -692,6 +695,11 @@ final class NotchStripView: NSView {
     /// Square against the top edge of the screen, rounded below — overshooting
     /// the top by the corner radius drops those corners off-view. Same trick
     /// the pads used, and it is what fuses the plate to the housing.
+    /// Tighter when collapsed into the menu-bar band, generous when expanded —
+    /// and the layer mask uses the SAME number, or the drawn silhouette and the
+    /// clip disagree at the corners.
+    private var shellRadius: CGFloat { isMid ? 18 : 12 }
+
     private func shellClip(radius: CGFloat) -> NSBezierPath {
         NSBezierPath(roundedRect: NSRect(x: 0, y: -radius, width: bounds.width,
                                          height: bounds.height + radius),
@@ -699,7 +707,7 @@ final class NotchStripView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        shellClip(radius: card == nil ? 12 : 18).setClip()
+        shellClip(radius: shellRadius).setClip()
         // The housing's own black, in every appearance — the camera is black on
         // every Mac, so matching it is what makes the two read as one shape.
         NSColor(white: 0.04, alpha: 0.97).setFill()
