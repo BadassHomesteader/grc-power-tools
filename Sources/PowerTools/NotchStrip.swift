@@ -550,8 +550,12 @@ final class NotchStrip {
     }
 
     /// Open the module row, or a module by index.
-    func openPicker() { mode = .picker; pinned = true; refresh() }
-    func openModule(_ i: Int) {
+    /// Opened by HOVER is transient (unpinned) — leaving the popup folds it back
+    /// to Min, the way the session list already behaves; opened by a CLICK pins
+    /// it so it stays. Default pinned so the test hooks and click paths keep
+    /// their old behavior; the hover callers pass `pinned: false`.
+    func openPicker(pinned pin: Bool = true) { mode = .picker; pinned = pin; refresh() }
+    func openModule(_ i: Int, pinned pin: Bool = true) {
         guard i < modules.count else { return }
         // An action tile (Settings) fires and folds the notch away — it opens
         // its own window elsewhere rather than hosting under the housing.
@@ -562,7 +566,7 @@ final class NotchStrip {
         }
         moduleView?.removeFromSuperview(); moduleView = nil
         mode = .module(index: i)
-        pinned = true
+        pinned = pin
         refresh()
     }
     var moduleCount: Int { modules.count }
@@ -599,7 +603,13 @@ final class NotchStrip {
         if case .module(i) = mode { cancelHover(); return }
         armHover(0.15) { [weak self] in
             guard let self else { return }
-            switch self.mode { case .picker, .module: self.openModule(i); default: break }
+            switch self.mode {
+            case .picker, .module:
+                // A keyboard module (Ask) stays open so you can type/dictate into
+                // it; the rest are transient and fold back when you hover away.
+                self.openModule(i, pinned: self.modules[i].wantsKeyboard)
+            default: break
+            }
         }
     }
     /// Hovering the in-list launcher opens the module row.
@@ -607,7 +617,7 @@ final class NotchStrip {
         guard open else { cancelHover(); return }
         armHover(0.18) { [weak self] in
             guard let self, case .list = self.mode else { return }
-            self.openPicker()
+            self.openPicker(pinned: false)
         }
     }
 

@@ -1664,6 +1664,16 @@ case "notchstrip-live-test":
             moveTo(NSPoint(x: t1.midX, y: t1.midY)); pump(0.35)
             check({ if case .module(1) = strip.mode { return true } else { return false } }(),
                   "15a: hovering a module tile opens that module")
+            // 15a3: a hover-opened (non-keyboard) module is transient — a genuine
+            // leave folds it back to Min, like the session list.
+            let outEv = NSEvent.mouseEvent(with: .mouseMoved,
+                                           location: view.convert(NSPoint(x: -60, y: -60), to: nil),
+                                           modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: panel.windowNumber, context: nil,
+                                           eventNumber: 0, clickCount: 0, pressure: 0)!
+            view.mouseExited(with: outEv); pump(0.4)
+            check(strip.mode == .min, "15a3: a hover-opened module folds back on leave")
+            strip.openPicker(); pump(0.2)
             // 15a2: hovering the Settings (action) tile must NOT open it — a
             // window-launching tile needs a deliberate click, not a hover.
             let before = settingsOpened
