@@ -787,8 +787,50 @@ final class NotchStripView: NSView {
                      xRadius: radius, yRadius: radius)
     }
 
+    /// A quarter-circle turn from the path's CURRENT point to `b` around the
+    /// sharp corner `c` they share — control points at the classic 0.5523·r
+    /// offset, so a rounded OUTER corner and a concave notch fillet both fall
+    /// out of the same call. The caller lines to the start; this only curves.
+    private func quarter(_ p: NSBezierPath, corner c: NSPoint, to b: NSPoint) {
+        let k: CGFloat = 0.5522847498
+        let a = p.currentPoint
+        p.curve(to: b,
+                controlPoint1: NSPoint(x: a.x + (c.x - a.x) * k, y: a.y + (c.y - a.y) * k),
+                controlPoint2: NSPoint(x: b.x + (c.x - b.x) * k, y: b.y + (c.y - b.y) * k))
+    }
+
+    /// The MacNotch shell for an EXPANDED panel: rounded outer top corners and,
+    /// flanking the housing, a concave fillet on each of the notch's bottom
+    /// corners, so the panel reads as growing out of the housing rather than
+    /// hanging under it as a squared-off slab. The bottom corners are left to
+    /// the layer mask (which also clips hosted module content). View is FLIPPED
+    /// — y = 0 is the top, at the screen edge.
+    private func shellPathMid() -> NSBezierPath {
+        let W = bounds.width, H = bounds.height, nh = notchHeight
+        let span = min(notchSpan, W)
+        let hx0 = (W - span) / 2, hx1 = (W + span) / 2
+        let rT: CGFloat = 12
+        // Never let the fillet outrun the shoulder or the housing height.
+        let rF = max(0, min(10, nh - 1, (W - span) / 2 - 1))
+        let p = NSBezierPath()
+        p.move(to: NSPoint(x: 0, y: H))              // bottom-left (layer rounds it)
+        p.line(to: NSPoint(x: 0, y: rT))             // up the left edge
+        quarter(p, corner: NSPoint(x: 0, y: 0), to: NSPoint(x: rT, y: 0))   // top-left outer round
+        p.line(to: NSPoint(x: hx0, y: 0))            // left shoulder, along the screen edge
+        p.line(to: NSPoint(x: hx0, y: nh - rF))      // down the left housing wall
+        quarter(p, corner: NSPoint(x: hx0, y: nh), to: NSPoint(x: hx0 + rF, y: nh))   // left fillet
+        p.line(to: NSPoint(x: hx1 - rF, y: nh))      // under the housing
+        quarter(p, corner: NSPoint(x: hx1, y: nh), to: NSPoint(x: hx1, y: nh - rF))   // right fillet
+        p.line(to: NSPoint(x: hx1, y: 0))            // up the right housing wall
+        p.line(to: NSPoint(x: W - rT, y: 0))         // right shoulder
+        quarter(p, corner: NSPoint(x: W, y: 0), to: NSPoint(x: W, y: rT))   // top-right outer round
+        p.line(to: NSPoint(x: W, y: H))              // bottom-right (layer rounds it)
+        p.close()
+        return p
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        shellClip(radius: shellRadius).setClip()
+        (isMid ? shellPathMid() : shellClip(radius: shellRadius)).setClip()
         // The housing's own black, in every appearance — the camera is black on
         // every Mac, so matching it is what makes the two read as one shape.
         NSColor(white: 0.04, alpha: 0.97).setFill()
