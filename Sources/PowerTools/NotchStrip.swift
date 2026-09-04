@@ -686,7 +686,9 @@ final class NotchStripView: NSView {
         if !picker.isEmpty { return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.pickerRow) }
         if listMode, !cards.isEmpty { return NSSize(width: midFrameWidth, height: listHeight) }
         if card != nil { return NSSize(width: midFrameWidth, height: midHeight) }
-        return NSSize(width: leadFlank + notchSpan + trailFlank,
+        // Min gets the same flare each side as the expanded panel, so both
+        // states wear the same corner. The dots ride in by `flareOut` to match.
+        return NSSize(width: leadFlank + notchSpan + trailFlank + 2 * NotchStrip.flareOut,
                       height: max(notchHeight, NotchStrip.dot + NotchStrip.pad * 2))
     }
 
@@ -696,7 +698,7 @@ final class NotchStripView: NSView {
     func targetFrame(in field: PadDock.Field) -> NSRect {
         let size = fittingSize
         let x = isMid ? field.notch.midX - size.width / 2
-                      : field.notch.minX - leadFlank
+                      : field.notch.minX - leadFlank - NotchStrip.flareOut
         let clamped = min(max(x, field.visible.minX), max(field.visible.maxX - size.width, field.visible.minX))
         return NSRect(x: clamped, y: field.notch.maxY - size.height,
                       width: size.width, height: size.height)
@@ -714,8 +716,11 @@ final class NotchStripView: NSView {
         let y = (bounds.height - NotchStrip.dot) / 2
         let step = NotchStrip.dot + NotchStrip.gap
 
-        // Leading: right-aligned against the housing's left edge.
-        var x = leadFlank - NotchStrip.pad - run(groups[0].count)
+        // Leading: right-aligned against the housing's left edge. `dx` is the
+        // flare inset — the window grew by `flareOut` each side, so the dots
+        // ride in by the same to stay put against the housing.
+        let dx = NotchStrip.flareOut
+        var x = dx + leadFlank - NotchStrip.pad - run(groups[0].count)
         for (i, _) in groups[0].enumerated() {
             out.append(.init(source: 0, mark: i,
                              rect: NSRect(x: x + CGFloat(i) * step, y: y,
@@ -723,7 +728,7 @@ final class NotchStripView: NSView {
         }
         // Trailing: left-aligned from the housing's right edge outward, higher
         // priority nearest the housing so the eye reads outward from the notch.
-        x = leadFlank + notchSpan + NotchStrip.pad
+        x = dx + leadFlank + notchSpan + NotchStrip.pad
         for (gi, group) in groups.enumerated().dropFirst() where !group.isEmpty {
             for (i, _) in group.enumerated() {
                 out.append(.init(source: gi, mark: i,
@@ -848,8 +853,32 @@ final class NotchStripView: NSView {
         return p
     }
 
+    /// The Min strip wears the SAME corner as the expanded panel: a flared top
+    /// (wider at the very top, ramping in to the body) and rounded body-bottom
+    /// corners. The strip is short, so the ramp is small; the notch is left to
+    /// the hardware cutout rather than carved, keeping the strip continuous.
+    private func shellPathMin() -> NSBezierPath {
+        let W = bounds.width, H = bounds.height
+        let fl = NotchStrip.flareOut
+        let rC = min(12, H / 2 - 2)        // ramp in from the flared top
+        let rB = min(10, H / 2 - 2)        // body bottom corners
+        let bl = fl, br = W - fl           // body sides, inset by the flare
+        let p = NSBezierPath()
+        p.move(to: NSPoint(x: bl, y: H - rB))
+        p.line(to: NSPoint(x: bl, y: rC))
+        quarter(p, corner: NSPoint(x: bl, y: 0), to: NSPoint(x: 0, y: 0))   // ramp out, top-left
+        p.line(to: NSPoint(x: W, y: 0))                                     // continuous top edge
+        quarter(p, corner: NSPoint(x: br, y: 0), to: NSPoint(x: br, y: rC)) // ramp in, top-right
+        p.line(to: NSPoint(x: br, y: H - rB))
+        quarter(p, corner: NSPoint(x: br, y: H), to: NSPoint(x: br - rB, y: H))   // bottom-right round
+        p.line(to: NSPoint(x: bl + rB, y: H))
+        quarter(p, corner: NSPoint(x: bl, y: H), to: NSPoint(x: bl, y: H - rB))   // bottom-left round
+        p.close()
+        return p
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        (isMid ? shellPathMid() : shellClip(radius: shellRadius)).setClip()
+        (isMid ? shellPathMid() : shellPathMin()).setClip()
         // The housing's own black, in every appearance — the camera is black on
         // every Mac, so matching it is what makes the two read as one shape.
         NSColor(white: 0.04, alpha: 0.97).setFill()
