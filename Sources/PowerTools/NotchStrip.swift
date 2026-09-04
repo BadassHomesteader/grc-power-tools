@@ -124,6 +124,10 @@ final class NotchStrip {
     /// notch expands, it does not become a window.
     static let maxModuleContent: CGFloat = 320
     static let pickerRow: CGFloat = 64
+    /// While a module is open, its siblings stay one click away on a tab row
+    /// under the housing. Without it a module was a dead end — there was no way
+    /// back to the row and no way out at all.
+    static let moduleTabRow: CGFloat = 28
 
     private var panel: NSPanel?
     private var view: NotchStripView?
@@ -257,7 +261,7 @@ final class NotchStrip {
         }
         if case let .list(si) = mode { view?.listSource = si }
         view?.configure(groups: live, cards: cards, listMode: listMode, field: field,
-                        picker: pickerEntries, moduleHeight: hostedHeight)
+                        picker: pickerEntries, moduleHeight: hostedHeight, tabs: moduleTabs)
         hostModuleIfNeeded(field: field)
         place(field: field, animated: true)
     }
@@ -267,9 +271,17 @@ final class NotchStrip {
         return []
     }
 
+    /// The module's own content height — the tab row is charged against the
+    /// same ceiling, so adding it cannot push the notch past its cap.
     private var hostedHeight: CGFloat {
         guard case let .module(i) = mode, i < modules.count else { return 0 }
-        return Swift.min(modules[i].height, NotchStrip.maxModuleContent)
+        return Swift.min(modules[i].height,
+                         NotchStrip.maxModuleContent - NotchStrip.moduleTabRow)
+    }
+
+    private var moduleTabs: [(glyph: String, title: String, active: Bool)] {
+        guard case let .module(i) = mode else { return [] }
+        return modules.enumerated().map { ($1.glyph, $1.title, $0 == i) }
     }
 
     /// Put the module's own view in the space below the housing. The strip's
@@ -285,7 +297,7 @@ final class NotchStrip {
             view.addSubview(v)
             moduleView = v
         }
-        moduleView?.frame = NSRect(x: 0, y: field.notch.height,
+        moduleView?.frame = NSRect(x: 0, y: field.notch.height + NotchStrip.moduleTabRow,
                                    width: view.fittingSize.width, height: hostedHeight)
     }
 
@@ -297,6 +309,11 @@ final class NotchStrip {
         v.onHover = { [weak self] hit in self?.hover(hit) }
         v.onExit = { [weak self] in self?.hoverOut() }
         v.onClick = { [weak self] hit in self?.click(hit) }
+        // -1 closes; anything else switches module.
+        v.onModuleTab = { [weak self] i in
+            guard let self else { return }
+            if i < 0 { self.collapse() } else { self.openModule(i) }
+        }
         let win = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                           backing: .buffered, defer: false)
         win.isOpaque = false
@@ -459,6 +476,8 @@ final class NotchStripView: NSView {
     var onHover: ((NotchStrip.Placed?) -> Void)?
     var onExit: (() -> Void)?
     var onClick: ((NotchStrip.Placed?) -> Void)?
+    /// Tab index, or -1 for the close button.
+    var onModuleTab: ((Int) -> Void)?
 
     private var groups: [[NotchStrip.Mark]] = []
     private var cards: [NotchStrip.Card] = []
@@ -489,15 +508,20 @@ final class NotchStripView: NSView {
 
     private var picker: [(glyph: String, title: String)] = []
     private var moduleHeight: CGFloat = 0
+    private var tabs: [(glyph: String, title: String, active: Bool)] = []
     private var hoveredTile: Int?
+    private var hoveredTab: Int?
 
     func configure(groups: [[NotchStrip.Mark]], cards: [NotchStrip.Card], listMode: Bool,
                    field: PadDock.Field,
                    picker: [(glyph: String, title: String)] = [],
-                   moduleHeight: CGFloat = 0) {
+                   moduleHeight: CGFloat = 0,
+                   tabs: [(glyph: String, title: String, active: Bool)] = []) {
         self.picker = picker
         self.moduleHeight = moduleHeight
+        self.tabs = tabs
         hoveredTile = nil
+        hoveredTab = nil
         // A hosted module is a real subview, so the shell has to CLIP rather
         // than just draw its silhouette — square against the screen edge,
         // rounded below, same shape either way.
@@ -560,7 +584,9 @@ final class NotchStripView: NSView {
     private var visibleRows: Int { min(cards.count, NotchStrip.maxListRows) }
 
     override var fittingSize: NSSize {
-        if moduleHeight > 0 { return NSSize(width: midWidth, height: notchHeight + moduleHeight) }
+        if moduleHeight > 0 {
+            return NSSize(width: midWidth, height: notchHeight + NotchStrip.moduleTabRow + moduleHeight)
+        }
         if !picker.isEmpty { return NSSize(width: midWidth, height: notchHeight + NotchStrip.pickerRow) }
         if listMode, !cards.isEmpty { return NSSize(width: midWidth, height: listHeight) }
         if card != nil { return NSSize(width: midWidth, height: midHeight) }
@@ -618,6 +644,14 @@ final class NotchStripView: NSView {
     /// on a screenshot: the framebuffer faithfully contains the pixels behind
     /// the camera that no human can see, so a screenshot check passes on
     /// precisely the bug it exists to catch.
+    /// A tab in the module bar. The last slot is the close button.
+    func tabRect(_ i: Int) -> NSRect {
+        let closeW: CGFloat = 34
+        let w = (bounds.width - closeW) / CGFloat(max(tabs.count, 1))
+        if i < 0 { return NSRect(x: bounds.width - closeW, y: notchHeight, width: closeW, height: NotchStrip.moduleTabRow) }
+        return NSRect(x: CGFloat(i) * w, y: notchHeight, width: w, height: NotchStrip.moduleTabRow)
+    }
+
     /// The module row's tiles.
     func tileRect(_ i: Int) -> NSRect {
         let w = bounds.width / CGFloat(max(picker.count, 1))
@@ -626,7 +660,8 @@ final class NotchStripView: NSView {
 
     var contentRects: [NSRect] {
         if moduleHeight > 0 {
-            return [NSRect(x: 0, y: notchHeight, width: bounds.width, height: moduleHeight)]
+            return [NSRect(x: 0, y: notchHeight, width: bounds.width,
+                           height: NotchStrip.moduleTabRow + moduleHeight)]
         }
         if !picker.isEmpty { return picker.indices.map(tileRect) }
         if listMode, !cards.isEmpty { return (0..<visibleRows).map(rowRect) }
@@ -670,8 +705,12 @@ final class NotchStripView: NSView {
         NSColor(white: 0.04, alpha: 0.97).setFill()
         bounds.fill()
 
-        // A hosted module paints itself; the strip just supplies the shell.
-        if moduleHeight > 0 { return }
+        // A hosted module paints itself; the strip supplies the shell and the
+        // tab row that gets you back out of it.
+        if moduleHeight > 0 {
+            drawTabs()
+            return
+        }
         if !picker.isEmpty {
             drawPicker()
             return
@@ -700,6 +739,38 @@ final class NotchStripView: NSView {
                     path.stroke()
                 }
         }
+    }
+
+    /// The module bar: every module one click away, plus a way out.
+    private func drawTabs() {
+        NSColor.white.withAlphaComponent(0.07).setFill()
+        NSRect(x: 0, y: notchHeight, width: bounds.width, height: NotchStrip.moduleTabRow).fill()
+        for (i, t) in tabs.enumerated() {
+            let r = tabRect(i)
+            if t.active {
+                NSColor.white.withAlphaComponent(0.14).setFill()
+                NSBezierPath(roundedRect: r.insetBy(dx: 3, dy: 4), xRadius: 6, yRadius: 6).fill()
+            } else if hoveredTab == i {
+                NSColor.white.withAlphaComponent(0.08).setFill()
+                NSBezierPath(roundedRect: r.insetBy(dx: 3, dy: 4), xRadius: 6, yRadius: 6).fill()
+            }
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 12),
+                .foregroundColor: NSColor.white.withAlphaComponent(t.active ? 1 : 0.55)]
+            let label = "\(t.glyph)  \(t.title)" as NSString
+            let sz = label.size(withAttributes: attrs)
+            label.draw(at: NSPoint(x: r.midX - sz.width / 2, y: r.midY - sz.height / 2), withAttributes: attrs)
+        }
+        let close = tabRect(-1)
+        if hoveredTab == -1 {
+            NSColor.white.withAlphaComponent(0.12).setFill()
+            NSBezierPath(roundedRect: close.insetBy(dx: 6, dy: 4), xRadius: 6, yRadius: 6).fill()
+        }
+        let x = "✕" as NSString
+        let xa: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.white.withAlphaComponent(0.7)]
+        let xs = x.size(withAttributes: xa)
+        x.draw(at: NSPoint(x: close.midX - xs.width / 2, y: close.midY - xs.height / 2), withAttributes: xa)
     }
 
     /// The module row: glyph over title, one tile each.
@@ -917,7 +988,14 @@ final class NotchStripView: NSView {
             if t != hoveredTile { hoveredTile = t; needsDisplay = true }
             return
         }
-        if moduleHeight > 0 { return }
+        if moduleHeight > 0 {
+            let p = convert(event.locationInWindow, from: nil)
+            var h: Int?
+            if tabRect(-1).contains(p) { h = -1 }
+            else { h = tabs.indices.first { tabRect($0).contains(p) } }
+            if h != hoveredTab { hoveredTab = h; needsDisplay = true }
+            return
+        }
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
             let row = (0..<visibleRows).first { rowRect($0).insetBy(dx: -4, dy: 0).contains(p) }
@@ -955,7 +1033,16 @@ final class NotchStripView: NSView {
             }
             return
         }
-        if moduleHeight > 0 { return }   // the module's own view handles clicks
+        if moduleHeight > 0 {
+            // The tab row belongs to the strip; everything below it is the
+            // module's own business.
+            let p = convert(event.locationInWindow, from: nil)
+            if tabRect(-1).contains(p) { onModuleTab?(-1); return }
+            if let i = tabs.indices.first(where: { tabRect($0).contains(p) }) {
+                onModuleTab?(i)
+            }
+            return
+        }
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
             // A ✓/✕ answers in place; anywhere else on the row opens the pad.

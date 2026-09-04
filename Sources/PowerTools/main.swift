@@ -1527,8 +1527,8 @@ case "notchstrip-live-test":
 
         strip.openModule(0); pump(0.4)
         check(opened.contains("alpha"), "13e: opening a module builds its view")
-        check(abs(strip.frame.height - (field.notch.height + 200)) < 1,
-              "13f: hosted at its own height (\(Int(strip.frame.height))pt)")
+        check(abs(strip.frame.height - (field.notch.height + NotchStrip.moduleTabRow + 200)) < 1,
+              "13f: hosted at its own height plus the tab row (\(Int(strip.frame.height))pt)")
         check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
               "13g: hosted content sits below the housing")
 
@@ -1537,8 +1537,30 @@ case "notchstrip-live-test":
         let capped = field.notch.height + NotchStrip.maxModuleContent
         check(abs(strip.frame.height - capped) < 1,
               "13h: a 999pt module is clamped to \(Int(capped))pt — the notch stays a notch")
+        // 13j-l: the tab row is the way BETWEEN modules and the way OUT. Without
+        // it a module was a dead end — mouseDown returned before the click
+        // handler, so nothing could close or switch it.
+        strip.openModule(0); pump(0.4)
+        if let (panel, view) = strip.testSurface {
+            func clickTab(_ i: Int) {
+                let r = view.tabRect(i)
+                let ev = NSEvent.mouseEvent(with: .leftMouseDown,
+                                            location: view.convert(NSPoint(x: r.midX, y: r.midY), to: nil),
+                                            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: panel.windowNumber, context: nil,
+                                            eventNumber: 0, clickCount: 1, pressure: 1)!
+                view.mouseDown(with: ev)
+            }
+            opened.removeAll()
+            clickTab(1); pump(0.4)
+            check(opened.contains("beta"), "13j: a tab switches module without leaving the notch")
+            clickTab(-1); pump(0.4)
+            check(abs(strip.frame.height - minFrame.height) < 1, "13k: ✕ on the tab row closes")
+        } else {
+            check(false, "13j: no surface")
+        }
         strip.collapse(); pump(0.4)
-        check(abs(strip.frame.height - minFrame.height) < 1, "13i: collapse returns to Min")
+        check(abs(strip.frame.height - minFrame.height) < 1, "13l: collapse returns to Min")
 
         // 8: berth migration, including idempotence.
         let fake: [String: [String: Any]] = [
