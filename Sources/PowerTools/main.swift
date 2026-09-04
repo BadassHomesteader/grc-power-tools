@@ -1500,6 +1500,46 @@ case "notchstrip-live-test":
         }
         strip.collapse(); pump(0.3)
 
+        // 13: modules — the panels the notch HOSTS. Registered as fakes so the
+        // shape is tested, not the content.
+        agentCount = 3
+        strip.apply(master: true, enabled: ["agents"]); pump(0.3)
+        var opened: [String] = []
+        for (id, h) in [("alpha", CGFloat(200)), ("beta", CGFloat(999))] {
+            strip.registerModule(NotchStrip.Module(id: id, glyph: "◆", title: id, height: h) {
+                let v = NSView(frame: .zero)
+                v.wantsLayer = true
+                opened.append(id)
+                return v
+            })
+        }
+        strip.refresh(); pump(0.4)
+        // The ⋯ mark rides at the end as its own group.
+        let withPicker = strip.placedMarks
+        check(withPicker.contains { $0.source == 1 }, "13a: the ⋯ mark joins the strip")
+        let pickerBad = strip.contentRectsInScreen.filter { $0.intersects(field.notch) }
+        check(pickerBad.isEmpty, "13b: the ⋯ mark is clear of the housing")
+
+        strip.openPicker(); pump(0.4)
+        check(strip.frame.height > field.notch.height, "13c: ⋯ opens the module row")
+        check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
+              "13d: module row sits below the housing")
+
+        strip.openModule(0); pump(0.4)
+        check(opened.contains("alpha"), "13e: opening a module builds its view")
+        check(abs(strip.frame.height - (field.notch.height + 200)) < 1,
+              "13f: hosted at its own height (\(Int(strip.frame.height))pt)")
+        check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
+              "13g: hosted content sits below the housing")
+
+        // A module asking for more than the ceiling gets the ceiling.
+        strip.openModule(1); pump(0.4)
+        let capped = field.notch.height + NotchStrip.maxModuleContent
+        check(abs(strip.frame.height - capped) < 1,
+              "13h: a 999pt module is clamped to \(Int(capped))pt — the notch stays a notch")
+        strip.collapse(); pump(0.4)
+        check(abs(strip.frame.height - minFrame.height) < 1, "13i: collapse returns to Min")
+
         // 8: berth migration, including idempotence.
         let fake: [String: [String: Any]] = [
             "agent": ["anchor": "notchLeft", "mini": true, "open": true, "x": 12, "y": 616],

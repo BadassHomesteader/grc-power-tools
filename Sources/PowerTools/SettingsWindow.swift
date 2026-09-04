@@ -94,6 +94,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let notchStripCheck = NSButton(checkboxWithTitle: "Notch strip — a live glance in the camera housing", target: nil, action: nil)
     private let notchAgentsCheck = NSButton(checkboxWithTitle: "Agent sessions — one dot each, and a banner when one needs an answer", target: nil, action: nil)
     private let notchQuotaCheck = NSButton(checkboxWithTitle: "Quota — a dot once a usage window is running low", target: nil, action: nil)
+    private let weatherField = NSTextField(string: "")
+    private let weatherStatus = NSTextField(labelWithString: "")
+    private let weatherUnitCheck = NSButton(checkboxWithTitle: "Show °F", target: nil, action: nil)
+    private let clockZonesField = NSTextField(string: "")
     private let agentCodexCheck = NSButton(checkboxWithTitle: "Watch Codex — ChatGPT/Codex threads as rows (watch-only, click to focus)", target: nil, action: nil)
     private let agentCursorCheck = NSButton(checkboxWithTitle: "Watch Cursor — cloud agents + Agents Window sessions (watch-only)", target: nil, action: nil)
     private let hooksStatus = NSTextField(labelWithString: " ")
@@ -198,6 +202,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         agentPadCheck.action = #selector(agentPadToggled)
         captureCheck.target = self
         captureCheck.action = #selector(captureToggled)
+        weatherField.target = self
+        weatherField.action = #selector(weatherPlaceEntered)
+        weatherField.placeholderString = "City — press Return to look it up"
+        clockZonesField.target = self
+        clockZonesField.action = #selector(clockZonesEntered)
+        clockZonesField.placeholderString = "America/New_York, Europe/London, Asia/Tokyo"
+        weatherUnitCheck.target = self
+        weatherUnitCheck.action = #selector(weatherUnitToggled)
+        weatherStatus.font = .systemFont(ofSize: 11)
+        weatherStatus.textColor = .secondaryLabelColor
         for (box, sel) in [(notchStripCheck, #selector(notchStripToggled)),
                            (notchAgentsCheck, #selector(notchAgentsToggled)),
                            (notchQuotaCheck, #selector(notchQuotaToggled))] {
@@ -1187,9 +1201,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         quotaNote.font = .systemFont(ofSize: 11)
         quotaNote.textColor = .secondaryLabelColor
         quotaNote.preferredMaxLayoutWidth = 500
+        let modNote = NSTextField(wrappingLabelWithString:
+            "The ⋯ mark at the end of the strip opens the module row: Usage, Hotkeys, "
+            + "Snap, Clock, Weather and Ask.")
+        modNote.font = .systemFont(ofSize: 11)
+        modNote.textColor = .secondaryLabelColor
+        modNote.preferredMaxLayoutWidth = 500
         return vstack([
             section("Notch strip", [notchStripCheck, note], width: 540),
             section("What it shows", [notchAgentsCheck, notchQuotaCheck, quotaNote], width: 540),
+            section("Modules", [modNote], width: 540),
+            section("Weather", [weatherField, weatherStatus, weatherUnitCheck], width: 540),
+            section("World clock", [clockZonesField], width: 540),
         ])
     }
 
@@ -1206,6 +1229,45 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func captureToggled() {
         config.showInCaptures = (captureCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func weatherPlaceEntered() {
+        let typed = weatherField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty else {
+            config.weatherPlace = ""; config.weatherLat = 0; config.weatherLon = 0
+            weatherStatus.stringValue = "No city set — the Weather module will say so."
+            config.save(); onConfigChange(config)
+            return
+        }
+        weatherStatus.stringValue = "Looking up \(typed)…"
+        WeatherReader.geocode(typed) { [weak self] name, lat, lon in
+            guard let self else { return }
+            self.config.weatherPlace = name
+            self.config.weatherLat = lat
+            self.config.weatherLon = lon
+            self.weatherField.stringValue = name
+            self.weatherStatus.stringValue = String(format: "%@ · %.2f, %.2f", name, lat, lon)
+            self.config.save()
+            self.onConfigChange(self.config)
+        }
+    }
+
+    @objc private func weatherUnitToggled() {
+        config.weatherFahrenheit = (weatherUnitCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func clockZonesEntered() {
+        // Only zones macOS actually knows — a typo would otherwise vanish
+        // silently at draw time.
+        let zones = clockZonesField.stringValue
+            .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { TimeZone(identifier: $0) != nil }
+        config.notchClockZones = zones
+        clockZonesField.stringValue = zones.joined(separator: ", ")
         config.save()
         onConfigChange(config)
     }
@@ -1387,6 +1449,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         notchStripCheck.state = config.notchStrip ? .on : .off
         notchAgentsCheck.state = config.notchAgents ? .on : .off
         notchQuotaCheck.state = config.notchQuota ? .on : .off
+        weatherField.stringValue = config.weatherPlace
+        weatherUnitCheck.state = config.weatherFahrenheit ? .on : .off
+        clockZonesField.stringValue = config.notchClockZones.joined(separator: ", ")
+        weatherStatus.stringValue = config.weatherLat == 0 && config.weatherLon == 0
+            ? "No city set — the Weather module will say so."
+            : String(format: "%@ · %.2f, %.2f", config.weatherPlace, config.weatherLat, config.weatherLon)
         agentCodexCheck.state = config.agentPadCodex ? .on : .off
         agentCursorCheck.state = config.agentPadCursor ? .on : .off
         refreshHooksStatus()

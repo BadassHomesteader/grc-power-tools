@@ -1036,6 +1036,8 @@ final class AppController {
             // Quota's detail already lives on its row; a click just closes.
             activate: { _ in }))
 
+        registerNotchModules()
+
         // ONE owner for the reader's single update closure, fanned out here.
         UsageReader.shared.onUpdate = { [weak self] in
             self?.agentPad.usageDidUpdate()
@@ -1043,6 +1045,43 @@ final class AppController {
         }
         applyNotchConfig()
         notchStrip.start()
+    }
+
+    /// Panels the notch hosts. Order here is the order in the module row.
+    private func registerNotchModules() {
+        let all: [(String, NotchStrip.Module)] = [
+            ("usage", .init(id: "usage", glyph: "◔", title: "Usage", height: 230) {
+                UsageModuleView()
+            }),
+            ("hotkeys", .init(id: "hotkeys", glyph: "⌨", title: "Hotkeys", height: 300) { [weak self] in
+                // Same shape toggleCheatSheet builds, so the module and the
+                // hold+Q sheet can never drift apart.
+                let conns = (self?.config.connections ?? [])
+                    .filter { !$0.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    .map { (key: $0.leaderKey, name: $0.name) }
+                return HotkeysModuleView(hotkeyName: self?.config.hotkey.displayName ?? "hotkey",
+                                         connections: conns)
+            }),
+            ("snap", .init(id: "snap", glyph: "▦", title: "Snap", height: 210) {
+                SnapModuleView()
+            }),
+            ("clock", .init(id: "clock", glyph: "◷", title: "Clock", height: 150) { [weak self] in
+                ClockModuleView(zones: self?.config.notchClockZones ?? [])
+            }),
+            ("weather", .init(id: "weather", glyph: "☀", title: "Weather", height: 170) { [weak self] in
+                WeatherModuleView(place: self?.config.weatherPlace ?? "",
+                                  lat: self?.config.weatherLat ?? 0,
+                                  lon: self?.config.weatherLon ?? 0,
+                                  fahrenheit: self?.config.weatherFahrenheit ?? true)
+            }),
+            ("chat", .init(id: "chat", glyph: "✦", title: "Ask", height: 200) { [weak self] in
+                ChatModuleView(model: self?.config.claudeModel ?? "claude-haiku-4-5",
+                               openFull: { [weak self] text in self?.openChat(with: text) })
+            }),
+        ]
+        for (id, module) in all where config.notchModules.contains(id) {
+            notchStrip.registerModule(module)
+        }
     }
 
     /// The ✱ menu for a notch row. Built here rather than borrowed from the

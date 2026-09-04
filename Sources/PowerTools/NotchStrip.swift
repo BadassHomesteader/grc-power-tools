@@ -100,11 +100,37 @@ final class NotchStrip {
     enum Mode: Equatable {
         case min
         case list(source: Int)
+        /// The module row — what the ⋯ mark opens.
+        case picker
+        /// One module filling the space below the housing.
+        case module(index: Int)
     }
+
+    /// A panel the notch HOSTS, as opposed to a Source, which publishes into
+    /// it. Modules are opened deliberately; sources speak up on their own.
+    /// Everything the app can already show in its own window can be a module,
+    /// which is what turns the notch from a status strip into a control centre.
+    struct Module {
+        let id: String
+        let glyph: String
+        let title: String
+        /// Content height below the housing, clamped to `maxModuleContent` —
+        /// the notch stays a notch.
+        let height: CGFloat
+        let make: () -> NSView
+    }
+
+    /// Ceiling on a module's content, the same discipline the list has: the
+    /// notch expands, it does not become a window.
+    static let maxModuleContent: CGFloat = 320
+    static let pickerRow: CGFloat = 64
 
     private var panel: NSPanel?
     private var view: NotchStripView?
     private var sources: [Source] = []
+    private var modules: [Module] = []
+    /// The hosted module's view, kept so it can be torn down on collapse.
+    private var moduleView: NSView?
     private var timer: Timer?
     private(set) var mode: Mode = .min
     /// Opened by a click rather than a hover, so leaving does not close it.
@@ -122,6 +148,12 @@ final class NotchStrip {
         sources.append(source)
         sources.sort { $0.priority < $1.priority }
     }
+
+    func registerModule(_ module: Module) { modules.append(module) }
+
+    /// The ⋯ mark rides at the end of the strip as its own pseudo-source, so it
+    /// gets the existing layout, hit-testing and cutout safety for free.
+    private var moduleMarkGroup: Int? { modules.isEmpty ? nil : activeSources.count }
 
     /// Master switch plus one flag per source id.
     func apply(master: Bool, enabled: Set<String>) {
@@ -165,6 +197,14 @@ final class NotchStrip {
     /// Current marks per active source, already capped, with an overflow dot
     /// standing in for whatever the cap dropped.
     private func groups() -> [[Mark]] {
+        var out = sourceGroups()
+        if !modules.isEmpty {
+            out.append([Mark(color: NSColor(white: 0.75, alpha: 1), dim: true, tooltip: "Modules")])
+        }
+        return out
+    }
+
+    private func sourceGroups() -> [[Mark]] {
         activeSources.map { source in
             let all = source.marks()
             guard all.count > source.maxMarks else { return all }
@@ -184,7 +224,9 @@ final class NotchStrip {
         // No empty state, deliberately: zero marks means zero pixels. That is
         // what makes "on by default" safe — a quiet machine shows nothing at
         // all rather than a placeholder dot sitting in the menu bar forever.
-        guard let screen = notchScreen, live.contains(where: { !$0.isEmpty }) else {
+        // The ⋯ mark alone is not a reason to occupy the menu bar: an app with
+        // nothing to say still shows nothing.
+        guard let screen = notchScreen, sourceGroups().contains(where: { !$0.isEmpty }) else {
             teardown()
             return
         }
@@ -193,7 +235,8 @@ final class NotchStrip {
         build(on: screen)
         if firstShow { onLog?("notch: strip up — \(live.map(\.count)) mark(s) per source") }
         // A Mid whose source or mark has gone away falls back to Min.
-        if case let .list(si) = mode, si >= live.count || live[si].isEmpty { mode = .min }
+        if case let .list(si) = mode, si >= activeSources.count || live[si].isEmpty { mode = .min }
+        if case let .module(i) = mode, i >= modules.count { mode = .min }
         var cards: [Card] = []
         var listMode = false
         switch mode {
@@ -207,12 +250,43 @@ final class NotchStrip {
             let total = activeSources[si].marks().count
             cards = (0..<Swift.min(total, NotchStrip.maxListRows)).compactMap { activeSources[si].card($0) }
             if cards.isEmpty { mode = .min }
-        default:
-            mode = .min
+        case .picker, .module:
+            break   // these carry no cards; they are handled by the view
+        case .list:
+            mode = .min   // a list whose source went away
         }
         if case let .list(si) = mode { view?.listSource = si }
-        view?.configure(groups: live, cards: cards, listMode: listMode, field: field)
+        view?.configure(groups: live, cards: cards, listMode: listMode, field: field,
+                        picker: pickerEntries, moduleHeight: hostedHeight)
+        hostModuleIfNeeded(field: field)
         place(field: field, animated: true)
+    }
+
+    private var pickerEntries: [(glyph: String, title: String)] {
+        if case .picker = mode { return modules.map { ($0.glyph, $0.title) } }
+        return []
+    }
+
+    private var hostedHeight: CGFloat {
+        guard case let .module(i) = mode, i < modules.count else { return 0 }
+        return Swift.min(modules[i].height, NotchStrip.maxModuleContent)
+    }
+
+    /// Put the module's own view in the space below the housing. The strip's
+    /// layer masks it, so a module never has to know about the shell's shape.
+    private func hostModuleIfNeeded(field: PadDock.Field) {
+        guard case let .module(i) = mode, i < modules.count, let view else {
+            moduleView?.removeFromSuperview()
+            moduleView = nil
+            return
+        }
+        if moduleView == nil {
+            let v = modules[i].make()
+            view.addSubview(v)
+            moduleView = v
+        }
+        moduleView?.frame = NSRect(x: 0, y: field.notch.height,
+                                   width: view.fittingSize.width, height: hostedHeight)
     }
 
     // MARK: Window
@@ -284,7 +358,13 @@ final class NotchStrip {
     /// the wrong answer to "what have I got running?".
     private func hover(_ hit: Placed?) {
         guard let hit else { return }
+        // The ⋯ mark opens on CLICK, not on hover — a module row appearing
+        // because the cursor crossed the menu bar would be maddening.
+        if hit.source == moduleMarkGroup { return }
+        guard hit.source < activeSources.count else { return }
         if case .list(hit.source) = mode { return }   // already showing it
+        if case .picker = mode { return }
+        if case .module = mode { return }
         mode = .list(source: hit.source)
         refresh()
         pinned = false
@@ -296,14 +376,19 @@ final class NotchStrip {
     /// for, and a status surface that launches windows when touched is not a
     /// status surface.
     private func click(_ hit: Placed?) {
-        guard let hit, hit.source < activeSources.count else { return }
+        guard let hit, hit.source <= activeSources.count else { return }
         switch mode {
         case .min:
+            if hit.source == moduleMarkGroup { openPicker(); return }
             pinned = true
             openList(source: hit.source)
         case .list:
             activeSources[hit.source].activate(hit.mark)
             pinned = false
+            collapse()
+        case .picker:
+            openModule(hit.mark)
+        case .module:
             collapse()
         }
     }
@@ -318,8 +403,21 @@ final class NotchStrip {
         pinned = false
         guard mode != .min else { return }
         mode = .min
+        moduleView?.removeFromSuperview()
+        moduleView = nil
         refresh()
     }
+
+    /// Open the module row, or a module by index.
+    func openPicker() { mode = .picker; pinned = true; refresh() }
+    func openModule(_ i: Int) {
+        guard i < modules.count else { return }
+        moduleView?.removeFromSuperview(); moduleView = nil
+        mode = .module(index: i)
+        pinned = true
+        refresh()
+    }
+    var moduleCount: Int { modules.count }
 
     // MARK: Test hooks
 
@@ -389,8 +487,24 @@ final class NotchStripView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    private var picker: [(glyph: String, title: String)] = []
+    private var moduleHeight: CGFloat = 0
+    private var hoveredTile: Int?
+
     func configure(groups: [[NotchStrip.Mark]], cards: [NotchStrip.Card], listMode: Bool,
-                   field: PadDock.Field) {
+                   field: PadDock.Field,
+                   picker: [(glyph: String, title: String)] = [],
+                   moduleHeight: CGFloat = 0) {
+        self.picker = picker
+        self.moduleHeight = moduleHeight
+        hoveredTile = nil
+        // A hosted module is a real subview, so the shell has to CLIP rather
+        // than just draw its silhouette — square against the screen edge,
+        // rounded below, same shape either way.
+        wantsLayer = true
+        layer?.cornerRadius = 18
+        layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        layer?.masksToBounds = true
         self.groups = groups
         self.cards = cards
         self.listMode = listMode
@@ -446,6 +560,8 @@ final class NotchStripView: NSView {
     private var visibleRows: Int { min(cards.count, NotchStrip.maxListRows) }
 
     override var fittingSize: NSSize {
+        if moduleHeight > 0 { return NSSize(width: midWidth, height: notchHeight + moduleHeight) }
+        if !picker.isEmpty { return NSSize(width: midWidth, height: notchHeight + NotchStrip.pickerRow) }
         if listMode, !cards.isEmpty { return NSSize(width: midWidth, height: listHeight) }
         if card != nil { return NSSize(width: midWidth, height: midHeight) }
         return NSSize(width: leadFlank + notchSpan + trailFlank,
@@ -467,8 +583,8 @@ final class NotchStripView: NSView {
     /// Marks laid out around the housing. Whole groups only — splitting one
     /// source across the cutout would make it impossible to tell whose dot is
     /// whose, which is the entire point of grouping them.
-    /// Any expanded shape — list or single card.
-    var isMid: Bool { (listMode && !cards.isEmpty) || card != nil }
+    /// Any expanded shape — list, module row, or a hosted module.
+    var isMid: Bool { (listMode && !cards.isEmpty) || card != nil || !picker.isEmpty || moduleHeight > 0 }
 
     private func computePlacement() -> [NotchStrip.Placed] {
         guard !isMid, !groups.isEmpty else { return [] }
@@ -502,7 +618,17 @@ final class NotchStripView: NSView {
     /// on a screenshot: the framebuffer faithfully contains the pixels behind
     /// the camera that no human can see, so a screenshot check passes on
     /// precisely the bug it exists to catch.
+    /// The module row's tiles.
+    func tileRect(_ i: Int) -> NSRect {
+        let w = bounds.width / CGFloat(max(picker.count, 1))
+        return NSRect(x: CGFloat(i) * w, y: notchHeight, width: w, height: NotchStrip.pickerRow)
+    }
+
     var contentRects: [NSRect] {
+        if moduleHeight > 0 {
+            return [NSRect(x: 0, y: notchHeight, width: bounds.width, height: moduleHeight)]
+        }
+        if !picker.isEmpty { return picker.indices.map(tileRect) }
         if listMode, !cards.isEmpty { return (0..<visibleRows).map(rowRect) }
         return card == nil ? placed.map(\.rect) : ([cardTextRect] + actionRects)
     }
@@ -544,6 +670,12 @@ final class NotchStripView: NSView {
         NSColor(white: 0.04, alpha: 0.97).setFill()
         bounds.fill()
 
+        // A hosted module paints itself; the strip just supplies the shell.
+        if moduleHeight > 0 { return }
+        if !picker.isEmpty {
+            drawPicker()
+            return
+        }
         if listMode, !cards.isEmpty {
             drawList()
             return
@@ -567,6 +699,26 @@ final class NotchStripView: NSView {
                     path.lineWidth = 1.5
                     path.stroke()
                 }
+        }
+    }
+
+    /// The module row: glyph over title, one tile each.
+    private func drawPicker() {
+        for (i, m) in picker.enumerated() {
+            let r = tileRect(i)
+            if hoveredTile == i {
+                NSColor.white.withAlphaComponent(0.1).setFill()
+                NSBezierPath(roundedRect: r.insetBy(dx: 4, dy: 6), xRadius: 8, yRadius: 8).fill()
+            }
+            let g: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 20), .foregroundColor: NSColor.white]
+            let t: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.7)]
+            let gs = (m.glyph as NSString).size(withAttributes: g)
+            (m.glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.minY + 12), withAttributes: g)
+            let ts = (m.title as NSString).size(withAttributes: t)
+            (m.title as NSString).draw(at: NSPoint(x: r.midX - ts.width / 2, y: r.minY + 40), withAttributes: t)
         }
     }
 
@@ -759,6 +911,13 @@ final class NotchStripView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        if !picker.isEmpty {
+            let p = convert(event.locationInWindow, from: nil)
+            let t = picker.indices.first { tileRect($0).contains(p) }
+            if t != hoveredTile { hoveredTile = t; needsDisplay = true }
+            return
+        }
+        if moduleHeight > 0 { return }
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
             let row = (0..<visibleRows).first { rowRect($0).insetBy(dx: -4, dy: 0).contains(p) }
@@ -789,6 +948,14 @@ final class NotchStripView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if !picker.isEmpty {
+            let p = convert(event.locationInWindow, from: nil)
+            if let t = picker.indices.first(where: { tileRect($0).contains(p) }) {
+                onClick?(NotchStrip.Placed(source: 0, mark: t, rect: tileRect(t)))
+            }
+            return
+        }
+        if moduleHeight > 0 { return }   // the module's own view handles clicks
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
             // A ✓/✕ answers in place; anywhere else on the row opens the pad.

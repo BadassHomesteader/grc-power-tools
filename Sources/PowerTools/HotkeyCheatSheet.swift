@@ -53,7 +53,7 @@ final class HotkeyCheatSheetView: NSView {
 
     /// One place for the chord list — additions to HotkeyMonitor's leader
     /// switch belong here too (kept adjacent by convention, checked by eye).
-    private static func buildSections(_ connections: [(key: String, name: String)])
+    static func buildSections(_ connections: [(key: String, name: String)])
         -> [(title: String, rows: [(key: String, title: String)])] {
         var s: [(String, [(String, String)])] = [
             ("Dictation", [

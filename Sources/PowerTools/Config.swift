@@ -382,6 +382,19 @@ struct Config: Codable {
     /// strip is permanent, so this is the switch that keeps it out of demos
     /// and client calls. See CaptureVisibility.
     var showInCaptures: Bool = true
+
+    /// Notch modules — panels the notch hosts, as opposed to sources that
+    /// publish into it. Each can be switched off; the ⋯ mark disappears when
+    /// none are on.
+    var notchModules: [String] = ["usage", "hotkeys", "snap", "clock", "weather", "chat"]
+    /// World clock zones, IANA identifiers.
+    var notchClockZones: [String] = ["America/New_York", "Europe/London", "Asia/Tokyo"]
+    /// Weather: a place typed in Settings, geocoded once to a lat/lon so the
+    /// module needs no location permission and no API key.
+    var weatherPlace: String = ""
+    var weatherLat: Double = 0
+    var weatherLon: Double = 0
+    var weatherFahrenheit: Bool = true
     /// Power Ring: hold hotkey + right-click → radial menu. Slots are catalog
     /// ids, clockwise from the top (see PowerRingCatalog).
     var powerRing: Bool = true
@@ -473,6 +486,7 @@ struct Config: Codable {
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case showInCaptures
+        case notchModules, notchClockZones, weatherPlace, weatherLat, weatherLon, weatherFahrenheit
         case powerRing, powerRingSlots
         case whiteboard
         case pronunciations
@@ -553,6 +567,12 @@ struct Config: Codable {
         notchQuotaAt = field(.notchQuotaAt, 60)
         notchStripMigrated = field(.notchStripMigrated, false)
         showInCaptures = field(.showInCaptures, true)
+        notchModules = field(.notchModules, ["usage", "hotkeys", "snap", "clock", "weather", "chat"])
+        notchClockZones = field(.notchClockZones, ["America/New_York", "Europe/London", "Asia/Tokyo"])
+        weatherPlace = field(.weatherPlace, "")
+        weatherLat = field(.weatherLat, 0)
+        weatherLon = field(.weatherLon, 0)
+        weatherFahrenheit = field(.weatherFahrenheit, true)
         powerRing = field(.powerRing, true)
         powerRingSlots = field(.powerRingSlots, PowerRingCatalog.defaultSlots)
         whiteboard = field(.whiteboard, true)
