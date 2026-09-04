@@ -1647,6 +1647,34 @@ case "notchstrip-live-test":
         strip.clickedAway(in: nil); pump(0.2)
         check(abs(strip.frame.height - minFrame.height) < 1, "14f: a click-away at Min is a no-op")
 
+        // 15: hover-to-open. A module tile opens its module on hover (after a
+        // short settle); and from a session LIST, the four-square launcher up in
+        // the band opens the module row — the modules stay reachable from a list.
+        strip.collapse(); pump(0.3)
+        strip.openPicker(); pump(0.3)
+        if let (panel, view) = strip.testSurface {
+            func moveTo(_ p: NSPoint) {
+                let ev = NSEvent.mouseEvent(with: .mouseMoved, location: view.convert(p, to: nil),
+                                            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: panel.windowNumber, context: nil,
+                                            eventNumber: 0, clickCount: 0, pressure: 0)!
+                view.mouseMoved(with: ev)
+            }
+            let t1 = view.tileRect(1)
+            moveTo(NSPoint(x: t1.midX, y: t1.midY)); pump(0.35)
+            check({ if case .module(1) = strip.mode { return true } else { return false } }(),
+                  "15a: hovering a module tile opens that module")
+            // 15b: from a session list, hovering the launcher opens the module row.
+            strip.collapse(); pump(0.3)
+            strip.openList(source: 0); pump(0.3)
+            let g = view.listGridRect
+            moveTo(NSPoint(x: g.midX, y: g.midY)); pump(0.35)
+            check(strip.mode == .picker, "15b: the in-list launcher opens the module row on hover")
+        } else {
+            check(false, "15a: no surface")
+        }
+        strip.collapse(); pump(0.3)
+
         // 8: berth migration, including idempotence.
         let fake: [String: [String: Any]] = [
             "agent": ["anchor": "notchLeft", "mini": true, "open": true, "x": 12, "y": 616],

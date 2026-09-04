@@ -340,6 +340,9 @@ final class NotchStrip {
             guard let self else { return }
             if i < 0 { self.collapse() } else { self.openModule(i) }
         }
+        v.onTileHover = { [weak self] i in self?.hoverModule(i) }
+        v.onTabHover = { [weak self] i in self?.hoverModule(i) }
+        v.onGridHover = { [weak self] open in self?.hoverGrid(open) }
         let win = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                           backing: .buffered, defer: false)
         win.isOpaque = false
@@ -461,6 +464,7 @@ final class NotchStrip {
 
     func collapse() {
         pinned = false
+        cancelHover()
         guard mode != .min else { return }
         mode = .min
         moduleView?.removeFromSuperview()
@@ -522,6 +526,36 @@ final class NotchStrip {
     }
     var moduleCount: Int { modules.count }
 
+    // MARK: Hover-to-open (submenus expand on hover, not just click)
+
+    private var hoverTimer: Timer?
+    private func armHover(_ delay: TimeInterval, _ run: @escaping @MainActor () -> Void) {
+        hoverTimer?.invalidate()
+        hoverTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { _ in
+            MainActor.assumeIsolated { run() }
+        }
+    }
+    private func cancelHover() { hoverTimer?.invalidate(); hoverTimer = nil }
+
+    /// Hovering a module tile (or a tab) opens that module after a short settle,
+    /// so brushing across the row doesn't thrash. Already-open module: no-op.
+    private func hoverModule(_ i: Int?) {
+        guard let i, i >= 0, i < modules.count else { cancelHover(); return }
+        if case .module(i) = mode { cancelHover(); return }
+        armHover(0.15) { [weak self] in
+            guard let self else { return }
+            switch self.mode { case .picker, .module: self.openModule(i); default: break }
+        }
+    }
+    /// Hovering the in-list launcher opens the module row.
+    private func hoverGrid(_ open: Bool) {
+        guard open else { cancelHover(); return }
+        armHover(0.18) { [weak self] in
+            guard let self, case .list = self.mode else { return }
+            self.openPicker()
+        }
+    }
+
     // MARK: Test hooks
 
     /// Show a source's whole list — the hover shape, exposed for the harness.
@@ -566,6 +600,13 @@ final class NotchStripView: NSView {
     var onClick: ((NotchStrip.Placed?) -> Void)?
     /// Tab index, or -1 for the close button.
     var onModuleTab: ((Int) -> Void)?
+    /// Hovering a module tile (or, in a module, a tab) — the submenu opens on
+    /// hover, not just click.
+    var onTileHover: ((Int?) -> Void)?
+    var onTabHover: ((Int?) -> Void)?
+    /// The four-square launcher stays reachable while a session list is up, so
+    /// the modules are one hover away without collapsing first.
+    var onGridHover: ((Bool) -> Void)?
 
     private var groups: [[NotchStrip.Mark]] = []
     private var cards: [NotchStrip.Card] = []
@@ -610,6 +651,7 @@ final class NotchStripView: NSView {
         self.tabs = tabs
         hoveredTile = nil
         hoveredTab = nil
+        listGridHovered = false
         self.groups = groups
         self.cards = cards
         self.listMode = listMode
@@ -757,6 +799,26 @@ final class NotchStripView: NSView {
     func tileRect(_ i: Int) -> NSRect {
         let w = contentW / CGFloat(max(picker.count, 1))
         return NSRect(x: contentDX + CGFloat(i) * w, y: notchHeight, width: w, height: NotchStrip.pickerRow)
+    }
+
+    /// The four-square launcher shown in the session-list view, up in the
+    /// menu-bar band on the trailing shoulder — the modules stay one hover away.
+    var listGridRect: NSRect {
+        let sz: CGFloat = 18
+        return NSRect(x: bounds.width - contentDX - sz - 8, y: (notchHeight - sz) / 2, width: sz, height: sz)
+    }
+    private(set) var listGridHovered = false
+
+    /// Four little squares in `rect`, the launcher glyph — shared by the strip
+    /// mark and the in-list launcher so they can't drift.
+    private func drawFourSquare(in rect: NSRect, alpha: CGFloat) {
+        NSColor.white.withAlphaComponent(alpha).setFill()
+        let s = (rect.width - 2) / 2
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let r = NSRect(x: rect.minX + CGFloat(dx) * (s + 2), y: rect.minY + CGFloat(dy) * (s + 2),
+                           width: s, height: s)
+            NSBezierPath(roundedRect: r, xRadius: 1.5, yRadius: 1.5).fill()
+        }
     }
 
     var contentRects: [NSRect] {
@@ -1102,6 +1164,13 @@ final class NotchStripView: NSView {
                                      .foregroundColor: dim, .paragraphStyle: p])
             }
         }
+        // The launcher, up in the band, so the modules stay reachable from here.
+        let gr = listGridRect
+        if listGridHovered {
+            NSColor.white.withAlphaComponent(0.12).setFill()
+            NSBezierPath(roundedRect: gr.insetBy(dx: -5, dy: -4), xRadius: 6, yRadius: 6).fill()
+        }
+        drawFourSquare(in: gr, alpha: listGridHovered ? 0.95 : 0.55)
     }
 
     /// One tint per model family, matching the pad.
@@ -1178,7 +1247,7 @@ final class NotchStripView: NSView {
         if !picker.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
             let t = picker.indices.first { tileRect($0).contains(p) }
-            if t != hoveredTile { hoveredTile = t; needsDisplay = true }
+            if t != hoveredTile { hoveredTile = t; needsDisplay = true; onTileHover?(t) }
             return
         }
         if moduleHeight > 0 {
@@ -1186,11 +1255,13 @@ final class NotchStripView: NSView {
             var h: Int?
             if tabRect(-1).contains(p) { h = -1 }
             else { h = tabs.indices.first { tabRect($0).contains(p) } }
-            if h != hoveredTab { hoveredTab = h; needsDisplay = true }
+            if h != hoveredTab { hoveredTab = h; needsDisplay = true; onTabHover?(h) }
             return
         }
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
+            let onGrid = listGridRect.insetBy(dx: -6, dy: -5).contains(p)
+            if onGrid != listGridHovered { listGridHovered = onGrid; needsDisplay = true; onGridHover?(onGrid) }
             let row = (0..<visibleRows).first { rowRect($0).insetBy(dx: -4, dy: 0).contains(p) }
             let act = rowActionRects.first { $0.rect.insetBy(dx: -3, dy: -3).contains(p) }
             let newAct = act.map { (row: $0.row, index: $0.index) }
@@ -1242,6 +1313,8 @@ final class NotchStripView: NSView {
         }
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
+            // The launcher, up in the band, opens the module row.
+            if listGridRect.insetBy(dx: -6, dy: -5).contains(p) { onGridHover?(true); return }
             // A ✓/✕ answers in place; anywhere else on the row opens the pad.
             if let hit = rowActionRects.first(where: { $0.rect.insetBy(dx: -3, dy: -3).contains(p) }),
                hit.row < cards.count, hit.index < cards[hit.row].actions.count {
