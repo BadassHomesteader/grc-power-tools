@@ -1413,8 +1413,8 @@ case "notchstrip-live-test":
             + CGFloat(NotchStrip.maxListRows) * NotchStrip.listRow
         check(list.height <= listCap + 1,
               "9b: list height \(Int(list.height)) within the \(Int(listCap))pt cap — still Mid, never Max")
-        check(list.width <= field.notch.width * NotchStrip.midWidthFactor + 1,
-              "9c: list width \(Int(list.width)) within the Mid cap")
+        check(list.width <= field.notch.width * NotchStrip.midWidthFactor + 2 * NotchStrip.flareOut + 1,
+              "9c: list width \(Int(list.width)) within the Mid cap (+ flare)")
         let listBad = strip.contentRectsInScreen.filter { $0.intersects(field.notch) }
         check(listBad.isEmpty, "9d: list rows clear of the housing")
         check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },

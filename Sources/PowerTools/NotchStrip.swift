@@ -86,6 +86,11 @@ final class NotchStrip {
     static let listRow: CGFloat = 56
     static let listPad: CGFloat = 8
     static let maxListRows = 5
+    /// The expanded panel is wider at the very top than its body: the top edge
+    /// flares out past each side by this much and a round ramp brings it back
+    /// in. The content keeps its width and rides centered — only the shell and
+    /// the window grow by `flareOut` on each side.
+    static let flareOut: CGFloat = 24
 
     /// Where a mark ends up, in view coordinates. One array, read by BOTH
     /// `draw` and `mouseDown` — the pads recompute this in two places and the
@@ -316,8 +321,10 @@ final class NotchStrip {
             view.addSubview(v)
             moduleView = v
         }
-        moduleView?.frame = NSRect(x: 0, y: field.notch.height + NotchStrip.moduleTabRow,
-                                   width: view.fittingSize.width, height: hostedHeight)
+        // fittingSize, not bounds: this runs BEFORE `place` sets the frame, so
+        // bounds is still stale here. The body is the frame minus a flare each side.
+        moduleView?.frame = NSRect(x: NotchStrip.flareOut, y: field.notch.height + NotchStrip.moduleTabRow,
+                                   width: view.fittingSize.width - 2 * NotchStrip.flareOut, height: hostedHeight)
     }
 
     // MARK: Window
@@ -651,6 +658,11 @@ final class NotchStripView: NSView {
     private var midWidth: CGFloat {
         min(notchSpan * NotchStrip.midWidthFactor, maxWidth)
     }
+    /// The whole expanded WINDOW: the content-wide body plus a flare each side.
+    private var midFrameWidth: CGFloat { midWidth + 2 * NotchStrip.flareOut }
+    /// Content lives in the body, centered: `flareOut` in from each window edge.
+    var contentDX: CGFloat { NotchStrip.flareOut }
+    var contentW: CGFloat { bounds.width - 2 * NotchStrip.flareOut }
     private var midHeight: CGFloat {
         notchHeight + ((card?.actions.isEmpty ?? true)
                        ? NotchStrip.midCardHeight : NotchStrip.midCardHeightWithActions)
@@ -662,18 +674,18 @@ final class NotchStripView: NSView {
             + CGFloat(min(cards.count, NotchStrip.maxListRows)) * NotchStrip.listRow
     }
     private func rowRect(_ i: Int) -> NSRect {
-        NSRect(x: 12, y: notchHeight + NotchStrip.listPad + CGFloat(i) * NotchStrip.listRow,
-               width: bounds.width - 24, height: NotchStrip.listRow)
+        NSRect(x: contentDX + 12, y: notchHeight + NotchStrip.listPad + CGFloat(i) * NotchStrip.listRow,
+               width: contentW - 24, height: NotchStrip.listRow)
     }
     private var visibleRows: Int { min(cards.count, NotchStrip.maxListRows) }
 
     override var fittingSize: NSSize {
         if moduleHeight > 0 {
-            return NSSize(width: midWidth, height: notchHeight + NotchStrip.moduleTabRow + moduleHeight)
+            return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.moduleTabRow + moduleHeight)
         }
-        if !picker.isEmpty { return NSSize(width: midWidth, height: notchHeight + NotchStrip.pickerRow) }
-        if listMode, !cards.isEmpty { return NSSize(width: midWidth, height: listHeight) }
-        if card != nil { return NSSize(width: midWidth, height: midHeight) }
+        if !picker.isEmpty { return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.pickerRow) }
+        if listMode, !cards.isEmpty { return NSSize(width: midFrameWidth, height: listHeight) }
+        if card != nil { return NSSize(width: midFrameWidth, height: midHeight) }
         return NSSize(width: leadFlank + notchSpan + trailFlank,
                       height: max(notchHeight, NotchStrip.dot + NotchStrip.pad * 2))
     }
@@ -731,20 +743,20 @@ final class NotchStripView: NSView {
     /// A tab in the module bar. The last slot is the close button.
     func tabRect(_ i: Int) -> NSRect {
         let closeW: CGFloat = 34
-        let w = (bounds.width - closeW) / CGFloat(max(tabs.count, 1))
-        if i < 0 { return NSRect(x: bounds.width - closeW, y: notchHeight, width: closeW, height: NotchStrip.moduleTabRow) }
-        return NSRect(x: CGFloat(i) * w, y: notchHeight, width: w, height: NotchStrip.moduleTabRow)
+        let w = (contentW - closeW) / CGFloat(max(tabs.count, 1))
+        if i < 0 { return NSRect(x: contentDX + contentW - closeW, y: notchHeight, width: closeW, height: NotchStrip.moduleTabRow) }
+        return NSRect(x: contentDX + CGFloat(i) * w, y: notchHeight, width: w, height: NotchStrip.moduleTabRow)
     }
 
     /// The module row's tiles.
     func tileRect(_ i: Int) -> NSRect {
-        let w = bounds.width / CGFloat(max(picker.count, 1))
-        return NSRect(x: CGFloat(i) * w, y: notchHeight, width: w, height: NotchStrip.pickerRow)
+        let w = contentW / CGFloat(max(picker.count, 1))
+        return NSRect(x: contentDX + CGFloat(i) * w, y: notchHeight, width: w, height: NotchStrip.pickerRow)
     }
 
     var contentRects: [NSRect] {
         if moduleHeight > 0 {
-            return [NSRect(x: 0, y: notchHeight, width: bounds.width,
+            return [NSRect(x: contentDX, y: notchHeight, width: contentW,
                            height: NotchStrip.moduleTabRow + moduleHeight)]
         }
         if !picker.isEmpty { return picker.indices.map(tileRect) }
@@ -761,13 +773,13 @@ final class NotchStripView: NSView {
     var actionRects: [NSRect] {
         guard let card, !card.actions.isEmpty else { return [] }
         return card.actions.indices.map { i in
-            NSRect(x: bounds.width - 14 - CGFloat(card.actions.count - i) * 34,
+            NSRect(x: contentDX + contentW - 14 - CGFloat(card.actions.count - i) * 34,
                    y: notchHeight + 14, width: 30, height: 26)
         }
     }
 
     private var cardTextRect: NSRect {
-        NSRect(x: 14, y: notchHeight + 8, width: bounds.width - 28 - CGFloat(card?.actions.count ?? 0) * 34,
+        NSRect(x: contentDX + 14, y: notchHeight + 8, width: contentW - 28 - CGFloat(card?.actions.count ?? 0) * 34,
                height: bounds.height - notchHeight - 16)
     }
 
@@ -809,29 +821,29 @@ final class NotchStripView: NSView {
         let W = bounds.width, H = bounds.height, nh = notchHeight
         let span = min(notchSpan, W)
         let hx0 = (W - span) / 2, hx1 = (W + span) / 2
-        // Outer top corners: a plain convex round, so the panel meets the
-        // screen edge cleanly. The MacNotch "chamfer" is the pair of CONCAVE
-        // coves flanking the housing (below), swept large so the panel reads
-        // as flowing out of the notch.
-        let rC: CGFloat = 14
-        // The notch coves — the signature. Big and smooth, capped only so they
-        // cannot outrun the housing height or eat the whole shoulder.
-        let rF = max(0, min(24, nh - 1, (W - span) / 2 - 2))
+        // FLARED TOP: the top edge is wider than the body. It runs the full
+        // window width and a convex round ramps IN to each body side, which sit
+        // `flareOut` in from the window edge. The notch is a CLEAN cut, and the
+        // body's own bottom corners are rounded here (the layer mask rounds the
+        // window corners, which the inset body never reaches).
+        let fl = NotchStrip.flareOut
+        let rC = min(30, fl + 12)          // ramp radius, into the body
+        let rB: CGFloat = 18               // body bottom-corner radius
+        let bl = fl, br = W - fl           // body left / right edges
         let p = NSBezierPath()
-        p.move(to: NSPoint(x: 0, y: H))              // bottom-left (layer rounds it)
-        p.line(to: NSPoint(x: 0, y: rC))             // up the left edge
-        quarter(p, corner: NSPoint(x: 0, y: 0), to: NSPoint(x: rC, y: 0))   // top-left round
-        p.line(to: NSPoint(x: hx0 - rF, y: 0))       // left shoulder, along the screen edge
-        // concave cove: sweep from the screen edge down to the housing wall
-        quarter(p, corner: NSPoint(x: hx0, y: 0), to: NSPoint(x: hx0, y: rF))
-        p.line(to: NSPoint(x: hx0, y: nh))           // down the left housing wall to its base
-        p.line(to: NSPoint(x: hx1, y: nh))           // under the housing
-        p.line(to: NSPoint(x: hx1, y: rF))           // up the right housing wall
-        // concave cove: sweep from the housing wall up to the screen edge
-        quarter(p, corner: NSPoint(x: hx1, y: 0), to: NSPoint(x: hx1 + rF, y: 0))
-        p.line(to: NSPoint(x: W - rC, y: 0))         // right shoulder
-        quarter(p, corner: NSPoint(x: W, y: 0), to: NSPoint(x: W, y: rC))   // top-right round
-        p.line(to: NSPoint(x: W, y: H))              // bottom-right (layer rounds it)
+        p.move(to: NSPoint(x: bl, y: H - rB))        // body left edge, above the bottom round
+        p.line(to: NSPoint(x: bl, y: rC))            // up to the ramp
+        quarter(p, corner: NSPoint(x: bl, y: 0), to: NSPoint(x: 0, y: 0))   // ramp OUT to the flared top-left
+        p.line(to: NSPoint(x: hx0, y: 0))            // top edge to the notch
+        p.line(to: NSPoint(x: hx0, y: nh))           // down the housing wall (clean)
+        p.line(to: NSPoint(x: hx1, y: nh))           // under the housing (clean)
+        p.line(to: NSPoint(x: hx1, y: 0))            // up the housing wall (clean)
+        p.line(to: NSPoint(x: W, y: 0))              // top edge to the flared top-right
+        quarter(p, corner: NSPoint(x: br, y: 0), to: NSPoint(x: br, y: rC))   // ramp IN to the body
+        p.line(to: NSPoint(x: br, y: H - rB))        // down the body right edge
+        quarter(p, corner: NSPoint(x: br, y: H), to: NSPoint(x: br - rB, y: H))   // body bottom-right round
+        p.line(to: NSPoint(x: bl + rB, y: H))        // across the body bottom
+        quarter(p, corner: NSPoint(x: bl, y: H), to: NSPoint(x: bl, y: H - rB))   // body bottom-left round
         p.close()
         return p
     }
@@ -896,7 +908,7 @@ final class NotchStripView: NSView {
     /// The module bar: every module one click away, plus a way out.
     private func drawTabs() {
         NSColor.white.withAlphaComponent(0.07).setFill()
-        NSRect(x: 0, y: notchHeight, width: bounds.width, height: NotchStrip.moduleTabRow).fill()
+        NSRect(x: contentDX, y: notchHeight, width: contentW, height: NotchStrip.moduleTabRow).fill()
         for (i, t) in tabs.enumerated() {
             let r = tabRect(i)
             if t.active {
