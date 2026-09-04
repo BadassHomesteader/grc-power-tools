@@ -138,6 +138,7 @@ final class NotchStrip {
             object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.screenChanged() }
             }
+        startTimer()
         refresh()
     }
 
@@ -177,7 +178,9 @@ final class NotchStrip {
             return
         }
         let field = PadDock.Field(screen: screen)
+        let firstShow = panel == nil
         build(on: screen)
+        if firstShow { onLog?("notch: strip up — \(live.map(\.count)) mark(s) per source") }
         // A Mid whose source or mark has gone away falls back to Min.
         switch mode {
         case .min: break
@@ -232,11 +235,14 @@ final class NotchStrip {
         panel = win
         view = v
         win.orderFrontRegardless()
-        startTimer()
     }
 
+    /// Note the timer is NOT torn down here: the strip has to keep breathing
+    /// while it has nothing to show, or it can never come back. It used to be
+    /// started inside `build()`, which meant an empty strip had no heartbeat at
+    /// all — it woke only on a registry change, and a change that landed before
+    /// the sources were registered left it invisible until the next one.
     private func teardown() {
-        timer?.invalidate(); timer = nil
         midTimer?.invalidate(); midTimer = nil
         panel?.orderOut(nil)
         panel = nil
@@ -246,10 +252,10 @@ final class NotchStrip {
 
     private func startTimer() {
         timer?.invalidate()
-        // Only while the strip is actually up, same guard the pads use — and
-        // note this tick never triggers a quota FETCH, only a redraw of the
-        // snapshot. A fetch shells out for ~45s; polling it on a timer would
-        // mean burning quota to measure quota, forever.
+        // Runs whether or not the strip is on screen — see `teardown`. The tick
+        // never triggers a quota FETCH, only a redraw of the snapshot: a fetch
+        // shells out for ~45s, so polling it on a timer would mean burning
+        // quota to measure quota, forever.
         timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }

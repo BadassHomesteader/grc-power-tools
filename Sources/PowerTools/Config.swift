@@ -375,6 +375,13 @@ struct Config: Codable {
     /// One-shot guard for moving pads off the retired notch berths, so the
     /// migration can never re-enable a source the user later switched off.
     var notchStripMigrated: Bool = false
+
+    /// Whether Power Tools' floating surfaces appear in screenshots, screen
+    /// recordings and screen sharing. ON by default — hiding things from a
+    /// capture without being asked would be its own surprise — but the notch
+    /// strip is permanent, so this is the switch that keeps it out of demos
+    /// and client calls. See CaptureVisibility.
+    var showInCaptures: Bool = true
     /// Power Ring: hold hotkey + right-click → radial menu. Slots are catalog
     /// ids, clockwise from the top (see PowerRingCatalog).
     var powerRing: Bool = true
@@ -465,6 +472,7 @@ struct Config: Codable {
         case macroPad, macroPadProfiles, macroPadStepDelayMs, macroPadThreeFingerTap
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
+        case showInCaptures
         case powerRing, powerRingSlots
         case whiteboard
         case pronunciations
@@ -544,6 +552,7 @@ struct Config: Codable {
         notchQuota = field(.notchQuota, false)
         notchQuotaAt = field(.notchQuotaAt, 60)
         notchStripMigrated = field(.notchStripMigrated, false)
+        showInCaptures = field(.showInCaptures, true)
         powerRing = field(.powerRing, true)
         powerRingSlots = field(.powerRingSlots, PowerRingCatalog.defaultSlots)
         whiteboard = field(.whiteboard, true)

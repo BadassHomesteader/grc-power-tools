@@ -90,6 +90,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     // Agent Pad
     private let agentPadCheck = NSButton(checkboxWithTitle: "Agent Pad — floating agent-session panel (hold hotkey + J, or menu bar)", target: nil, action: nil)
+    private let captureCheck = NSButton(checkboxWithTitle: "Show Power Tools in screenshots & recordings", target: nil, action: nil)
     private let notchStripCheck = NSButton(checkboxWithTitle: "Notch strip — a live glance in the camera housing", target: nil, action: nil)
     private let notchAgentsCheck = NSButton(checkboxWithTitle: "Agent sessions — one dot each, and a banner when one needs an answer", target: nil, action: nil)
     private let notchQuotaCheck = NSButton(checkboxWithTitle: "Quota — a dot once a usage window is running low", target: nil, action: nil)
@@ -195,6 +196,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         powerRingCheck.action = #selector(powerRingToggled)
         agentPadCheck.target = self
         agentPadCheck.action = #selector(agentPadToggled)
+        captureCheck.target = self
+        captureCheck.action = #selector(captureToggled)
         for (box, sel) in [(notchStripCheck, #selector(notchStripToggled)),
                            (notchAgentsCheck, #selector(notchAgentsToggled)),
                            (notchQuotaCheck, #selector(notchQuotaToggled))] {
@@ -393,7 +396,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         return vstack([
             section("How to use it", [helpLabel], width: 590),
-            section("General", [clipboardHistoryCheck, whiteboardCheck, launchLoginCheck, restorePadsCheck, buttons, version], width: 590),
+            section("General", [clipboardHistoryCheck, whiteboardCheck, launchLoginCheck, restorePadsCheck,
+                                captureCheck, captureNote, buttons, version], width: 590),
         ])
     }
 
@@ -1189,6 +1193,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         ])
     }
 
+    private var captureNote: NSTextField {
+        let t = NSTextField(wrappingLabelWithString:
+            "Off keeps the notch strip, the pads, the dictation HUD and the palettes out of "
+            + "screenshots, screen recordings and screen sharing — they stay visible to you. "
+            + "Settings and the chat window are always shareable.")
+        t.font = .systemFont(ofSize: 11)
+        t.textColor = .secondaryLabelColor
+        t.preferredMaxLayoutWidth = 540
+        return t
+    }
+
+    @objc private func captureToggled() {
+        config.showInCaptures = (captureCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
     @objc private func notchStripToggled() {
         config.notchStrip = (notchStripCheck.state == .on)
         config.save()
@@ -1362,6 +1383,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroPadCheck.state = config.macroPad ? .on : .off
         macroSummonCheck.state = config.macroPadThreeFingerTap ? .on : .off
         agentPadCheck.state = config.agentPad ? .on : .off
+        captureCheck.state = config.showInCaptures ? .on : .off
         notchStripCheck.state = config.notchStrip ? .on : .off
         notchAgentsCheck.state = config.notchAgents ? .on : .off
         notchQuotaCheck.state = config.notchQuota ? .on : .off

@@ -37,6 +37,7 @@ final class AppController {
             if !config.agentPadCodex { claudeRegistry.setExternal(kind: "codex", []) }
             if !config.agentPadCursor { claudeRegistry.setExternal(kind: "cursor", []) }
             applyNotchConfig()
+            CaptureVisibility.set(config.showInCaptures)
         }
     }
 
@@ -329,6 +330,13 @@ final class AppController {
             agentPad.onDismiss = { [weak self] in self?.padClosedByUser = true }
         }
         startNotchStrip()
+        // Surfaces are built lazily all over the app, so catch new ones as they
+        // appear rather than making every call site remember to ask.
+        CaptureVisibility.set(config.showInCaptures)
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didUpdateNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { CaptureVisibility.applyIfWindowsChanged() }
+            }
         // Pads that were open when the app last quit (updates included) come
         // back in their persisted dock/mini state.
         if config.restorePads {
@@ -938,6 +946,7 @@ final class AppController {
             if !moved.isEmpty { log("notch: migrated \(moved.sorted().joined(separator: ", ")) off the berths") }
         }
 
+        notchStrip.onLog = { msg in log(msg) }
         notchStrip.register(NotchStrip.Source(
             id: "agents", priority: 0, maxMarks: 5,
             marks: { [weak self] in
