@@ -444,6 +444,16 @@ final class WeatherModuleView: NotchModuleView {
 /// that wants scrollback.
 final class ChatModuleView: NotchModuleView, NotchKeyboardModule {
     func firstResponderView() -> NSView? { field }
+    /// Dictation drops its transcript into the field, appending to anything
+    /// already typed, cursor at the end — the user presses ⏎ to ask.
+    func insertTranscript(_ text: String) {
+        let existing = field.stringValue
+        let sep = (existing.isEmpty || existing.hasSuffix(" ")) ? "" : " "
+        field.stringValue = existing + sep + text
+        window?.makeFirstResponder(field)
+        field.currentEditor()?.selectedRange = NSRange(location: field.stringValue.count, length: 0)
+        needsDisplay = true
+    }
     private let field = NSTextField()
     private var answer = ""
     private var asking = false

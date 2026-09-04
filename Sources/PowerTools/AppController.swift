@@ -98,6 +98,11 @@ final class AppController {
     /// True when this dictation cycle should fill the open Quick Capture panel
     /// instead of pasting into another app.
     private var dictatingIntoCapture = false
+    /// True when this cycle should drop the transcript into the open notch Ask
+    /// field. The notch is non-activating, so the frontmost app is NOT us — the
+    /// only reliable signal is the strip's own state, checked before the
+    /// app-based routing below.
+    private var dictatingIntoNotchAsk = false
 
     init(config: Config, store: Store) {
         self.config = config
@@ -365,7 +370,13 @@ final class AppController {
             overlay.showError("Secure input field — can't dictate here")
             return
         }
-        if ctx.bundleID == "com.grc.whisper" {
+        // The notch Ask field is the target whenever it holds focus — checked
+        // first, because the non-activating notch never shows as the frontmost
+        // app, so `ctx.bundleID` would point at whatever is behind it.
+        if notchStrip.acceptsDictation {
+            dictatingIntoNotchAsk = true
+            dictatingIntoCapture = false
+        } else if ctx.bundleID == "com.grc.whisper" {
             // Exception: dictate INTO the Quick Capture panel when it's open,
             // rather than refusing (normal dictation pastes into another app).
             guard quickCapture.isVisible else {
@@ -373,8 +384,10 @@ final class AppController {
                 return
             }
             dictatingIntoCapture = true
+            dictatingIntoNotchAsk = false
         } else {
             dictatingIntoCapture = false
+            dictatingIntoNotchAsk = false
         }
         cycle += 1
         let gen = cycle
@@ -522,6 +535,18 @@ final class AppController {
     private func deliver(raw: String, polished: String, durationMs: Int, ctx: ContextSnapshot?) {
         lastTranscript = polished
         store.addHistory(app: ctx?.bundleID ?? "", raw: raw, polished: polished, durationMs: durationMs)
+        if dictatingIntoNotchAsk {
+            if notchStrip.acceptsDictation {
+                notchStrip.insertDictation(polished)
+                overlay.hide()   // the text is now in the Ask field; no paste toast
+            } else {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(polished, forType: .string)
+                overlay.showError("Ask closed — dictation copied to clipboard")
+            }
+            finishCycle()
+            return
+        }
         if dictatingIntoCapture {
             if quickCapture.isVisible {
                 quickCapture.insertTranscript(polished)
@@ -1806,6 +1831,7 @@ final class AppController {
         recordingStarted = nil
         startTask = nil
         dictatingIntoCapture = false
+        dictatingIntoNotchAsk = false
         onStateChange?(.idle)
     }
 }

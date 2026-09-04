@@ -13,6 +13,8 @@ final class NotchPanel: NSPanel {
 /// should become first responder (its text field).
 protocol NotchKeyboardModule: AnyObject {
     func firstResponderView() -> NSView?
+    /// Dictation routes its transcript here instead of pasting into another app.
+    func insertTranscript(_ text: String)
 }
 
 /// The one thing that lives in the notch.
@@ -564,6 +566,17 @@ final class NotchStrip {
         refresh()
     }
     var moduleCount: Int { modules.count }
+
+    /// The Ask (keyboard) module is open and holds focus, so a held dictation
+    /// hotkey should drop its transcript into its field, not paste elsewhere.
+    var acceptsDictation: Bool {
+        guard case let .module(i) = mode, i < modules.count, modules[i].wantsKeyboard else { return false }
+        return panel?.isKeyWindow ?? false
+    }
+    /// Hand the dictated transcript to the open keyboard module's field.
+    func insertDictation(_ text: String) {
+        (moduleView as? NotchKeyboardModule)?.insertTranscript(text)
+    }
 
     // MARK: Hover-to-open (submenus expand on hover, not just click)
 
