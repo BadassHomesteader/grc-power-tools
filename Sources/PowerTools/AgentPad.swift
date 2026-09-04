@@ -100,18 +100,29 @@ final class AgentPad: NSObject {
     }
 
     /// Fold in the row metadata the pad draws but the hooks never send: branch,
-    /// model, turns, tokens, and Claude Code's own session title. Both readers
-    /// are cached and incremental, so this runs on every 10s refresh.
-    private static func enriched(_ session: ClaudeSession) -> ClaudeSession {
-        var s = session
-        s.branch = GitBranch.shared.branch(forCwd: s.cwd)
-        let totals = TranscriptStats.shared.totals(for: s.transcriptPath)
-        s.model = totals.model
-        s.msgs = totals.msgs
-        s.tokens = totals.tokens
-        // Claude Code's generated title beats the first-prompt backfill.
-        if !totals.title.isEmpty { s.label = totals.title }
-        return s
+    /// model, turns, tokens, activity, true start and Claude Code's own session
+    /// title. Shared with the notch (`SessionEnricher`) so the two surfaces can
+    /// never show a different set — the notch used to skip this step and drew
+    /// its model chip, branch and spend as empty for every row.
+    static func enriched(_ session: ClaudeSession) -> ClaudeSession {
+        SessionEnricher.enrich(session)
+    }
+
+    /// The app icon for a row's host — Terminal for the CLI, the IDE for an
+    /// extension session, ChatGPT for Codex, Cursor for Cursor. Cached per
+    /// bundle id: a workspace icon lookup per row per 10s tick is not free.
+    private static var iconCache: [String: NSImage?] = [:]
+    static func agentIcon(for s: ClaudeSession) -> NSImage? {
+        let bundle: String
+        if s.isCodex { bundle = "com.openai.codex" }
+        else if s.isCursor { bundle = "com.todesktop.230313mzl4w4u92" }
+        else if !s.hostBundleID.isEmpty { bundle = s.hostBundleID }
+        else { bundle = "com.apple.Terminal" }
+        if let hit = iconCache[bundle] { return hit }
+        let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)
+            .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        iconCache[bundle] = .some(icon)
+        return icon
     }
 
     var isVisible: Bool { panel != nil }

@@ -25,10 +25,14 @@ protocol NotchKeyboardModule: AnyObject {
 /// with a single surface that features PUBLISH into, the way MacNotch's "Live
 /// Activities" does: one strip, several sources, priority-ordered.
 ///
-/// It has exactly three sizes and never grows past the middle one:
+/// It has exactly three sizes and never grows past the middle one — with one
+/// deliberate exception, the agent list, which is allowed a wider body:
 ///
 ///   Min — marks flanking the housing, inside the menu-bar band.
-///   Mid — one notification-shaped card hanging below the housing.
+///   Mid — a small panel hanging below the housing: the module row or one
+///         module (2× the housing), or the agent list (`listWidthFactor`×,
+///         MacNotch's "AI Coding" panel — rows with an icon column, chips,
+///         branch, task, activity and spend need the room).
 ///   Max — NOT here. Clicking a mark opens the owning feature's own window at
 ///         its ordinary anchor. The notch never becomes a full panel.
 ///
@@ -66,6 +70,15 @@ final class NotchStrip {
         var metrics = ""        // "82 msgs · 543.7k tok"
         /// The row's controls — the same set the Agent Pad's rows carry.
         var actions: [(glyph: String, tint: NSColor?, run: () -> Void)] = []
+        /// MacNotch row anatomy: the agent's app icon in the leading column (a
+        /// glyph on an accent plate when there is none), how long it has run,
+        /// which program runs it, and whether it is a finished session that
+        /// belongs under the Recent divider.
+        var icon: NSImage? = nil
+        var glyph = ""
+        var elapsed = ""
+        var kind = ""           // chip: CLI / IDE / Codex / Cursor
+        var isRecent = false
         /// Shown on every row rather than only the hovered one. A waiting
         /// permission does this, so ✓/✕ are visible without hunting for them.
         var actionsAlways = false
@@ -82,6 +95,13 @@ final class NotchStrip {
         let card: (Int) -> Card?
         /// Click — open this source's own full surface, elsewhere on screen.
         let activate: (Int) -> Void
+        /// The band header while this source's list is open: a title and how
+        /// many rows are live ("Agents · ● 3 active"). nil ⇒ no header.
+        var header: (() -> (title: String, active: Int))? = nil
+        /// Finished items to show under a Recent divider, after the live rows.
+        var recent: (() -> [Card])? = nil
+        /// The ↻ in the band was clicked: re-sweep before the strip redraws.
+        var refresh: (() -> Void)? = nil
     }
 
     // Geometry, lifted from the pads so the pixels do not move. `pad` is
@@ -162,6 +182,27 @@ final class NotchStrip {
     /// under the housing. Without it a module was a dead end — there was no way
     /// back to the row and no way out at all.
     static let moduleTabRow: CGFloat = 46
+
+    /// The agent list is the one shape allowed wider than the rest: it is
+    /// MacNotch's "AI Coding" panel, and a 2× body could not seat a row with an
+    /// icon column, four chips, a branch and an elapsed column. Modules and the
+    /// picker keep the 2× body. A `var` so one build can render a catalog of
+    /// widths for a design pick.
+    static var listWidthFactor: CGFloat = 3
+    /// Whatever the factor, the list never swallows the frontmost app's menu
+    /// titles: a hard ceiling in points.
+    static let maxListWidth: CGFloat = 760
+    /// Live rows: icon column, identity line, task, activity — three lines.
+    static let liveRow: CGFloat = 76
+    /// Finished rows under Recent are two lines, dimmed.
+    static let recentRow: CGFloat = 52
+    static let recentHeaderH: CGFloat = 18
+    static let maxRecentRows = 2
+    /// The list's content ceiling below the housing, the way `maxModuleContent`
+    /// caps a module: five live rows, the Recent divider, two finished rows.
+    static var maxListContent: CGFloat {
+        CGFloat(maxListRows) * liveRow + recentHeaderH + CGFloat(maxRecentRows) * recentRow
+    }
 
     private var panel: NSPanel?
     private var view: NotchStripView?
@@ -298,13 +339,22 @@ final class NotchStrip {
             // the overflow's slot. The list caps itself separately.
             let total = activeSources[si].marks().count
             cards = (0..<Swift.min(total, NotchStrip.maxListRows)).compactMap { activeSources[si].card($0) }
+            // Finished items ride after the live ones, flagged so the view
+            // draws the divider above them and dims them.
+            let recent = (activeSources[si].recent?() ?? []).prefix(NotchStrip.maxRecentRows)
+            cards += recent.map { var c = $0; c.isRecent = true; return c }
             if cards.isEmpty { mode = .min }
         case .picker, .module:
             break   // these carry no cards; they are handled by the view
         case .list:
             mode = .min   // a list whose source went away
         }
-        if case let .list(si) = mode { view?.listSource = si }
+        if case let .list(si) = mode, si < activeSources.count {
+            view?.listSource = si
+            view?.listHeader = activeSources[si].header?()
+        } else {
+            view?.listHeader = nil
+        }
         view?.configure(groups: live, cards: cards, listMode: listMode, field: field,
                         picker: pickerEntries, moduleHeight: hostedHeight, tabs: moduleTabs)
         hostModuleIfNeeded(field: field)
@@ -384,6 +434,7 @@ final class NotchStrip {
         v.onTileHover = { [weak self] i in self?.hoverModule(i) }
         v.onTabHover = { [weak self] i in self?.hoverModule(i) }
         v.onGridHover = { [weak self] open in self?.hoverGrid(open) }
+        v.onRefresh = { [weak self] in self?.refreshRequested() }
         let win = NotchPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                              backing: .buffered, defer: false)
         win.isOpaque = false
@@ -478,7 +529,8 @@ final class NotchStrip {
             pinned = true
             openList(source: hit.source)
         case .list:
-            activeSources[hit.source].activate(hit.mark)
+            // A finished row (mark -1) has nothing to focus; it only folds.
+            if hit.mark >= 0 { activeSources[hit.source].activate(hit.mark) }
             pinned = false
             collapse()
         case .picker:
@@ -612,6 +664,13 @@ final class NotchStrip {
             }
         }
     }
+    /// The ↻ in the band: let the open list's source re-sweep, then redraw.
+    private func refreshRequested() {
+        guard case let .list(si) = mode, si < activeSources.count else { return }
+        activeSources[si].refresh?()
+        refresh()
+    }
+
     /// Hovering the in-list launcher opens the module row.
     private func hoverGrid(_ open: Bool) {
         guard open else { cancelHover(); return }
@@ -638,6 +697,16 @@ final class NotchStrip {
         return view.contentRects.map { r in
             NSRect(x: panel.frame.minX + r.minX,
                    y: panel.frame.maxY - r.maxY,   // view is flipped
+                   width: r.width, height: r.height)
+        }
+    }
+
+    /// The band rects (header, ↻, launcher) in SCREEN coordinates — outside
+    /// `contentRects` by design, asserted separately never to touch the housing.
+    var bandRectsInScreen: [NSRect] {
+        guard let panel, let view else { return [] }
+        return view.bandRects.map { r in
+            NSRect(x: panel.frame.minX + r.minX, y: panel.frame.maxY - r.maxY,
                    width: r.width, height: r.height)
         }
     }
@@ -672,6 +741,10 @@ final class NotchStripView: NSView {
     /// The four-square launcher stays reachable while a session list is up, so
     /// the modules are one hover away without collapsing first.
     var onGridHover: ((Bool) -> Void)?
+    /// The ↻ in the band while a list is open.
+    var onRefresh: (() -> Void)?
+    /// The band header for the open list: a title and how many rows are live.
+    var listHeader: (title: String, active: Int)?
 
     private var groups: [[NotchStrip.Mark]] = []
     private var cards: [NotchStrip.Card] = []
@@ -683,8 +756,12 @@ final class NotchStripView: NSView {
     private var card: NotchStrip.Card? { nil }
     private var hoveredRow: Int?
     private var hoveredAction: (row: Int, index: Int)?
-    /// Rebuilt each draw; read by mouseDown so a click lands on what was drawn.
-    private var rowActionRects: [(row: Int, index: Int, rect: NSRect)] = []
+    private var refreshHovered = false
+    /// Where the housing sits in OUR coordinates for the current frame. Set by
+    /// `targetFrame` — the clamp against the screen edge can shift the panel
+    /// off centre, and a header laid out from the window edge would then slide
+    /// under the camera. The preview never places, so it falls back to centred.
+    private var placedNotchDX: CGFloat?
     private var notchSpan: CGFloat = 0
     private var notchHeight: CGFloat = 0
     private var maxWidth: CGFloat = 10_000
@@ -717,6 +794,7 @@ final class NotchStripView: NSView {
         hoveredTile = nil
         hoveredTab = nil
         listGridHovered = false
+        refreshHovered = false
         self.groups = groups
         self.cards = cards
         self.listMode = listMode
@@ -767,6 +845,12 @@ final class NotchStripView: NSView {
     }
     /// The whole expanded WINDOW: the content-wide body plus a flare each side.
     private var midFrameWidth: CGFloat { midWidth + 2 * NotchStrip.flareOut }
+    /// The agent list's body: wider than Mid, still clamped to the screen and
+    /// to a ceiling in points.
+    private var listWidth: CGFloat {
+        min(notchSpan * NotchStrip.listWidthFactor, maxWidth, NotchStrip.maxListWidth)
+    }
+    private var listFrameWidth: CGFloat { listWidth + 2 * NotchStrip.flareOut }
     /// Content lives in the body, centered: `flareOut` in from each window edge.
     var contentDX: CGFloat { NotchStrip.flareOut }
     var contentW: CGFloat { bounds.width - 2 * NotchStrip.flareOut }
@@ -774,24 +858,62 @@ final class NotchStripView: NSView {
         notchHeight + ((card?.actions.isEmpty ?? true)
                        ? NotchStrip.midCardHeight : NotchStrip.midCardHeightWithActions)
     }
-    /// The list is capped at `maxListRows`, not fitted to the source — that cap
-    /// is what keeps the hover shape Mid rather than sliding into Max.
+    /// The list is capped, not fitted to the source: five live rows, a Recent
+    /// divider and two finished rows at most, so the hover shape has a ceiling
+    /// the way a module does. Heights vary (finished rows are two lines), so
+    /// every rect is a prefix sum — no fixed-stride math anywhere in the list.
     private var listHeight: CGFloat {
-        notchHeight + NotchStrip.listPad * 2
-            + CGFloat(min(cards.count, NotchStrip.maxListRows)) * NotchStrip.listRow
+        notchHeight + NotchStrip.listPad * 2 + rowsHeight
+    }
+    private var visibleRows: Int { min(cards.count, NotchStrip.maxListRows + NotchStrip.maxRecentRows) }
+    private var firstRecent: Int? { (0..<visibleRows).first { cards[$0].isRecent } }
+    private func rowHeight(_ i: Int) -> CGFloat {
+        cards[i].isRecent ? NotchStrip.recentRow : NotchStrip.liveRow
+    }
+    private var rowsHeight: CGFloat {
+        (0..<visibleRows).reduce(0) { $0 + rowHeight($1) }
+            + (firstRecent == nil ? 0 : NotchStrip.recentHeaderH)
     }
     private func rowRect(_ i: Int) -> NSRect {
-        NSRect(x: contentDX + 12, y: notchHeight + NotchStrip.listPad + CGFloat(i) * NotchStrip.listRow,
-               width: contentW - 24, height: NotchStrip.listRow)
+        var y = notchHeight + NotchStrip.listPad
+        for j in 0..<i { y += rowHeight(j) }
+        if let fr = firstRecent, i >= fr { y += NotchStrip.recentHeaderH }
+        return NSRect(x: contentDX + 12, y: y, width: contentW - 24, height: rowHeight(i))
     }
-    private var visibleRows: Int { min(cards.count, NotchStrip.maxListRows) }
+    /// The "Recent" divider's slot, directly above the first finished row.
+    var recentHeaderRect: NSRect? {
+        guard let fr = firstRecent else { return nil }
+        let r = rowRect(fr)
+        return NSRect(x: r.minX, y: r.minY - NotchStrip.recentHeaderH,
+                      width: r.width, height: NotchStrip.recentHeaderH)
+    }
+    /// A row's controls show on hover, always on a waiting permission, never on
+    /// a finished row.
+    private func showsActions(_ i: Int) -> Bool {
+        let c = cards[i]
+        return !c.actions.isEmpty && !c.isRecent && (c.actionsAlways || hoveredRow == i)
+    }
+    /// 30×24 on a 34pt pitch, right-anchored, on the row's second line.
+    private func actionRect(row i: Int, index ai: Int) -> NSRect {
+        let r = rowRect(i).insetBy(dx: 0, dy: 3)
+        return NSRect(x: r.maxX - 10 - CGFloat(cards[i].actions.count - ai) * 34, y: r.minY + 26,
+                      width: 30, height: 24)
+    }
+    /// COMPUTED, like `placed`: with variable row heights, an array cached at
+    /// the last draw can describe a layout the window no longer has, and a
+    /// click would land on the wrong row's ✓.
+    private var rowActionRects: [(row: Int, index: Int, rect: NSRect)] {
+        (0..<visibleRows).filter(showsActions).flatMap { i in
+            cards[i].actions.indices.map { (row: i, index: $0, rect: actionRect(row: i, index: $0)) }
+        }
+    }
 
     override var fittingSize: NSSize {
         if moduleHeight > 0 {
             return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.moduleTabRow + moduleHeight)
         }
         if !picker.isEmpty { return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.pickerRow) }
-        if listMode, !cards.isEmpty { return NSSize(width: midFrameWidth, height: listHeight) }
+        if listMode, !cards.isEmpty { return NSSize(width: listFrameWidth, height: listHeight) }
         if card != nil { return NSSize(width: midFrameWidth, height: midHeight) }
         // Min gets the same flare each side as the expanded panel, so both
         // states wear the same corner. The dots ride in by `flareOut` to match.
@@ -807,6 +929,7 @@ final class NotchStripView: NSView {
         let x = isMid ? field.notch.midX - size.width / 2
                       : field.notch.minX - leadFlank - NotchStrip.flareOut
         let clamped = min(max(x, field.visible.minX), max(field.visible.maxX - size.width, field.visible.minX))
+        placedNotchDX = field.notch.minX - clamped
         return NSRect(x: clamped, y: field.notch.maxY - size.height,
                       width: size.width, height: size.height)
     }
@@ -866,11 +989,38 @@ final class NotchStripView: NSView {
         return NSRect(x: contentDX + CGFloat(i) * w, y: notchHeight, width: w, height: NotchStrip.pickerRow)
     }
 
-    /// The four-square launcher shown in the session-list view, up in the
-    /// menu-bar band on the trailing shoulder — the modules stay one hover away.
+    /// The camera housing in our coordinates: the one region of the band that
+    /// must stay plain black, because there is no display behind it.
+    var cutoutRect: NSRect {
+        let dx = placedNotchDX ?? (bounds.width - notchSpan) / 2
+        return NSRect(x: dx, y: 0, width: notchSpan, height: notchHeight)
+    }
+    private static let bandGap: CGFloat = 14
+    /// The band beside the camera while a list is open: ↻ then the four-square
+    /// launcher on the trailing flank, the header cluster on the leading one.
+    /// All anchored to the CUTOUT, not the window edge — the module row is
+    /// narrower than the list, so a launcher at the window's edge would slide
+    /// out from under the cursor as the picker opened, and the genuine
+    /// mouseExited that follows would fold it straight back.
+    var refreshRect: NSRect {
+        let sz: CGFloat = 18
+        return NSRect(x: cutoutRect.maxX + Self.bandGap, y: (notchHeight - sz) / 2, width: sz, height: sz)
+    }
     var listGridRect: NSRect {
         let sz: CGFloat = 18
-        return NSRect(x: bounds.width - contentDX - sz - 8, y: (notchHeight - sz) / 2, width: sz, height: sz)
+        return NSRect(x: refreshRect.maxX + Self.bandGap, y: (notchHeight - sz) / 2, width: sz, height: sz)
+    }
+    /// Header text area on the leading flank, ending short of the cutout.
+    var headerRect: NSRect {
+        let left = contentDX + 12
+        return NSRect(x: left, y: 0, width: max(cutoutRect.minX - Self.bandGap - left, 0), height: notchHeight)
+    }
+    /// Everything painted in the band while a list is open. Outside
+    /// `contentRects` on purpose (the band is where it lives), but the harness
+    /// asserts none of it ever touches the housing.
+    var bandRects: [NSRect] {
+        guard listMode, !cards.isEmpty else { return [] }
+        return [headerRect, refreshRect, listGridRect].filter { $0.width > 0 }
     }
     private(set) var listGridHovered = false
 
@@ -892,12 +1042,28 @@ final class NotchStripView: NSView {
                            height: NotchStrip.moduleTabRow + moduleHeight)]
         }
         if !picker.isEmpty { return picker.indices.map(tileRect) }
-        if listMode, !cards.isEmpty { return (0..<visibleRows).map(rowRect) }
+        if listMode, !cards.isEmpty {
+            return (0..<visibleRows).map(rowRect) + (recentHeaderRect.map { [$0] } ?? [])
+        }
         return card == nil ? placed.map(\.rect) : ([cardTextRect] + actionRects)
     }
 
     /// Test hook: the row rects, so a click can be aimed at one.
     var listRowRects: [NSRect] { listMode ? (0..<visibleRows).map(rowRect) : [] }
+    /// Preview hook: light a row's controls without a mouse.
+    func previewState(hoverRow: Int?) { hoveredRow = hoverRow; needsDisplay = true }
+    /// Preview hook: stroke the cutout, the band rects and the content rects,
+    /// so a PNG — which has no camera in it — still shows what the harness
+    /// asserts about them.
+    var showGuides = false
+    private func drawGuides() {
+        NSColor.systemRed.withAlphaComponent(0.8).setStroke()
+        let c = NSBezierPath(rect: cutoutRect); c.lineWidth = 1; c.stroke()
+        NSColor.systemYellow.withAlphaComponent(0.8).setStroke()
+        for r in bandRects { let b = NSBezierPath(rect: r); b.lineWidth = 1; b.stroke() }
+        NSColor.systemGreen.withAlphaComponent(0.6).setStroke()
+        for r in contentRects { let b = NSBezierPath(rect: r); b.lineWidth = 1; b.stroke() }
+    }
     /// Test hook: the ✓/✕ rects drawn on the rows.
     var listActionRects: [(row: Int, index: Int, rect: NSRect)] { rowActionRects }
 
@@ -1018,6 +1184,7 @@ final class NotchStripView: NSView {
         }
         if listMode, !cards.isEmpty {
             drawList()
+            if showGuides { drawGuides() }
             return
         }
         if let card {
@@ -1126,113 +1293,209 @@ final class NotchStripView: NSView {
         return r.maxX + 4
     }
 
-    /// Hover: the Agent Pad's rows, in the housing's black. Everything sits
-    /// BELOW the housing — the band above is plate only, because there is no
+    /// Hover: the agent list — MacNotch's "AI Coding" panel — in the housing's
+    /// black. Every row sits BELOW the housing; the band above carries only the
+    /// header cluster and the two glyphs, on the flanks, because there is no
     /// display behind the camera and anything drawn there never reaches the
     /// glass.
     private func drawList() {
-        rowActionRects = []
         let p = NSMutableParagraphStyle()
         p.lineBreakMode = .byTruncatingTail
+        for i in 0..<visibleRows {
+            let c = cards[i]
+            guard c.isRecent else { drawRow(i, c, paragraph: p); continue }
+            if firstRecent == i, let hr = recentHeaderRect {
+                ("Recent" as NSString).draw(
+                    in: NSRect(x: hr.minX + 13, y: hr.minY + 3, width: 120, height: 13),
+                    withAttributes: [.font: NSFont.systemFont(ofSize: 9, weight: .semibold),
+                                     .foregroundColor: NSColor.white.withAlphaComponent(0.5)])
+            }
+            // Finished work recedes: the whole row at half strength, as the pad does.
+            guard let ctx = NSGraphicsContext.current?.cgContext else { drawRow(i, c, paragraph: p); continue }
+            ctx.saveGState()
+            ctx.setAlpha(0.55)
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+            drawRow(i, c, paragraph: p)
+            ctx.endTransparencyLayer()
+            ctx.restoreGState()
+        }
+        drawBand(paragraph: p)
+    }
+
+    /// One row: icon column · identity line · task · activity, with elapsed and
+    /// spend down the right edge. The row's controls take that column's place
+    /// while they show, so nothing overlaps.
+    private func drawRow(_ i: Int, _ c: NotchStrip.Card, paragraph p: NSParagraphStyle) {
         let white = NSColor.white
         let dim = white.withAlphaComponent(0.55)
+        let r = rowRect(i).insetBy(dx: 0, dy: 3)
+        let hot = hoveredRow == i && !c.isRecent
+        // The row wears its status colour, as the pad's rows do.
+        let wash = NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8)
+        c.accent.withAlphaComponent(c.isRecent ? 0.1 : (hot ? 0.3 : 0.15)).setFill()
+        wash.fill()
+        if c.actionsAlways, !c.isRecent {
+            c.accent.setStroke(); wash.lineWidth = 1.5; wash.stroke()
+        }
+        drawIcon(c, in: NSRect(x: r.minX + 10, y: r.minY + (c.isRecent ? 10 : 12), width: 26, height: 26))
 
-        for i in 0..<visibleRows {
-            let r = rowRect(i).insetBy(dx: 0, dy: 3)
-            let c = cards[i]
-            // The row wears its status colour, as the pad's rows do.
-            let wash = NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8)
-            c.accent.withAlphaComponent(hoveredRow == i ? 0.3 : 0.15).setFill()
-            wash.fill()
-            if c.actionsAlways {
-                c.accent.setStroke(); wash.lineWidth = 1.5; wash.stroke()
-            }
-            c.accent.setFill()
-            NSBezierPath(roundedRect: NSRect(x: r.minX + 4, y: r.minY + 6, width: 3, height: r.height - 12),
-                         xRadius: 1.5, yRadius: 1.5).fill()
+        let x0 = r.minX + 48, right = r.maxX - 10
+        let showActions = showsActions(i)
+        // Where text on the right must stop: short of the controls when they
+        // show, else short of the elapsed/spend column.
+        let actionsLeft = showActions ? right - CGFloat(c.actions.count) * 34 - 6 : right
 
-            let x0 = r.minX + 13, right = r.maxX - 10
-            // Line 1 — identity: repo, what it is doing, what with; branch right.
-            var x = x0
-            let repoAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: white, .paragraphStyle: p]
-            let repo = (c.repo.isEmpty ? c.title : c.repo) as NSString
-            let repoW = min(repo.size(withAttributes: repoAttrs).width, 130)
-            repo.draw(in: NSRect(x: x, y: r.minY + 5, width: repoW, height: 15), withAttributes: repoAttrs)
-            x += repoW + 6
-            if !c.state.isEmpty { x = chip(c.state, at: x, y: r.minY + 6, color: c.accent) }
-            if !c.model.isEmpty {
-                x = chip(c.model, at: x, y: r.minY + 6, color: NotchStripView.modelColor(c.model))
+        // Line 1 — identity: repo · state · model · program · branch; elapsed right.
+        var x = x0
+        let repoAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: white, .paragraphStyle: p]
+        let repo = (c.repo.isEmpty ? c.title : c.repo) as NSString
+        let repoW = min(repo.size(withAttributes: repoAttrs).width, 170)
+        repo.draw(in: NSRect(x: x, y: r.minY + 6, width: repoW, height: 15), withAttributes: repoAttrs)
+        x += repoW + 6
+        var line1Right = actionsLeft
+        if !showActions, !c.elapsed.isEmpty {
+            let eAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: dim]
+            let w = (c.elapsed as NSString).size(withAttributes: eAttrs).width
+            (c.elapsed as NSString).draw(at: NSPoint(x: right - w, y: r.minY + 7), withAttributes: eAttrs)
+            line1Right = right - w - 8
+        }
+        if !c.state.isEmpty, !c.isRecent { x = chip(c.state, at: x, y: r.minY + 7, color: c.accent) }
+        if !c.model.isEmpty { x = chip(c.model, at: x, y: r.minY + 7, color: NotchStripView.modelColor(c.model)) }
+        if !c.kind.isEmpty { x = chip(c.kind, at: x, y: r.minY + 7, color: white.withAlphaComponent(0.8)) }
+        if !c.branch.isEmpty {
+            let bAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 9), .foregroundColor: white.withAlphaComponent(0.7),
+                .paragraphStyle: p]
+            var text = "⑂ \(c.branch)"
+            let room = line1Right - x - 4
+            if (text as NSString).size(withAttributes: bAttrs).width > room,
+               let tail = c.branch.split(separator: "/").last { text = "⑂ \(tail)" }
+            let w = min((text as NSString).size(withAttributes: bAttrs).width, room)
+            if w > 26 {
+                (text as NSString).draw(in: NSRect(x: x, y: r.minY + 8, width: w, height: 12), withAttributes: bAttrs)
             }
-            if !c.branch.isEmpty {
-                let bAttrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: 9),
-                    .foregroundColor: white.withAlphaComponent(0.7), .paragraphStyle: p]
-                var text = "⑂ \(c.branch)"
-                let room = right - x - 4
-                if (text as NSString).size(withAttributes: bAttrs).width > room,
-                   let tail = c.branch.split(separator: "/").last { text = "⑂ \(tail)" }
-                let w = min((text as NSString).size(withAttributes: bAttrs).width, room)
-                if w > 26 {
-                    (text as NSString).draw(in: NSRect(x: right - w, y: r.minY + 7, width: w, height: 12),
-                                            withAttributes: bAttrs)
-                }
-            }
-            // Line 2 — the task.
-            if !c.title.isEmpty, !c.repo.isEmpty {
-                (c.title as NSString).draw(
-                    in: NSRect(x: x0, y: r.minY + 22, width: right - x0, height: 15),
-                    withAttributes: [.font: NSFont.systemFont(ofSize: 11),
-                                     .foregroundColor: white.withAlphaComponent(0.85),
-                                     .paragraphStyle: p])
-            }
-            // The row's controls, on the row itself — the notch carries the same
-            // set the pad does. Revealed on hover, except a waiting permission,
-            // whose ✓/✕ stay put so the answer is never hidden.
-            var right2 = right
-            if !c.actions.isEmpty, c.actionsAlways || hoveredRow == i {
-                for (ai, action) in c.actions.enumerated() {
-                    let br = NSRect(x: right - CGFloat(c.actions.count - ai) * 34, y: r.minY + 24,
-                                    width: 30, height: 24)
-                    rowActionRects.append((row: i, index: ai, rect: br))
-                    let path = NSBezierPath(roundedRect: br, xRadius: 6, yRadius: 6)
-                    let hot = hoveredAction?.row == i && hoveredAction?.index == ai
-                    (action.tint ?? white).withAlphaComponent(hot ? 0.95 : 0.35).setFill()
-                    path.fill()
-                    let aAttrs: [NSAttributedString.Key: Any] = [
-                        .font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: white]
-                    let sz = (action.glyph as NSString).size(withAttributes: aAttrs)
-                    (action.glyph as NSString).draw(at: NSPoint(x: br.midX - sz.width / 2,
-                                                               y: br.midY - sz.height / 2),
-                                                    withAttributes: aAttrs)
-                }
-                right2 = right - CGFloat(c.actions.count) * 34 - 6
-            }
-            // The attention ring belongs to the state, not to whether the
-            // buttons happen to be showing.
+        }
 
+        // Line 2 — the task. On a finished row the spend rides its right edge.
+        var line2Right = actionsLeft
+        if c.isRecent, !c.metrics.isEmpty {
+            let mAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim]
+            let w = (c.metrics as NSString).size(withAttributes: mAttrs).width
+            (c.metrics as NSString).draw(at: NSPoint(x: right - w, y: r.minY + 26), withAttributes: mAttrs)
+            line2Right = right - w - 8
+        }
+        if !c.title.isEmpty, !c.repo.isEmpty {
+            (c.title as NSString).draw(
+                in: NSRect(x: x0, y: r.minY + 25, width: max(line2Right - x0, 20), height: 15),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 11),
+                                 .foregroundColor: white.withAlphaComponent(0.85), .paragraphStyle: p])
+        }
 
-            // Line 3 — what it is touching, and what it has spent.
-            var metricsX = right2
-            if !c.metrics.isEmpty {
-                let mAttrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim]
+        // Line 3 (live rows) — what it is touching, and what it has spent.
+        if !c.isRecent {
+            var metricsX = actionsLeft
+            if !showActions, !c.metrics.isEmpty {
+                let mAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim]
                 let w = (c.metrics as NSString).size(withAttributes: mAttrs).width
-                metricsX = right2 - w
-                (c.metrics as NSString).draw(at: NSPoint(x: metricsX, y: r.minY + 40), withAttributes: mAttrs)
+                metricsX = right - w
+                (c.metrics as NSString).draw(at: NSPoint(x: metricsX, y: r.minY + 45), withAttributes: mAttrs)
             }
             if !c.subtitle.isEmpty {
                 (c.subtitle as NSString).draw(
-                    in: NSRect(x: x0, y: r.minY + 39, width: max(metricsX - 6 - x0, 20), height: 13),
+                    in: NSRect(x: x0, y: r.minY + 44, width: max(metricsX - 6 - x0, 20), height: 13),
                     withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .regular),
                                      .foregroundColor: dim, .paragraphStyle: p])
             }
         }
-        // The launcher, up in the band, so the modules stay reachable from here.
+
+        // The row's controls — the same set the pad carries. Revealed on hover,
+        // except a waiting permission, whose ✓/✕ stay put so the answer is
+        // never hidden. They stand where the right column was.
+        guard showActions else { return }
+        for (ai, action) in c.actions.enumerated() {
+            let br = actionRect(row: i, index: ai)
+            let path = NSBezierPath(roundedRect: br, xRadius: 6, yRadius: 6)
+            let hotA = hoveredAction?.row == i && hoveredAction?.index == ai
+            (action.tint ?? white).withAlphaComponent(hotA ? 0.95 : 0.35).setFill()
+            path.fill()
+            let aAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: white]
+            let sz = (action.glyph as NSString).size(withAttributes: aAttrs)
+            (action.glyph as NSString).draw(at: NSPoint(x: br.midX - sz.width / 2, y: br.midY - sz.height / 2),
+                                            withAttributes: aAttrs)
+        }
+    }
+
+    /// The agent's app icon with its state as a dot on the corner — Terminal
+    /// for the CLI, the IDE for an extension tab, Codex or Cursor for theirs.
+    /// No icon ⇒ a glyph on an accent plate.
+    private func drawIcon(_ c: NotchStrip.Card, in box: NSRect) {
+        if let icon = c.icon {
+            icon.draw(in: box, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        } else {
+            c.accent.withAlphaComponent(0.3).setFill()
+            NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6).fill()
+            let glyph = (c.glyph.isEmpty ? "✱" : c.glyph) as NSString
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 14, weight: .medium), .foregroundColor: NSColor.white]
+            let sz = glyph.size(withAttributes: attrs)
+            glyph.draw(at: NSPoint(x: box.midX - sz.width / 2, y: box.midY - sz.height / 2), withAttributes: attrs)
+        }
+        // The state dot, rimmed in housing black so it reads over any icon.
+        let d = NSRect(x: box.maxX - 7, y: box.maxY - 7, width: 9, height: 9)
+        NSColor(white: 0.04, alpha: 1).setFill()
+        NSBezierPath(ovalIn: d.insetBy(dx: -1.5, dy: -1.5)).fill()
+        c.accent.setFill()
+        NSBezierPath(ovalIn: d).fill()
+    }
+
+    /// The band beside the camera: title and live count on the leading flank,
+    /// ↻ and the launcher on the trailing one. Nothing between them — that is
+    /// the housing, and there are no pixels behind the camera to draw on.
+    private func drawBand(paragraph p: NSParagraphStyle) {
+        let white = NSColor.white
+        if let h = listHeader {
+            let hr = headerRect
+            let tAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: white, .paragraphStyle: p]
+            let cAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: white.withAlphaComponent(0.7)]
+            let title = h.title as NSString
+            let count = "\(h.active) active" as NSString
+            let dot: CGFloat = 7
+            let cw = count.size(withAttributes: cAttrs).width
+            let tail = 8 + dot + 5 + cw
+            // Right-aligned against the housing. A narrow flank (the 2× body on
+            // a small screen) keeps the count and truncates the title; narrower
+            // still and the header simply stays off.
+            if hr.width >= tail + 20 {
+                let tw = min(title.size(withAttributes: tAttrs).width, hr.width - tail)
+                var x = hr.maxX - (tw + tail)
+                title.draw(in: NSRect(x: x, y: (notchHeight - 15) / 2, width: tw, height: 15), withAttributes: tAttrs)
+                x += tw + 8
+                (h.active > 0 ? NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)
+                              : white.withAlphaComponent(0.35)).setFill()
+                NSBezierPath(ovalIn: NSRect(x: x, y: (notchHeight - dot) / 2, width: dot, height: dot)).fill()
+                x += dot + 5
+                count.draw(at: NSPoint(x: x, y: (notchHeight - 14) / 2), withAttributes: cAttrs)
+            }
+        }
+        let rr = refreshRect
+        if refreshHovered {
+            white.withAlphaComponent(0.12).setFill()
+            NSBezierPath(roundedRect: rr.insetBy(dx: -5, dy: -4), xRadius: 6, yRadius: 6).fill()
+        }
+        let rAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 15, weight: .medium),
+            .foregroundColor: white.withAlphaComponent(refreshHovered ? 0.95 : 0.6)]
+        let rs = ("↻" as NSString).size(withAttributes: rAttrs)
+        ("↻" as NSString).draw(at: NSPoint(x: rr.midX - rs.width / 2, y: rr.midY - rs.height / 2),
+                               withAttributes: rAttrs)
+        // The launcher, so the modules stay reachable from here.
         let gr = listGridRect
         if listGridHovered {
-            NSColor.white.withAlphaComponent(0.12).setFill()
+            white.withAlphaComponent(0.12).setFill()
             NSBezierPath(roundedRect: gr.insetBy(dx: -5, dy: -4), xRadius: 6, yRadius: 6).fill()
         }
         drawFourSquare(in: gr, alpha: listGridHovered ? 0.95 : 0.55)
@@ -1304,7 +1567,13 @@ final class NotchStripView: NSView {
     /// Marks move when the window resizes, so the hover index has to go with it.
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        // Every hover state, not just the marks': after a grow, a stale
+        // hoveredRow lights the wrong row until the next mouse move.
         hovered = nil
+        hoveredRow = nil
+        hoveredAction = nil
+        listGridHovered = false
+        refreshHovered = false
         needsDisplay = true
     }
 
@@ -1327,6 +1596,8 @@ final class NotchStripView: NSView {
             let p = convert(event.locationInWindow, from: nil)
             let onGrid = listGridRect.insetBy(dx: -6, dy: -5).contains(p)
             if onGrid != listGridHovered { listGridHovered = onGrid; needsDisplay = true; onGridHover?(onGrid) }
+            let onRefresh = refreshRect.insetBy(dx: -6, dy: -5).contains(p)
+            if onRefresh != refreshHovered { refreshHovered = onRefresh; needsDisplay = true }
             let row = (0..<visibleRows).first { rowRect($0).insetBy(dx: -4, dy: 0).contains(p) }
             let act = rowActionRects.first { $0.rect.insetBy(dx: -3, dy: -3).contains(p) }
             let newAct = act.map { (row: $0.row, index: $0.index) }
@@ -1378,16 +1649,19 @@ final class NotchStripView: NSView {
         }
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
-            // The launcher, up in the band, opens the module row.
+            // The launcher, up in the band, opens the module row; ↻ re-sweeps.
             if listGridRect.insetBy(dx: -6, dy: -5).contains(p) { onGridHover?(true); return }
-            // A ✓/✕ answers in place; anywhere else on the row opens the pad.
+            if refreshRect.insetBy(dx: -6, dy: -5).contains(p) { onRefresh?(); return }
+            // A ✓/✕ answers in place; anywhere else on the row focuses it.
             if let hit = rowActionRects.first(where: { $0.rect.insetBy(dx: -3, dy: -3).contains(p) }),
                hit.row < cards.count, hit.index < cards[hit.row].actions.count {
                 cards[hit.row].actions[hit.index].run()
                 return
             }
             if let row = (0..<visibleRows).first(where: { rowRect($0).insetBy(dx: -4, dy: 0).contains(p) }) {
-                onClick?(NotchStrip.Placed(source: listSource, mark: row, rect: rowRect(row)))
+                // A finished row has nothing to focus: mark -1 only folds the notch.
+                let mark = cards[row].isRecent ? -1 : row
+                onClick?(NotchStrip.Placed(source: listSource, mark: mark, rect: rowRect(row)))
             }
             return
         }

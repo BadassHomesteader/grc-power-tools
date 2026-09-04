@@ -1204,11 +1204,21 @@ case "dockoverlay-preview":
 
 case "notchstrip-preview":
     // Offscreen render of the strip against a synthetic housing, as
-    // dockoverlay-preview does. Flags: "list" (hover shape), "card"
-    // (notification shape); default is the collapsed strip.
+    // dockoverlay-preview does. Shapes: "list" (the agent list), "card"
+    // (legacy single card); default is the collapsed strip. "rich" builds
+    // MacNotch-style rows (icon column, chips, branch, elapsed, spend, a
+    // waiting permission, two Recent rows); "wide=N" sets the list width
+    // factor (default 3); "hover=N" lights row N's controls; "guides" strokes
+    // the cutout (red), the band rects (yellow) and the content rects (green)
+    // so the eye can check what the harness asserts.
     let out = args.count >= 2 ? args[1] : "notchstrip-preview.png"
     let shape = args.contains("list") ? "list" : (args.contains("card") ? "card" : "min")
+    let rich = args.contains("rich")
+    let guides = args.contains("guides")
+    let hoverRow = args.first(where: { $0.hasPrefix("hover=") }).flatMap { Int($0.dropFirst(6)) }
+    let wide = args.first(where: { $0.hasPrefix("wide=") }).flatMap { Double($0.dropFirst(5)) }
     MainActor.assumeIsolated {
+        if let wide { NotchStrip.listWidthFactor = CGFloat(wide) }
         let field = PadDock.Field(visible: NSRect(x: 0, y: 0, width: 1800, height: 1130),
                                   notch: NSRect(x: 790, y: 1131, width: 220, height: 38))
         let states: [(String, String, NSColor)] = [
@@ -1219,10 +1229,54 @@ case "notchstrip-preview":
             ("grc-todo", "failed", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)),
         ]
         let marks = states.map { NotchStrip.Mark(color: $0.2, ring: $0.1 != "idle" && $0.1 != "working…") }
-        let cards = states.map { NotchStrip.Card(title: $0.0, subtitle: $0.1, accent: $0.2) }
+        var cards = states.map { NotchStrip.Card(title: $0.0, subtitle: $0.1, accent: $0.2) }
+        var header: (title: String, active: Int)? = nil
+        if rich {
+            let blue = NSColor(srgbRed: 0.25, green: 0.55, blue: 0.95, alpha: 1)
+            let terra = NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+            let grey = NSColor(white: 0.55, alpha: 1)
+            func icon(_ bundle: String) -> NSImage? {
+                NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)
+                    .map { NSWorkspace.shared.icon(forFile: $0.path) }
+            }
+            func row(_ repo: String, _ state: String, _ model: String, _ kind: String, _ branch: String,
+                     _ task: String, _ activity: String, _ elapsed: String, _ metrics: String,
+                     accent: NSColor, bundle: String, recent: Bool = false) -> NotchStrip.Card {
+                var c = NotchStrip.Card(title: task, subtitle: activity, accent: accent, repo: repo,
+                                        state: state, model: model, branch: branch, metrics: metrics)
+                c.icon = icon(bundle); c.kind = kind; c.elapsed = elapsed; c.isRecent = recent
+                if !recent { c.actions = [("✱", nil, {}), ("✎", nil, {}), ("⇆", nil, {}), ("■", nil, {})] }
+                return c
+            }
+            cards = [
+                row("aurora-shop", "Running", "Opus", "CLI", "feature/guest-checkout",
+                    "Add cart persistence and guest checkout flow", "Editing CheckoutViewModel.swift",
+                    "2m 4s", "28 msgs · 50.4k tok", accent: blue, bundle: "com.apple.Terminal"),
+                row("northwind-api", "Permission", "Sonnet", "IDE", "docs/inventory-webhooks",
+                    "Sketch OpenAPI for inventory webhooks", "Bash: npm run generate:openapi",
+                    "18m", "12 msgs · 21.3k tok", accent: terra, bundle: "com.google.antigravity-ide"),
+                row("orbit-ios", "Running", "GPT", "Codex", "fix/map-clustering",
+                    "Fix map clustering on zoom", "Editing MapClusterController.swift",
+                    "8m", "16 msgs · 9.8k tok", accent: blue, bundle: "com.openai.codex"),
+                row("ledger-web", "", "GPT", "Codex", "feature/invoice-pdf",
+                    "Invoice PDF export polish", "", "1h 35m ago", "9 msgs · 12.1k tok",
+                    accent: grey, bundle: "com.openai.codex", recent: true),
+                row("grc-todo", "", "Haiku", "CLI", "main",
+                    "Fix due-date timezone in the Today view", "", "3h 2m ago", "41 msgs · 88.0k tok",
+                    accent: grey, bundle: "com.apple.Terminal", recent: true),
+            ]
+            // The waiting row keeps ✓/✕ on, as the real source does.
+            cards[1].actionsAlways = true
+            cards[1].actions = [("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1), {}),
+                                ("✕", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1), {})]
+            header = (title: "Agents", active: 3)
+        }
         let v = NotchStripView()
+        v.showGuides = guides
         switch shape {
-        case "list": v.configure(groups: [marks], cards: cards, listMode: true, field: field)
+        case "list":
+            v.listHeader = header
+            v.configure(groups: [marks], cards: cards, listMode: true, field: field)
         case "card":
             var one = cards[0]
             one.actions = [("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1), {}),
@@ -1231,6 +1285,9 @@ case "notchstrip-preview":
         default: v.configure(groups: [marks], cards: [], listMode: false, field: field)
         }
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        // After the frame: setFrameSize clears every hover state, so a preview hover
+        // has to land once the size is final.
+        if shape == "list" { v.previewState(hoverRow: hoverRow) }
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
         v.cacheDisplay(in: v.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {
@@ -1278,6 +1335,7 @@ case "notchstrip-live-test":
         var answered: [String] = []
         var clicked: [(String, Int)] = []
         let strip = NotchStrip()
+        var recentCount = 0
         strip.register(NotchStrip.Source(
             id: "agents", priority: 0, maxMarks: 5,
             marks: { (0..<agentCount).map { i in
@@ -1305,7 +1363,18 @@ case "notchstrip-live-test":
                 }
                 return c
             },
-            activate: { clicked.append(("agents", $0)) }))
+            activate: { clicked.append(("agents", $0)) },
+            header: { (title: "Agents", active: agentCount) },
+            // Finished sessions for the Recent divider — none until a check asks.
+            recent: {
+                (0..<recentCount).map { i in
+                    var c = NotchStrip.Card(title: "done \(i)", subtitle: "", accent: .systemGray,
+                                            repo: "old\(i)", model: "Opus", branch: "main",
+                                            metrics: "9 msgs · 1.2k tok")
+                    c.elapsed = "1h ago"
+                    return c
+                }
+            }))
         strip.register(NotchStrip.Source(
             id: "quota", priority: 10, maxMarks: 1,
             marks: { quotaOn ? [NotchStrip.Mark(color: .systemOrange, tooltip: "82%")] : [] },
@@ -1409,16 +1478,37 @@ case "notchstrip-live-test":
         // so the list shows the 5 real ones.
         check(rows.count == NotchStrip.maxListRows,
               "9a: hover lists sessions up to the row cap (\(rows.count) rows for 8 sessions)")
-        let listCap = field.notch.height + NotchStrip.listPad * 2
-            + CGFloat(NotchStrip.maxListRows) * NotchStrip.listRow
+        let listCap = field.notch.height + NotchStrip.listPad * 2 + NotchStrip.maxListContent
         check(list.height <= listCap + 1,
               "9b: list height \(Int(list.height)) within the \(Int(listCap))pt cap — still Mid, never Max")
-        check(list.width <= field.notch.width * NotchStrip.midWidthFactor + 2 * NotchStrip.flareOut + 1,
-              "9c: list width \(Int(list.width)) within the Mid cap (+ flare)")
+        let widthCap = min(field.notch.width * NotchStrip.listWidthFactor, NotchStrip.maxListWidth)
+            + 2 * NotchStrip.flareOut
+        check(list.width <= widthCap + 1,
+              "9c: list width \(Int(list.width)) within the list cap \(Int(widthCap)) (+ flare)")
         let listBad = strip.contentRectsInScreen.filter { $0.intersects(field.notch) }
         check(listBad.isEmpty, "9d: list rows clear of the housing")
         check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
               "9e: list rows entirely BELOW the housing")
+        // 9f: the band header lives on the FLANKS. It sits outside contentRects
+        // on purpose (the band is where it belongs), so it gets its own check.
+        let band = strip.bandRectsInScreen
+        check(band.count == 3, "9f: header, ↻ and launcher all present in the band (\(band.count))")
+        check(band.allSatisfy { !$0.insetBy(dx: -8, dy: 0).intersects(field.notch) },
+              "9f2: nothing in the band within 8pt of the housing")
+        // 9g: finished rows ride after the live ones, under a divider — and the
+        // whole thing still fits the cap.
+        recentCount = 2
+        strip.openList(source: 0); pump(0.4)
+        let rows2 = strip.testSurface?.view.listRowRects ?? []
+        check(rows2.count == NotchStrip.maxListRows + 2, "9g: 5 live + 2 recent rows (\(rows2.count))")
+        check(strip.frame.height <= listCap + 1,
+              "9g2: with Recent the list still fits the cap (\(Int(strip.frame.height)) ≤ \(Int(listCap)))")
+        check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
+              "9g3: Recent rows and divider entirely below the housing")
+        check(rows2.count > 5 && rows2[5].minY - rows2[4].maxY >= NotchStrip.recentHeaderH - 1,
+              "9g4: the Recent divider has its own slot between live and finished rows")
+        recentCount = 0
+        strip.openList(source: 0); pump(0.3)
 
         // 10: a row click routes to that row's session, not the hovered dot's.
         clicked.removeAll()

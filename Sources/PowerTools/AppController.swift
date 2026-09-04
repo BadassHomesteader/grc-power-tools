@@ -957,10 +957,33 @@ final class AppController {
 
     // MARK: Notch strip
 
-    /// The sessions the strip publishes — same visibility and triage rules the
-    /// pad uses, so a dot and its row are never a different set.
+    /// The sessions the strip publishes — same visibility, triage AND
+    /// enrichment the pad uses, so a dot and its row are never a different set.
+    /// The enrichment step was missing here once, and every notch row drew its
+    /// model chip, branch and spend as empty.
     private var stripSessions: [ClaudeSession] {
-        AgentPad.triageSorted(AgentPad.visible(claudeRegistry.ordered))
+        AgentPad.triageSorted(AgentPad.visible(claudeRegistry.ordered)).map(AgentPad.enriched)
+    }
+
+    /// Line 3 of a notch row: what a running session is doing right now, the
+    /// ask or the error while it waits — and nothing at all when it is idle.
+    static func activityLine(for s: ClaudeSession) -> String {
+        switch s.state {
+        case .busy:
+            return s.activity ?? ""
+        case .needsPermission, .needsInput, .error:
+            return s.detail.isEmpty ? "" : s.detail.replacingOccurrences(of: "\n", with: " ")
+        case .idle, .unseen:
+            return ""
+        }
+    }
+
+    /// "28 msgs · 50.4k tok", with a + on both when the transcript was folded
+    /// from its tail and the counts are lower bounds.
+    static func metricsLine(for s: ClaudeSession) -> String {
+        guard s.msgs > 0 else { return "" }
+        let plus = s.statsPartial == true ? "+" : ""
+        return "\(s.msgs)\(plus) msgs · \(compactTokens(s.tokens))\(plus) tok"
     }
 
     private func startNotchStrip() {
@@ -993,13 +1016,22 @@ final class AppController {
                 let s = self.stripSessions[i]
                 var card = NotchStrip.Card(
                     title: s.label,
-                    subtitle: s.detail.isEmpty ? "" : s.detail.replacingOccurrences(of: "\n", with: " "),
+                    subtitle: Self.activityLine(for: s),
                     accent: AgentPadView.stateColor(s.state),
                     repo: s.projectName,
                     state: s.state.chip,
                     model: s.model,
                     branch: s.branch,
-                    metrics: s.msgs > 0 ? "\(s.msgs) msgs · \(Self.compactTokens(s.tokens)) tok" : "")
+                    metrics: Self.metricsLine(for: s))
+                card.icon = AgentPad.agentIcon(for: s)
+                card.kind = s.kindChip
+                // A session idle past the pad's threshold folds under Recent
+                // too, though its process is still alive — and like a finished
+                // one it reads "how long ago", not "how long running".
+                card.isRecent = AgentPad.isRecent(s)
+                card.elapsed = card.isRecent
+                    ? Elapsed.format(Date().timeIntervalSince(s.stateChanged)) + " ago"
+                    : Elapsed.format(Date().timeIntervalSince(s.startedAt ?? s.started))
                 // The whole reason Mid exists: answer the ask without opening
                 // anything. Only a permission gets buttons.
                 // The same controls the pad's rows carry, so the notch is not a
@@ -1028,8 +1060,34 @@ final class AppController {
             // Row click = focus that session's terminal, the same thing the
             // pad's own row click does. The notch does not launch the pad.
             activate: { [weak self] i in
-                guard let self, i < self.stripSessions.count else { return }
+                guard let self, i >= 0, i < self.stripSessions.count else { return }
                 self.handleAgentPadAction(self.stripSessions[i], .focus)
+            },
+            // The band header: how many rows want attention or are working.
+            header: { [weak self] in
+                let live = self?.stripSessions ?? []
+                let active = live.filter {
+                    $0.state == .busy || $0.state == .needsPermission || $0.state == .needsInput
+                }.count
+                return (title: "Agents", active: active)
+            },
+            // Finished sessions, under the Recent divider: what just wrapped up.
+            recent: { [weak self] in
+                (self?.claudeRegistry.recentEnded ?? []).map { s in
+                    var card = NotchStrip.Card(
+                        title: s.label, subtitle: "", accent: NSColor(white: 0.55, alpha: 1),
+                        repo: s.projectName, state: "", model: s.model, branch: s.branch,
+                        metrics: Self.metricsLine(for: s))
+                    card.icon = AgentPad.agentIcon(for: s)
+                    card.kind = s.kindChip
+                    card.elapsed = s.endedAt.map { Elapsed.format(Date().timeIntervalSince($0)) + " ago" } ?? ""
+                    return card
+                }
+            },
+            // The ↻ in the band: drop dead rows, catch sessions the hooks missed.
+            refresh: { [weak self] in
+                self?.claudeRegistry.pruneDead()
+                self?.claudeRegistry.refreshDiscovered()
             }))
 
         notchStrip.register(NotchStrip.Source(

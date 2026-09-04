@@ -85,8 +85,26 @@ struct ClaudeSession: Codable {
     var tokens: Int = 0
     var started = Date()
     var stateChanged = Date()
+    /// Everything below is Optional on purpose, like `kind`: the synthesized
+    /// decoder has no defaults, so a required key missing from a registry file
+    /// persisted by an older build would fail the WHOLE file and blank the pad.
+    /// What the transcript last showed the session doing ("Editing Foo.swift").
+    var activity: String? = nil
+    /// Project name override: the transcript's cwd is the real project when the
+    /// process's cwd is only an IDE workspace root (every IDE row read "Code").
+    var project: String? = nil
+    /// True start of the claude process, from ~/.claude/sessions/<pid>.json.
+    /// `started` is only when WE first saw the session.
+    var startedAt: Date? = nil
+    /// "claude-vscode" for an IDE-hosted session; the CLI leaves it empty.
+    var entrypoint: String? = nil
+    /// Set on a tombstone: the session ended then and lives under Recent.
+    var endedAt: Date? = nil
+    /// Counts are lower bounds (a huge transcript was folded from its tail).
+    var statsPartial: Bool? = nil
 
     var projectName: String {
+        if let project, !project.isEmpty { return project }
         let name = (cwd as NSString).lastPathComponent
         return name.isEmpty ? "session" : name
     }
@@ -101,6 +119,15 @@ struct ClaudeSession: Codable {
     var isCursor: Bool { kind == "cursor" }
     /// No injection channel (Electron hosts): row = presence + state + focus.
     var isWatchOnly: Bool { isCodex || isCursor }
+    /// Hosted by an IDE extension rather than a terminal.
+    var isIDE: Bool {
+        (entrypoint ?? "").contains("vscode") || Self.ideBundles.contains(hostBundleID)
+    }
+    static let ideBundles: Set<String> = [
+        "com.google.antigravity-ide", "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92"]
+    /// The row's agent-kind chip: which program is running this session.
+    var kindChip: String { isCodex ? "Codex" : isCursor ? "Cursor" : isIDE ? "IDE" : "CLI" }
+    var isEnded: Bool { endedAt != nil }
 
     /// Where Claude Code keeps this session's transcript. The path is fully
     /// determined by cwd + id (~/.claude/projects/<cwd with / and . dashed>/
@@ -132,6 +159,16 @@ final class ClaudeSessionRegistry {
     /// are not persisted (re-derived from disk on every refresh).
     private var external: [String: ClaudeSession] = [:]
 
+    /// The last few sessions that ENDED, so the notch's Recent section can
+    /// answer "what just finished?" — SessionEnd used to delete the row
+    /// outright. Enriched at capture: the live registry never stores model or
+    /// tokens (those ride on local copies), so a bare copy would be blank forever.
+    /// Claude rows only — external watchers rebuild their rows wholesale and
+    /// never pass through SessionEnd.
+    private var ended: [ClaudeSession] = []
+    private static let maxEnded = 3
+    var recentEnded: [ClaudeSession] { ended }
+
     var ordered: [ClaudeSession] {
         (Array(sessions.values) + Array(external.values)).sorted { $0.started < $1.started }
     }
@@ -156,6 +193,10 @@ final class ClaudeSessionRegistry {
            let list = try? JSONDecoder().decode([String].self, from: data) {
             dismissed = list
         }
+        if let data = try? Data(contentsOf: Self.endedURL),
+           let list = try? JSONDecoder().decode([ClaudeSession].self, from: data) {
+            ended = Array(list.filter { !dismissed.contains($0.id) }.prefix(Self.maxEnded))
+        }
         guard let data = try? Data(contentsOf: Self.persistURL),
               let list = try? JSONDecoder().decode([ClaudeSession].self, from: data) else { return }
         // Skip placeholders persisted by older builds that predate the "/"
@@ -173,6 +214,36 @@ final class ClaudeSessionRegistry {
         if let data = try? JSONEncoder().encode(own) {
             try? data.write(to: Self.persistURL, options: .atomic)
         }
+    }
+
+    // MARK: Ended rows — kept in their own file so the shape of
+    // agent-sessions.json never changes under an older build.
+
+    private static var endedURL: URL {
+        Config.appSupportDir.appendingPathComponent("agent-ended.json")
+    }
+
+    private func persistEnded() {
+        if let data = try? JSONEncoder().encode(ended) {
+            try? data.write(to: Self.endedURL, options: .atomic)
+        }
+    }
+
+    /// Remember a session that just finished. Idempotent by id — pruneDead runs
+    /// from three places, and Recent must not fill with one session's echoes.
+    private func tombstone(_ session: ClaudeSession) {
+        // Nothing to remember without a title — CodexBar's quota probes run
+        // `claude` every few minutes and would otherwise churn Recent.
+        guard !session.label.isEmpty else { return }
+        var t = SessionEnricher.enrich(session)
+        let now = Date()
+        t.endedAt = now
+        t.state = .idle
+        t.stateChanged = now
+        ended.removeAll { $0.id == t.id }
+        ended.insert(t, at: 0)
+        if ended.count > Self.maxEnded { ended.removeLast(ended.count - Self.maxEnded) }
+        persistEnded()
     }
 
     // MARK: Closed rows — a closed session stays hidden even though discovery
@@ -194,6 +265,10 @@ final class ClaudeSessionRegistry {
     func dismissSession(_ id: String) {
         sessions.removeValue(forKey: id)
         external.removeValue(forKey: id)
+        if ended.contains(where: { $0.id == id }) {
+            ended.removeAll { $0.id == id }
+            persistEnded()
+        }
         dismissed.removeAll { $0 == id }
         dismissed.append(id)
         if dismissed.count > 100 { dismissed.removeFirst(dismissed.count - 100) }
@@ -316,9 +391,14 @@ final class ClaudeSessionRegistry {
         }
 
         if event == "SessionEnd" {
-            sessions.removeValue(forKey: sid)
+            if let s = sessions.removeValue(forKey: sid) { tombstone(s) }
             onChange?(ordered)
             return
+        }
+        // Back from the dead (a resumed session): it is live again, not recent.
+        if ended.contains(where: { $0.id == sid }) {
+            ended.removeAll { $0.id == sid }
+            persistEnded()
         }
 
         // Any event may be the first we see (the app can start after the
@@ -446,10 +526,14 @@ final class ClaudeSessionRegistry {
     func pruneDead() {
         var changed = false
         for (sid, s) in sessions {
-            let dead = (s.claudePID > 0 && kill(s.claudePID, 0) != 0 && errno == ESRCH)
-                || (s.claudePID == 0 && s.stateChanged.timeIntervalSinceNow < -12 * 3600)
-            if dead {
+            let gone = s.claudePID > 0 && kill(s.claudePID, 0) != 0 && errno == ESRCH
+            let debris = s.claudePID == 0 && s.stateChanged.timeIntervalSinceNow < -12 * 3600
+            if gone || debris {
                 sessions.removeValue(forKey: sid)
+                // A process that vanished just finished, so it is worth
+                // remembering; a pid-less row that went quiet for 12h is debris,
+                // and a discovery placeholder never had a title to remember.
+                if gone, !sid.hasPrefix("pid-") { tombstone(s) }
                 changed = true
             }
         }
