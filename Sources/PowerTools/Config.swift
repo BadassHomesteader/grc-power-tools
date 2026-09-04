@@ -579,6 +579,13 @@ struct Config: Codable {
         notchStripMigrated = field(.notchStripMigrated, false)
         showInCaptures = field(.showInCaptures, true)
         notchModules = field(.notchModules, ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"])
+        // `save()` writes the whole config, so every existing config.json carries
+        // the OLD default list verbatim and would hide any module added later.
+        // A list that still equals that old default is not a choice — it takes
+        // the new default; a list the user actually edited is left alone.
+        if notchModules == ["usage", "hotkeys", "snap", "clock", "weather", "chat"] {
+            notchModules = ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"]
+        }
         notchClockZones = field(.notchClockZones, ["America/New_York", "Europe/London", "Asia/Tokyo"])
         weatherPlaces = field(.weatherPlaces, [])
         weatherPlace = field(.weatherPlace, "")
