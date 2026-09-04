@@ -1,7 +1,7 @@
 import Cocoa
 
 /// The panels the notch hosts. Each is a plain NSView sized to the notch's
-/// content box (440 x ≤320); the strip supplies the shell, the clipping and
+/// content box (≈660 x ≤274); the strip supplies the shell, the clipping and
 /// the placement, so a module only has to draw itself.
 ///
 /// They are dark by construction — the notch is the housing's black in every
@@ -290,17 +290,35 @@ final class SnapModuleView: NotchModuleView {
 
 // MARK: - Weather
 
-/// Current conditions from Open-Meteo — no API key, no account, and no
-/// CoreLocation prompt: the place is a lat/lon in config, set by typing a city
-/// in Settings. One fetch on open, cached for 15 minutes; a notch module has no
-/// business polling a network service on a timer.
+/// Conditions from Open-Meteo — no API key, no account, and no CoreLocation
+/// prompt: the place is a lat/lon in config, set by typing a city in Settings.
+/// One fetch on open, cached for 15 minutes; a notch module has no business
+/// polling a network service on a timer. It keeps what MacNotch's weather
+/// panel shows: the reading, feels-like, humidity, wind, UV, rain chance,
+/// pressure, sunrise/sunset and the next hours.
 @MainActor
 final class WeatherReader {
     static let shared = WeatherReader()
+    struct Hour {
+        var date: Date
+        var tempC: Double
+        var code: Int
+        var isDay: Bool
+    }
     struct Now {
         var tempC = 0.0, feelsC = 0.0, windKph = 0.0
         var code = 0
+        var isDay = true
         var highC = 0.0, lowC = 0.0
+        var humidity = 0            // %
+        var uv = 0.0
+        var rainChance = 0          // %, this hour
+        var pressureHPa = 0.0
+        var sunrise: Date?
+        var sunset: Date?
+        /// From the current hour onward, a day at most.
+        var hours: [Hour] = []
+        var timeZone = TimeZone.current
         var fetched = Date.distantPast
     }
     /// Keyed by location so several cities can be shown at once — each place
@@ -314,6 +332,8 @@ final class WeatherReader {
     }
     /// This location's last reading, or nil if never fetched.
     func now(lat: Double, lon: Double) -> Now? { byKey[Self.key(lat: lat, lon: lon)] }
+    /// Preview/test hook: plant a reading without the network.
+    func seed(lat: Double, lon: Double, _ reading: Now) { byKey[Self.key(lat: lat, lon: lon)] = reading }
 
     func refreshIfStale(lat: Double, lon: Double) {
         let k = Self.key(lat: lat, lon: lon)
@@ -321,22 +341,55 @@ final class WeatherReader {
         if let n = byKey[k], Date().timeIntervalSince(n.fetched) < 900 { return }
         inFlight.insert(k)
         let url = URL(string: "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)"
-            + "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m"
-            + "&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=auto")!
+            + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,"
+            + "wind_speed_10m,pressure_msl,is_day"
+            + "&hourly=temperature_2m,weather_code,precipitation_probability,uv_index,is_day"
+            + "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset"
+            + "&forecast_days=2&timezone=auto")!
         URLSession.shared.dataTask(with: url) { data, _, _ in
             Task { @MainActor in
                 self.inFlight.remove(k)
                 guard let data,
                       let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                       let cur = root["current"] as? [String: Any] else { return }
+                func num(_ d: [String: Any], _ key: String) -> Double? { (d[key] as? NSNumber)?.doubleValue }
+                func at(_ a: [Any], _ i: Int) -> Double {
+                    i < a.count ? ((a[i] as? NSNumber)?.doubleValue ?? 0) : 0
+                }
                 var n = Now()
-                n.tempC = (cur["temperature_2m"] as? NSNumber)?.doubleValue ?? 0
-                n.feelsC = (cur["apparent_temperature"] as? NSNumber)?.doubleValue ?? n.tempC
-                n.windKph = (cur["wind_speed_10m"] as? NSNumber)?.doubleValue ?? 0
-                n.code = (cur["weather_code"] as? NSNumber)?.intValue ?? 0
+                let tz = (root["timezone"] as? String).flatMap(TimeZone.init(identifier:)) ?? .current
+                n.timeZone = tz
+                n.tempC = num(cur, "temperature_2m") ?? 0
+                n.feelsC = num(cur, "apparent_temperature") ?? n.tempC
+                n.windKph = num(cur, "wind_speed_10m") ?? 0
+                n.code = Int(num(cur, "weather_code") ?? 0)
+                n.isDay = (num(cur, "is_day") ?? 1) != 0
+                n.humidity = Int((num(cur, "relative_humidity_2m") ?? 0).rounded())
+                n.pressureHPa = num(cur, "pressure_msl") ?? 0   // sea-level, the barometer figure people know
+                // Open-Meteo's times are the place's LOCAL wall clock, no zone.
+                let local = DateFormatter()
+                local.dateFormat = "yyyy-MM-dd'T'HH:mm"
+                local.timeZone = tz
                 if let daily = root["daily"] as? [String: Any] {
-                    n.highC = ((daily["temperature_2m_max"] as? [Any])?.first as? NSNumber)?.doubleValue ?? 0
-                    n.lowC = ((daily["temperature_2m_min"] as? [Any])?.first as? NSNumber)?.doubleValue ?? 0
+                    n.highC = at(daily["temperature_2m_max"] as? [Any] ?? [], 0)
+                    n.lowC = at(daily["temperature_2m_min"] as? [Any] ?? [], 0)
+                    n.sunrise = ((daily["sunrise"] as? [Any])?.first as? String).flatMap(local.date(from:))
+                    n.sunset = ((daily["sunset"] as? [Any])?.first as? String).flatMap(local.date(from:))
+                }
+                if let hourly = root["hourly"] as? [String: Any], let times = hourly["time"] as? [String] {
+                    let temps = hourly["temperature_2m"] as? [Any] ?? []
+                    let codes = hourly["weather_code"] as? [Any] ?? []
+                    let rain = hourly["precipitation_probability"] as? [Any] ?? []
+                    let uv = hourly["uv_index"] as? [Any] ?? []
+                    let day = hourly["is_day"] as? [Any] ?? []
+                    let dates = times.map { local.date(from: $0) ?? .distantPast }
+                    // The slot that contains now — hour labels are hour STARTS.
+                    let start = dates.firstIndex { $0 > Date().addingTimeInterval(-3600) } ?? 0
+                    n.rainChance = Int(at(rain, start).rounded())
+                    n.uv = at(uv, start)
+                    n.hours = (start..<min(start + 24, dates.count)).map {
+                        Hour(date: dates[$0], tempC: at(temps, $0), code: Int(at(codes, $0)), isDay: at(day, $0) != 0)
+                    }
                 }
                 n.fetched = Date()
                 self.byKey[k] = n
@@ -366,10 +419,12 @@ final class WeatherReader {
     }
 
     /// WMO codes, collapsed to the handful worth distinguishing at a glance.
-    static func describe(_ code: Int) -> (String, String) {
+    /// A clear night gets a moon.
+    static func describe(_ code: Int, isDay: Bool = true) -> (String, String) {
         switch code {
-        case 0: return ("☀︎", "Clear")
-        case 1, 2: return ("⛅︎", "Partly cloudy")
+        case 0: return (isDay ? "☀︎" : "☾", isDay ? "Clear sky" : "Clear night")
+        case 1: return (isDay ? "☀︎" : "☾", "Mostly clear")
+        case 2: return ("⛅︎", "Partly cloudy")
         case 3: return ("☁︎", "Overcast")
         case 45, 48: return ("≈", "Fog")
         case 51...57: return ("☂", "Drizzle")
@@ -381,9 +436,26 @@ final class WeatherReader {
     }
 }
 
+/// Housing-black backdrop for offscreen module previews: modules paint no
+/// background of their own because the strip's shell is behind them.
+final class NotchPreviewPlate: NSView {
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(white: 0.04, alpha: 1).setFill()
+        bounds.fill()
+    }
+}
+
+/// MacNotch's weather panel, in the notch's black: the reading large, the
+/// day's range, feels-like, a row of the numbers that decide what to wear, and
+/// the next hours. Several cities become a row of chips under the title; click
+/// one to switch. Everything drawn is the reader's cached snapshot — nothing
+/// here fetches.
 final class WeatherModuleView: NotchModuleView {
     private let places: [Config.WeatherPlace]
     private let fahrenheit: Bool
+    private var selected = 0
+    private var chipRects: [(index: Int, rect: NSRect)] = []
 
     init(places: [Config.WeatherPlace], fahrenheit: Bool) {
         self.places = places; self.fahrenheit = fahrenheit
@@ -396,42 +468,126 @@ final class WeatherModuleView: NotchModuleView {
     private func t(_ c: Double) -> String {
         fahrenheit ? "\(Int((c * 9 / 5 + 32).rounded()))°" : "\(Int(c.rounded()))°"
     }
+    private func wind(_ kph: Double) -> String {
+        fahrenheit ? "\(Int((kph * 0.621371).rounded())) mph" : "\(Int(kph.rounded())) km/h"
+    }
+    private func clock(_ d: Date?, tz: TimeZone) -> String {
+        guard let d else { return "—" }
+        let f = DateFormatter()
+        f.timeZone = tz; f.timeStyle = .short; f.dateStyle = .none
+        return f.string(from: d)
+    }
+    private func hourLabel(_ d: Date, tz: TimeZone) -> String {
+        let f = DateFormatter()
+        f.timeZone = tz
+        f.setLocalizedDateFormatFromTemplate("j")
+        return f.string(from: d).replacingOccurrences(of: " ", with: "")
+    }
+    private func city(_ p: Config.WeatherPlace) -> String {
+        p.name.split(separator: ",").first.map(String.init) ?? p.name
+    }
 
     override func draw(_ dirtyRect: NSRect) {
-        var y: CGFloat = 10
-        ("Weather" as NSString).draw(at: NSPoint(x: 16, y: y), withAttributes: NotchTheme.title())
-        y += 26
+        chipRects = []
+        let left: CGFloat = 16, right = bounds.width - 16
+        ("Weather" as NSString).draw(at: NSPoint(x: left, y: 8), withAttributes: NotchTheme.title())
         guard !places.isEmpty else {
             ("Add cities in Settings ▸ Notch." as NSString)
-                .draw(at: NSPoint(x: 16, y: y), withAttributes: NotchTheme.small(11))
+                .draw(at: NSPoint(x: left, y: 32), withAttributes: NotchTheme.small(11))
             return
         }
-        // One row per city, the same shape as the world clock: name on the
-        // left, condition glyph + temperature on the right, high/low after it.
-        for p in places {
-            guard y < bounds.height - 20 else { return }
-            let city = p.name.split(separator: ",").first.map(String.init) ?? p.name
-            (city as NSString).draw(at: NSPoint(x: 16, y: y), withAttributes: NotchTheme.body())
-            guard let n = WeatherReader.shared.now(lat: p.lat, lon: p.lon) else {
-                ("…" as NSString).draw(at: NSPoint(x: bounds.width - 30, y: y), withAttributes: NotchTheme.small())
-                y += 30
-                continue
+        let sel = min(selected, places.count - 1)
+        // Cities under the title: one reads as a subtitle, several as a switcher.
+        var cx = left
+        for (i, p) in places.enumerated() {
+            let name = city(p) as NSString
+            let attrs: [NSAttributedString.Key: Any] = i == sel
+                ? [.font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+                   .foregroundColor: NotchTheme.fg.withAlphaComponent(0.95)]
+                : [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NotchTheme.dim]
+            let r = NSRect(x: cx, y: 26, width: name.size(withAttributes: attrs).width + 10, height: 15)
+            if i == sel, places.count > 1 {
+                NotchTheme.faint.setFill()
+                NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4).fill()
             }
-            let (glyph, _) = WeatherReader.describe(n.code)
-            // High / low, far right.
-            let hilo = "\(t(n.highC)) / \(t(n.lowC))" as NSString
-            let hiloW = hilo.size(withAttributes: NotchTheme.small(10)).width
-            hilo.draw(at: NSPoint(x: bounds.width - 16 - hiloW, y: y + 2), withAttributes: NotchTheme.small(10))
-            // Temperature, to the left of high/low.
-            let temp = t(n.tempC) as NSString
-            let tempW = temp.size(withAttributes: NotchTheme.title(16)).width
-            let tempX = bounds.width - 16 - hiloW - 14 - tempW
-            temp.draw(at: NSPoint(x: tempX, y: y - 3), withAttributes: NotchTheme.title(16))
-            // Condition glyph, left of the temperature.
-            (glyph as NSString).draw(at: NSPoint(x: tempX - 26, y: y - 2),
-                                     withAttributes: [.font: NSFont.systemFont(ofSize: 17),
-                                                      .foregroundColor: NotchTheme.fg])
-            y += 30
+            name.draw(at: NSPoint(x: r.minX + 5, y: r.minY + 1), withAttributes: attrs)
+            chipRects.append((i, r))
+            cx = r.maxX + 6
+        }
+        let p = places[sel]
+        guard let n = WeatherReader.shared.now(lat: p.lat, lon: p.lon) else {
+            ("Fetching…" as NSString).draw(at: NSPoint(x: left, y: 60), withAttributes: NotchTheme.small(11))
+            return
+        }
+        // Sunrise · sunset, top right, in the place's own clock.
+        let sun = "☀︎↑ \(clock(n.sunrise, tz: n.timeZone))    ☀︎↓ \(clock(n.sunset, tz: n.timeZone))" as NSString
+        sun.draw(at: NSPoint(x: right - sun.size(withAttributes: NotchTheme.small(10)).width, y: 12),
+                 withAttributes: NotchTheme.small(10))
+
+        // The reading: glyph, big temperature, condition, range; feels-like right.
+        let (glyph, text) = WeatherReader.describe(n.code, isDay: n.isDay)
+        (glyph as NSString).draw(at: NSPoint(x: left, y: 52),
+                                 withAttributes: [.font: NSFont.systemFont(ofSize: 44), .foregroundColor: NotchTheme.fg])
+        (t(n.tempC) as NSString).draw(at: NSPoint(x: left + 66, y: 44),
+                                      withAttributes: [.font: NSFont.systemFont(ofSize: 40, weight: .semibold),
+                                                       .foregroundColor: NotchTheme.fg])
+        (text as NSString).draw(at: NSPoint(x: left + 68, y: 95), withAttributes: NotchTheme.body(13))
+        ("H: \(t(n.highC))   L: \(t(n.lowC))" as NSString)
+            .draw(at: NSPoint(x: left + 68, y: 114), withAttributes: NotchTheme.small(11))
+        let feels = "Feels like" as NSString
+        feels.draw(at: NSPoint(x: right - feels.size(withAttributes: NotchTheme.small(11)).width, y: 60),
+                   withAttributes: NotchTheme.small(11))
+        let fv = t(n.feelsC) as NSString
+        fv.draw(at: NSPoint(x: right - fv.size(withAttributes: NotchTheme.title(22)).width, y: 76),
+                withAttributes: NotchTheme.title(22))
+
+        // The numbers row: five columns with hairlines between.
+        let cols: [(String, String, String)] = [
+            ("◍", "Humidity", "\(n.humidity)%"),
+            ("≋", "Wind", wind(n.windKph)),
+            ("☀︎", "UV", "\(Int(n.uv.rounded()))"),
+            ("☂", "Rain chance", "\(n.rainChance)%"),
+            ("◎", "Pressure", "\(Int(n.pressureHPa.rounded())) hPa"),
+        ]
+        let rowY: CGFloat = 140
+        let colW = (right - left) / CGFloat(cols.count)
+        for (i, c) in cols.enumerated() {
+            let x = left + CGFloat(i) * colW
+            if i > 0 {
+                NotchTheme.faint.setFill()
+                NSRect(x: x - 10, y: rowY + 2, width: 1, height: 34).fill()
+            }
+            (c.0 as NSString).draw(at: NSPoint(x: x, y: rowY + 7),
+                                   withAttributes: [.font: NSFont.systemFont(ofSize: 15), .foregroundColor: NotchTheme.dim])
+            (c.1 as NSString).draw(at: NSPoint(x: x + 24, y: rowY), withAttributes: NotchTheme.small(10))
+            (c.2 as NSString).draw(at: NSPoint(x: x + 24, y: rowY + 15), withAttributes: NotchTheme.title(13))
+        }
+
+        // The next hours.
+        ("Hourly" as NSString).draw(at: NSPoint(x: left, y: 190),
+                                    withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                                                     .foregroundColor: NotchTheme.dim])
+        let hours = Array(n.hours.prefix(13))
+        guard !hours.isEmpty else { return }
+        let hw = (right - left) / CGFloat(hours.count)
+        for (i, h) in hours.enumerated() {
+            let mid = left + CGFloat(i) * hw + hw / 2
+            func centered(_ s: String, y: CGFloat, _ attrs: [NSAttributedString.Key: Any]) {
+                let ns = s as NSString
+                ns.draw(at: NSPoint(x: mid - ns.size(withAttributes: attrs).width / 2, y: y), withAttributes: attrs)
+            }
+            centered(i == 0 ? "Now" : hourLabel(h.date, tz: n.timeZone), y: 208, NotchTheme.small(10))
+            centered(WeatherReader.describe(h.code, isDay: h.isDay).0, y: 222,
+                     [.font: NSFont.systemFont(ofSize: 17), .foregroundColor: NotchTheme.fg])
+            centered(t(h.tempC), y: 246, NotchTheme.title(11))
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if let hit = chipRects.first(where: { $0.rect.insetBy(dx: -4, dy: -3).contains(p) }) {
+            selected = hit.index
+            needsDisplay = true
         }
     }
 }

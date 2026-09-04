@@ -25,14 +25,13 @@ protocol NotchKeyboardModule: AnyObject {
 /// with a single surface that features PUBLISH into, the way MacNotch's "Live
 /// Activities" does: one strip, several sources, priority-ordered.
 ///
-/// It has exactly three sizes and never grows past the middle one — with one
-/// deliberate exception, the agent list, which is allowed a wider body:
+/// It has exactly three sizes and never grows past the middle one:
 ///
 ///   Min — marks flanking the housing, inside the menu-bar band.
-///   Mid — a small panel hanging below the housing: the module row or one
-///         module (2× the housing), or the agent list (`listWidthFactor`×,
-///         MacNotch's "AI Coding" panel — rows with an icon column, chips,
-///         branch, task, activity and spend need the room).
+///   Mid — a panel hanging below the housing, `listWidthFactor`× the housing
+///         wide (capped): the agent list (MacNotch's "AI Coding" panel), the
+///         module row, or one module. One width for all of them, so opening
+///         one from another never moves the cursor off the surface.
 ///   Max — NOT here. Clicking a mark opens the owning feature's own window at
 ///         its ordinary anchor. The notch never becomes a full panel.
 ///
@@ -113,7 +112,7 @@ final class NotchStrip {
     static let groupGap: CGFloat = 9
     /// Mid is capped, not fitted. The notch must never reach full-panel size,
     /// so this is a ceiling the layout is clamped to rather than a hint.
-    static let midWidthFactor: CGFloat = 2
+    // Body width for every expanded shape: `listWidthFactor` / `maxListWidth` below.
     static let midCardHeight: CGFloat = 56
     static let midCardHeightWithActions: CGFloat = 74
     /// The hover list carries the Agent Pad's full row — repo, state, model,
@@ -183,11 +182,11 @@ final class NotchStrip {
     /// back to the row and no way out at all.
     static let moduleTabRow: CGFloat = 46
 
-    /// The agent list is the one shape allowed wider than the rest: it is
-    /// MacNotch's "AI Coding" panel, and a 2× body could not seat a row with an
-    /// icon column, four chips, a branch and an elapsed column. Modules and the
-    /// picker keep the 2× body. A `var` so one build can render a catalog of
-    /// widths for a design pick.
+    /// The body width of every expanded shape, in housings. Set by the agent
+    /// list (MacNotch's "AI Coding" panel): a 2× body could not seat a row with
+    /// an icon column, four chips, a branch and an elapsed column, and the
+    /// module row and modules took the same width so nothing shifts between
+    /// them. A `var` so one build can render a catalog of widths for a pick.
     static var listWidthFactor: CGFloat = 3
     /// Whatever the factor, the list never swallows the frontmost app's menu
     /// titles: a hard ceiling in points.
@@ -839,10 +838,11 @@ final class NotchStripView: NSView {
     private var leadFlank: CGFloat { leadRun > 0 ? leadRun + NotchStrip.pad * 2 : 0 }
     private var trailFlank: CGFloat { trailRun > 0 ? trailRun + NotchStrip.pad * 2 : 0 }
 
-    /// Mid is CLAMPED, never fitted: the notch must not reach full-panel size.
-    private var midWidth: CGFloat {
-        min(notchSpan * NotchStrip.midWidthFactor, maxWidth)
-    }
+    /// Every expanded shape shares one body width — the agent list set it
+    /// (MacNotch's panel is one width), and a module row narrower than the
+    /// list would slide the launcher out from under the cursor as it opened.
+    /// Clamped, never fitted: the notch must not reach full-panel size.
+    private var midWidth: CGFloat { listWidth }
     /// The whole expanded WINDOW: the content-wide body plus a flare each side.
     private var midFrameWidth: CGFloat { midWidth + 2 * NotchStrip.flareOut }
     /// The agent list's body: wider than Mid, still clamped to the screen and

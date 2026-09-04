@@ -1202,6 +1202,49 @@ case "dockoverlay-preview":
         }
     }
 
+case "notchweather-preview":
+    // Offscreen render of the MacNotch-style weather module with a planted
+    // reading (no network), on the housing black, at the notch's body width.
+    // "celsius" flips the unit.
+    let out = args.count >= 2 ? args[1] : "notchweather-preview.png"
+    MainActor.assumeIsolated {
+        let places = [Config.WeatherPlace(name: "Denver, Colorado, US", lat: 39.739, lon: -104.985),
+                      Config.WeatherPlace(name: "New York, US", lat: 40.713, lon: -74.006),
+                      Config.WeatherPlace(name: "Phoenix, Arizona, US", lat: 33.448, lon: -112.074),
+                      Config.WeatherPlace(name: "Vancouver, BC, CA", lat: 49.283, lon: -123.121)]
+        let cal = Calendar.current
+        let hourStart = cal.dateInterval(of: .hour, for: Date())?.start ?? Date()
+        func reading(_ tempC: Double, _ code: Int, day: Bool) -> WeatherReader.Now {
+            var n = WeatherReader.Now()
+            n.tempC = tempC; n.feelsC = tempC - 1; n.windKph = 5; n.code = code; n.isDay = day
+            n.highC = tempC + 6; n.lowC = tempC - 8; n.humidity = 59; n.uv = day ? 4 : 0
+            n.rainChance = code >= 51 ? 40 : 0; n.pressureHPa = 1012
+            n.sunrise = cal.date(bySettingHour: 6, minute: 6, second: 0, of: Date())
+            n.sunset = cal.date(bySettingHour: 20, minute: 58, second: 0, of: Date())
+            let curve: [Double] = [0, -1, -2, -2, -3, -3, -3, -2, 1, 3, 5, 7, 9]
+            n.hours = curve.enumerated().map { i, d in
+                WeatherReader.Hour(date: hourStart.addingTimeInterval(Double(i) * 3600), tempC: tempC + d,
+                                   code: i == 12 ? 2 : code, isDay: day || i >= 6)
+            }
+            n.fetched = Date()
+            return n
+        }
+        WeatherReader.shared.seed(lat: places[0].lat, lon: places[0].lon, reading(17, 0, day: false))
+        WeatherReader.shared.seed(lat: places[1].lat, lon: places[1].lon, reading(24, 61, day: true))
+        WeatherReader.shared.seed(lat: places[2].lat, lon: places[2].lon, reading(38, 0, day: true))
+        WeatherReader.shared.seed(lat: places[3].lat, lon: places[3].lon, reading(15, 3, day: true))
+        let host = NotchPreviewPlate(frame: NSRect(x: 0, y: 0, width: 660, height: 270))
+        let v = WeatherModuleView(places: places, fahrenheit: !args.contains("celsius"))
+        v.frame = host.bounds
+        host.addSubview(v)
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out) — weather \(Int(host.frame.width))x\(Int(host.frame.height))")
+        }
+    }
+
 case "notchstrip-preview":
     // Offscreen render of the strip against a synthetic housing, as
     // dockoverlay-preview does. Shapes: "list" (the agent list), "card"
@@ -1212,7 +1255,8 @@ case "notchstrip-preview":
     // the cutout (red), the band rects (yellow) and the content rects (green)
     // so the eye can check what the harness asserts.
     let out = args.count >= 2 ? args[1] : "notchstrip-preview.png"
-    let shape = args.contains("list") ? "list" : (args.contains("card") ? "card" : "min")
+    let shape = args.contains("list") ? "list"
+        : (args.contains("card") ? "card" : (args.contains("picker") ? "picker" : "min"))
     let rich = args.contains("rich")
     let guides = args.contains("guides")
     let hoverRow = args.first(where: { $0.hasPrefix("hover=") }).flatMap { Int($0.dropFirst(6)) }
@@ -1277,6 +1321,12 @@ case "notchstrip-preview":
         case "list":
             v.listHeader = header
             v.configure(groups: [marks], cards: cards, listMode: true, field: field)
+        case "picker":
+            // The module row as the app registers it, pads and Settings included.
+            let tiles: [(glyph: String, title: String)] = [
+                ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("☀", "Weather"),
+                ("✦", "Ask"), ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⚙", "Settings")]
+            v.configure(groups: [marks], cards: [], listMode: false, field: field, picker: tiles)
         case "card":
             var one = cards[0]
             one.actions = [("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1), {}),

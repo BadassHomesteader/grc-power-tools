@@ -1153,7 +1153,7 @@ final class AppController {
             ("clock", .init(id: "clock", glyph: "◷", title: "Clock", height: 150) { [weak self] in
                 ClockModuleView(zones: self?.config.notchClockZones ?? [])
             }),
-            ("weather", .init(id: "weather", glyph: "☀", title: "Weather", height: 200) { [weak self] in
+            ("weather", .init(id: "weather", glyph: "☀", title: "Weather", height: 270) { [weak self] in
                 WeatherModuleView(places: self?.config.weatherPlaces ?? [],
                                   fahrenheit: self?.config.weatherFahrenheit ?? true)
             }),
@@ -1165,6 +1165,18 @@ final class AppController {
         for (id, module) in all where config.notchModules.contains(id) {
             notchStrip.registerModule(module)
         }
+        // The two pads as ACTION tiles: they are floating panels with their own
+        // docks, so a tile toggles the pad and folds the notch — the same thing
+        // hold+J / hold+B and the menu bar do. Not gated: a notch on screen
+        // should always be able to summon them.
+        notchStrip.registerModule(NotchStrip.Module(
+            id: "agentpad", glyph: "◫", title: "Agent Pad", height: 0,
+            make: { NSView() },
+            open: { [weak self] in self?.toggleAgentPad() }))
+        notchStrip.registerModule(NotchStrip.Module(
+            id: "macropad", glyph: "⊞", title: "Macro Pad", height: 0,
+            make: { NSView() },
+            open: { [weak self] in self?.toggleMacroPad() }))
         // Settings rides LAST and is not gated — a notch that is on screen at
         // all should always offer a way into its own settings. An action tile,
         // not a hosted module: it opens the real 860pt window and folds the
