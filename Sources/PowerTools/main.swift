@@ -1294,8 +1294,14 @@ case "notchstrip-live-test":
                 // appear on the right row and nowhere else.
                 if permissionWaiting && i == 0 {
                     c.state = "Permission"
+                    c.actionsAlways = true
                     c.actions = [("✓", .systemGreen, { answered.append("accept") }),
                                  ("✕", .systemRed, { answered.append("deny") })]
+                } else {
+                    c.actions = [("✱", nil, { answered.append("model") }),
+                                 ("✎", nil, { answered.append("prompt") }),
+                                 ("⇆", nil, { answered.append("mode") }),
+                                 ("■", nil, { answered.append("interrupt") })]
                 }
                 return c
             },
@@ -1440,7 +1446,8 @@ case "notchstrip-live-test":
         strip.openList(source: 0); pump(0.4)
         let acts = strip.testSurface?.view.listActionRects ?? []
         check(acts.filter { $0.row == 0 }.count == 2, "11a: the waiting row carries ✓ and ✕")
-        check(acts.allSatisfy { $0.row == 0 }, "11b: rows that are not waiting carry none")
+        check(acts.allSatisfy { $0.row == 0 },
+              "11b: un-hovered rows keep their controls hidden (waiting row aside)")
         if let (panel, view) = strip.testSurface, let accept = acts.first(where: { $0.row == 0 && $0.index == 0 }) {
             let p = view.convert(NSPoint(x: accept.rect.midX, y: accept.rect.midY), to: nil)
             let ev = NSEvent.mouseEvent(with: .leftMouseDown, location: p, modifierFlags: [],
@@ -1456,6 +1463,42 @@ case "notchstrip-live-test":
             check(false, "11: no ✓ to click")
         }
         strip.collapse(); permissionWaiting = false; pump(0.3)
+
+        // 12: the full control set — a hovered row carries the pad's four.
+        agentCount = 3
+        strip.apply(master: true, enabled: ["agents"]); pump(0.3)
+        strip.openList(source: 0); pump(0.4)
+        if let (panel, view) = strip.testSurface {
+            let row = view.listRowRects[1]
+            let move = NSEvent.mouseEvent(with: .mouseMoved,
+                                          location: view.convert(NSPoint(x: row.midX, y: row.midY), to: nil),
+                                          modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: panel.windowNumber, context: nil,
+                                          eventNumber: 0, clickCount: 0, pressure: 0)!
+            view.mouseMoved(with: move)
+            view.display()
+            let hovered = view.listActionRects.filter { $0.row == 1 }
+            check(hovered.count == 4, "12a: a hovered row carries all four controls (\(hovered.count))")
+            check(view.listActionRects.allSatisfy { $0.row == 1 },
+                  "12b: only the hovered row shows them")
+            answered.removeAll(); clicked.removeAll()
+            if let interrupt = hovered.first(where: { $0.index == 3 }) {
+                let ev = NSEvent.mouseEvent(with: .leftMouseDown,
+                                            location: view.convert(NSPoint(x: interrupt.rect.midX, y: interrupt.rect.midY), to: nil),
+                                            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: panel.windowNumber, context: nil,
+                                            eventNumber: 0, clickCount: 1, pressure: 1)!
+                view.mouseDown(with: ev)
+                pump(0.1)
+                check(answered == ["interrupt"], "12c: ■ interrupts that row — got \(answered)")
+                check(clicked.isEmpty, "12d: a control does not also focus/open")
+            } else {
+                check(false, "12c: no ■ to click")
+            }
+        } else {
+            check(false, "12: no surface")
+        }
+        strip.collapse(); pump(0.3)
 
         // 8: berth migration, including idempotence.
         let fake: [String: [String: Any]] = [

@@ -44,8 +44,11 @@ final class NotchStrip {
         var model = ""          // chip
         var branch = ""
         var metrics = ""        // "82 msgs · 543.7k tok"
-        /// At most two — ✓ / ✕. More than that is a panel, and panels are Max.
+        /// The row's controls — the same set the Agent Pad's rows carry.
         var actions: [(glyph: String, tint: NSColor?, run: () -> Void)] = []
+        /// Shown on every row rather than only the hovered one. A waiting
+        /// permission does this, so ✓/✕ are visible without hunting for them.
+        var actionsAlways = false
     }
 
     /// A publisher. Closures rather than a protocol, matching `PowerRing.Action`
@@ -598,7 +601,7 @@ final class NotchStripView: NSView {
             let wash = NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8)
             c.accent.withAlphaComponent(hoveredRow == i ? 0.3 : 0.15).setFill()
             wash.fill()
-            if !c.actions.isEmpty {
+            if c.actionsAlways {
                 c.accent.setStroke(); wash.lineWidth = 1.5; wash.stroke()
             }
             c.accent.setFill()
@@ -641,10 +644,11 @@ final class NotchStripView: NSView {
                                      .foregroundColor: white.withAlphaComponent(0.85),
                                      .paragraphStyle: p])
             }
-            // ✓ / ✕ on the row itself. This is where answering a permission
-            // lives now: the notch does not open itself to ask.
+            // The row's controls, on the row itself — the notch carries the same
+            // set the pad does. Revealed on hover, except a waiting permission,
+            // whose ✓/✕ stay put so the answer is never hidden.
             var right2 = right
-            if !c.actions.isEmpty {
+            if !c.actions.isEmpty, c.actionsAlways || hoveredRow == i {
                 for (ai, action) in c.actions.enumerated() {
                     let br = NSRect(x: right - CGFloat(c.actions.count - ai) * 34, y: r.minY + 24,
                                     width: 30, height: 24)
@@ -662,6 +666,9 @@ final class NotchStripView: NSView {
                 }
                 right2 = right - CGFloat(c.actions.count) * 34 - 6
             }
+            // The attention ring belongs to the state, not to whether the
+            // buttons happen to be showing.
+
 
             // Line 3 — what it is touching, and what it has spent.
             var metricsX = right2
@@ -806,5 +813,16 @@ final class NotchStripView: NSView {
             return
         }
         onClick?(hit(event))
+    }
+}
+
+
+/// Menu items need an @objc target. A closure box is cheaper than teaching
+/// AppController a selector per item.
+final class NotchMenuTarget: NSObject {
+    private let run: (String) -> Void
+    init(_ run: @escaping (String) -> Void) { self.run = run }
+    @objc func fire(_ sender: NSMenuItem) {
+        run((sender.representedObject as? String) ?? "")
     }
 }

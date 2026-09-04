@@ -64,6 +64,9 @@ final class AppController {
     private let whiteboard = Whiteboard()
     private let agentPad = AgentPad()
     private let notchStrip = NotchStrip()
+    /// NSMenu does not retain item targets; without this the handler is gone
+    /// before the user picks anything.
+    private var notchMenuTarget: NotchMenuTarget?
     private let claudeRegistry = ClaudeSessionRegistry()
     private let hookServer = ClaudeHookServer()
     private lazy var clipboardWatcher = ClipboardHistory(store: store, enabled: config.clipboardHistory)
@@ -972,13 +975,26 @@ final class AppController {
                     metrics: s.msgs > 0 ? "\(s.msgs) msgs · \(Self.compactTokens(s.tokens)) tok" : "")
                 // The whole reason Mid exists: answer the ask without opening
                 // anything. Only a permission gets buttons.
-                if s.state == .needsPermission, !s.isWatchOnly {
-                    card.actions = [
-                        ("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1),
-                         { [weak self] in self?.handleAgentPadAction(s, .accept) }),
-                        ("✕", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1),
-                         { [weak self] in self?.handleAgentPadAction(s, .deny) }),
-                    ]
+                // The same controls the pad's rows carry, so the notch is not a
+                // read-only copy of it. Watch-only agents (Codex, Cursor) have
+                // no injection channel, so they get none — as in the pad.
+                if !s.isWatchOnly {
+                    if s.state == .needsPermission {
+                        card.actionsAlways = true
+                        card.actions = [
+                            ("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1),
+                             { [weak self] in self?.handleAgentPadAction(s, .accept) }),
+                            ("✕", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1),
+                             { [weak self] in self?.handleAgentPadAction(s, .deny) }),
+                        ]
+                    } else {
+                        card.actions = [
+                            ("✱", nil, { [weak self] in self?.popNotchRowMenu(for: s) }),
+                            ("✎", nil, { [weak self] in self?.handleAgentPadAction(s, .prompt) }),
+                            ("⇆", nil, { [weak self] in self?.handleAgentPadAction(s, .cycleMode) }),
+                            ("■", nil, { [weak self] in self?.handleAgentPadAction(s, .interrupt) }),
+                        ]
+                    }
                 }
                 return card
             },
@@ -1027,6 +1043,50 @@ final class AppController {
         }
         applyNotchConfig()
         notchStrip.start()
+    }
+
+    /// The ✱ menu for a notch row. Built here rather than borrowed from the
+    /// pad: the pad's version pops inside its own view and routes through an
+    /// `onAction` closure that only exists while the pad is presented, so a
+    /// notch-only user would get a menu whose items did nothing.
+    private func popNotchRowMenu(for session: ClaudeSession) {
+        let menu = NSMenu()
+        let header = NSMenuItem(title: session.displayTitle, action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(.separator())
+        if !session.isWatchOnly {
+            for (title, alias) in [("Switch to Opus 4.8", "opus"),
+                                   ("Switch to Sonnet 5", "sonnet"),
+                                   ("Switch to Haiku 4.5", "haiku")] {
+                let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                item.representedObject = alias
+                item.target = nil
+                menu.addItem(item)
+                item.isEnabled = true
+                item.action = #selector(NotchMenuTarget.fire(_:))
+            }
+            menu.addItem(.separator())
+            let picker = NSMenuItem(title: "Model & Effort Picker…", action: #selector(NotchMenuTarget.fire(_:)), keyEquivalent: "")
+            picker.representedObject = "picker"
+            menu.addItem(picker)
+            menu.addItem(.separator())
+        }
+        let close = NSMenuItem(title: "Close Chat", action: #selector(NotchMenuTarget.fire(_:)), keyEquivalent: "")
+        close.representedObject = "close"
+        menu.addItem(close)
+
+        let target = NotchMenuTarget { [weak self] key in
+            guard let self else { return }
+            switch key {
+            case "picker": self.handleAgentPadAction(session, .modelPicker)
+            case "close": self.handleAgentPadAction(session, .closeChat)
+            default: self.handleAgentPadAction(session, .setModel(key))
+            }
+        }
+        notchMenuTarget = target   // menus don't retain their target
+        for item in menu.items where item.action != nil { item.target = target }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     /// 50421 → "50.4k" — same shortening the pad's rows use.
