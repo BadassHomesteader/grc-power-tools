@@ -36,6 +36,14 @@ final class NotchStrip {
         var title: String
         var subtitle: String
         var accent: NSColor
+        /// The rest of the Agent Pad's row, so the expanded notch shows what
+        /// the pad shows rather than a thinner summary of it. All optional —
+        /// a source with nothing to put here just gets title + subtitle.
+        var repo = ""
+        var state = ""          // chip
+        var model = ""          // chip
+        var branch = ""
+        var metrics = ""        // "82 msgs · 543.7k tok"
         /// At most two — ✓ / ✕. More than that is a panel, and panels are Max.
         var actions: [(glyph: String, tint: NSColor?, run: () -> Void)] = []
     }
@@ -65,11 +73,13 @@ final class NotchStrip {
     static let midWidthFactor: CGFloat = 2
     static let midCardHeight: CGFloat = 56
     static let midCardHeightWithActions: CGFloat = 74
-    /// The hover list: one line per session, capped. The cap is the thing that
-    /// keeps "show me everything" from quietly becoming a full panel.
-    static let listRow: CGFloat = 24
+    /// The hover list carries the Agent Pad's full row — repo, state, model,
+    /// branch, task, spend — because a one-line summary was not what anyone
+    /// wanted to see when they looked. The ROW CAP is what keeps it an
+    /// expansion of the notch rather than a second copy of the pad.
+    static let listRow: CGFloat = 56
     static let listPad: CGFloat = 8
-    static let maxListRows = 6
+    static let maxListRows = 5
 
     /// Where a mark ends up, in view coordinates. One array, read by BOTH
     /// `draw` and `mouseDown` — the pads recompute this in two places and the
@@ -577,37 +587,104 @@ final class NotchStripView: NSView {
         }
     }
 
-    /// Hover: every session at once, one line each. Rows sit BELOW the housing
-    /// — the band above is plate only, because there is no display behind the
-    /// camera and anything drawn there never reaches the glass.
+    /// A small pill — the row's dense metadata, same language as the pad's.
+    @discardableResult
+    private func chip(_ text: String, at x: CGFloat, y: CGFloat, color: NSColor) -> CGFloat {
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9, weight: .semibold), .foregroundColor: color]
+        let w = (text as NSString).size(withAttributes: attrs).width
+        let r = NSRect(x: x, y: y, width: w + 9, height: 13)
+        color.withAlphaComponent(0.22).setFill()
+        NSBezierPath(roundedRect: r, xRadius: 3.5, yRadius: 3.5).fill()
+        (text as NSString).draw(at: NSPoint(x: x + 4.5, y: y + 1), withAttributes: attrs)
+        return r.maxX + 4
+    }
+
+    /// Hover: the Agent Pad's rows, in the housing's black. Everything sits
+    /// BELOW the housing — the band above is plate only, because there is no
+    /// display behind the camera and anything drawn there never reaches the
+    /// glass.
     private func drawList() {
-        let title: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.white]
-        let sub: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 10),
-            .foregroundColor: NSColor.white.withAlphaComponent(0.55)]
         let p = NSMutableParagraphStyle()
         p.lineBreakMode = .byTruncatingTail
+        let white = NSColor.white
+        let dim = white.withAlphaComponent(0.55)
 
         for i in 0..<visibleRows {
-            let r = rowRect(i)
+            let r = rowRect(i).insetBy(dx: 0, dy: 3)
             let c = cards[i]
-            if hoveredRow == i {
-                NSColor.white.withAlphaComponent(0.08).setFill()
-                NSBezierPath(roundedRect: r.insetBy(dx: -4, dy: 0), xRadius: 5, yRadius: 5).fill()
+            // The row wears its status colour, as the pad's rows do.
+            let wash = NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8)
+            c.accent.withAlphaComponent(hoveredRow == i ? 0.3 : 0.15).setFill()
+            wash.fill()
+            if !c.actions.isEmpty {
+                c.accent.setStroke(); wash.lineWidth = 1.5; wash.stroke()
             }
-            // State dot, then the session, then what it is doing — right-aligned
-            // so the eye can scan states down one column.
             c.accent.setFill()
-            NSBezierPath(ovalIn: NSRect(x: r.minX, y: r.midY - 3.5, width: 7, height: 7)).fill()
+            NSBezierPath(roundedRect: NSRect(x: r.minX + 4, y: r.minY + 6, width: 3, height: r.height - 12),
+                         xRadius: 1.5, yRadius: 1.5).fill()
 
-            let subText = c.subtitle as NSString
-            let subW = min(subText.size(withAttributes: sub).width, r.width * 0.5)
-            subText.draw(in: NSRect(x: r.maxX - subW, y: r.minY + 5, width: subW, height: 14),
-                         withAttributes: sub.merging([.paragraphStyle: p]) { a, _ in a })
-            (c.title as NSString).draw(
-                in: NSRect(x: r.minX + 14, y: r.minY + 4, width: r.width - 14 - subW - 8, height: 15),
-                withAttributes: title.merging([.paragraphStyle: p]) { a, _ in a })
+            let x0 = r.minX + 13, right = r.maxX - 10
+            // Line 1 — identity: repo, what it is doing, what with; branch right.
+            var x = x0
+            let repoAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+                .foregroundColor: white, .paragraphStyle: p]
+            let repo = (c.repo.isEmpty ? c.title : c.repo) as NSString
+            let repoW = min(repo.size(withAttributes: repoAttrs).width, 130)
+            repo.draw(in: NSRect(x: x, y: r.minY + 5, width: repoW, height: 15), withAttributes: repoAttrs)
+            x += repoW + 6
+            if !c.state.isEmpty { x = chip(c.state, at: x, y: r.minY + 6, color: c.accent) }
+            if !c.model.isEmpty {
+                x = chip(c.model, at: x, y: r.minY + 6, color: NotchStripView.modelColor(c.model))
+            }
+            if !c.branch.isEmpty {
+                let bAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 9),
+                    .foregroundColor: white.withAlphaComponent(0.7), .paragraphStyle: p]
+                var text = "⑂ \(c.branch)"
+                let room = right - x - 4
+                if (text as NSString).size(withAttributes: bAttrs).width > room,
+                   let tail = c.branch.split(separator: "/").last { text = "⑂ \(tail)" }
+                let w = min((text as NSString).size(withAttributes: bAttrs).width, room)
+                if w > 26 {
+                    (text as NSString).draw(in: NSRect(x: right - w, y: r.minY + 7, width: w, height: 12),
+                                            withAttributes: bAttrs)
+                }
+            }
+            // Line 2 — the task.
+            if !c.title.isEmpty, !c.repo.isEmpty {
+                (c.title as NSString).draw(
+                    in: NSRect(x: x0, y: r.minY + 22, width: right - x0, height: 15),
+                    withAttributes: [.font: NSFont.systemFont(ofSize: 11),
+                                     .foregroundColor: white.withAlphaComponent(0.85),
+                                     .paragraphStyle: p])
+            }
+            // Line 3 — what it is touching, and what it has spent.
+            var metricsX = right
+            if !c.metrics.isEmpty {
+                let mAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim]
+                let w = (c.metrics as NSString).size(withAttributes: mAttrs).width
+                metricsX = right - w
+                (c.metrics as NSString).draw(at: NSPoint(x: metricsX, y: r.minY + 40), withAttributes: mAttrs)
+            }
+            if !c.subtitle.isEmpty {
+                (c.subtitle as NSString).draw(
+                    in: NSRect(x: x0, y: r.minY + 39, width: max(metricsX - 6 - x0, 20), height: 13),
+                    withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 9.5, weight: .regular),
+                                     .foregroundColor: dim, .paragraphStyle: p])
+            }
+        }
+    }
+
+    /// One tint per model family, matching the pad.
+    static func modelColor(_ model: String) -> NSColor {
+        switch model {
+        case "Opus": return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+        case "Sonnet": return NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1)
+        case "Haiku": return NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)
+        default: return NSColor(srgbRed: 0.6, green: 0.55, blue: 0.75, alpha: 1)
         }
     }
 

@@ -963,10 +963,14 @@ final class AppController {
                 guard let self, i < self.stripSessions.count else { return nil }
                 let s = self.stripSessions[i]
                 var card = NotchStrip.Card(
-                    title: s.displayTitle,
-                    subtitle: s.detail.isEmpty ? "\(s.projectName) · \(s.state.label)"
-                                               : s.detail.replacingOccurrences(of: "\n", with: " "),
-                    accent: AgentPadView.stateColor(s.state))
+                    title: s.label,
+                    subtitle: s.detail.isEmpty ? "" : s.detail.replacingOccurrences(of: "\n", with: " "),
+                    accent: AgentPadView.stateColor(s.state),
+                    repo: s.projectName,
+                    state: s.state.chip,
+                    model: s.model,
+                    branch: s.branch,
+                    metrics: s.msgs > 0 ? "\(s.msgs) msgs · \(Self.compactTokens(s.tokens)) tok" : "")
                 // The whole reason Mid exists: answer the ask without opening
                 // anything. Only a permission gets buttons.
                 if s.state == .needsPermission, !s.isWatchOnly {
@@ -1000,11 +1004,14 @@ final class AppController {
                     .flatMap { p in p.windows.map { (p.name, $0) } }
                     .max { $0.1.usedPercent < $1.1.usedPercent }
                 return NotchStrip.Card(
-                    title: "\(worst)% used",
-                    subtitle: [window?.0, window?.1.label, window?.1.resetDescription]
-                        .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
+                    title: "",
+                    subtitle: window?.1.resetDescription ?? "",
                     accent: worst >= 90 ? NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
-                                        : NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1))
+                                        : NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1),
+                    repo: "Quota",
+                    state: "\(worst)%",
+                    metrics: [window?.0, window?.1.label].compactMap { $0 }
+                        .filter { !$0.isEmpty }.joined(separator: " · "))
             },
             activate: { [weak self] _ in self?.toggleAgentPad() }))
 
@@ -1015,6 +1022,13 @@ final class AppController {
         }
         applyNotchConfig()
         notchStrip.start()
+    }
+
+    /// 50421 → "50.4k" — same shortening the pad's rows use.
+    private static func compactTokens(_ n: Int) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+        if n >= 1_000 { return String(format: "%.1fk", Double(n) / 1_000) }
+        return "\(n)"
     }
 
     private static func worstQuota() -> Int? {
