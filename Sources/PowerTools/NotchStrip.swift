@@ -885,14 +885,13 @@ final class NotchStripView: NSView {
     /// the layer mask (which also clips hosted module content). View is FLIPPED
     /// — y = 0 is the top, at the screen edge.
     private func shellPathMid() -> NSBezierPath {
-        let W = bounds.width, H = bounds.height, nh = notchHeight
-        let span = min(notchSpan, W)
-        let hx0 = (W - span) / 2, hx1 = (W + span) / 2
+        let W = bounds.width, H = bounds.height
         // FLARED TOP: the top edge is wider than the body. It runs the full
         // window width and a convex round ramps IN to each body side, which sit
-        // `flareOut` in from the window edge. The notch is a CLEAN cut, and the
-        // body's own bottom corners are rounded here (the layer mask rounds the
-        // window corners, which the inset body never reaches).
+        // `flareOut` in from the window edge. The top edge is CONTINUOUS across
+        // the housing — NOT carved. The camera cutout has no pixels, so filling
+        // black over it draws nothing there, and the band around it stays the
+        // housing's own black instead of leaking menu-bar/wallpaper grey.
         let fl = NotchStrip.flareOut
         let rC = min(30, fl + 12)          // ramp radius, into the body
         let rB: CGFloat = 18               // body bottom-corner radius
@@ -901,11 +900,7 @@ final class NotchStripView: NSView {
         p.move(to: NSPoint(x: bl, y: H - rB))        // body left edge, above the bottom round
         p.line(to: NSPoint(x: bl, y: rC))            // up to the ramp
         quarter(p, corner: NSPoint(x: bl, y: 0), to: NSPoint(x: 0, y: 0))   // ramp OUT to the flared top-left
-        p.line(to: NSPoint(x: hx0, y: 0))            // top edge to the notch
-        p.line(to: NSPoint(x: hx0, y: nh))           // down the housing wall (clean)
-        p.line(to: NSPoint(x: hx1, y: nh))           // under the housing (clean)
-        p.line(to: NSPoint(x: hx1, y: 0))            // up the housing wall (clean)
-        p.line(to: NSPoint(x: W, y: 0))              // top edge to the flared top-right
+        p.line(to: NSPoint(x: W, y: 0))              // CONTINUOUS top edge across the housing
         quarter(p, corner: NSPoint(x: br, y: 0), to: NSPoint(x: br, y: rC))   // ramp IN to the body
         p.line(to: NSPoint(x: br, y: H - rB))        // down the body right edge
         quarter(p, corner: NSPoint(x: br, y: H), to: NSPoint(x: br - rB, y: H))   // body bottom-right round
