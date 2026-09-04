@@ -1607,6 +1607,20 @@ case "notchstrip-live-test":
         strip.collapse(); pump(0.4)
         check(abs(strip.frame.height - minFrame.height) < 1, "13l: collapse returns to Min")
 
+        // 13m: an ACTION module (Settings) fires its `open` and folds the notch
+        // away instead of hosting a panel — the shape Settings needs, since its
+        // window cannot live under the housing.
+        var settingsOpened = 0
+        strip.registerModule(NotchStrip.Module(id: "settings", glyph: "⚙", title: "Settings",
+                                               height: 0, make: { NSView() },
+                                               open: { settingsOpened += 1 }))
+        strip.openPicker(); pump(0.3)
+        let settingsIdx = strip.moduleCount - 1
+        strip.openModule(settingsIdx); pump(0.4)
+        check(settingsOpened == 1, "13m1: the Settings tile fires its action — got \(settingsOpened)")
+        check(strip.mode == .min, "13m2: …and folds the notch away rather than hosting")
+        check(abs(strip.frame.height - minFrame.height) < 1, "13m3: back at Min height after opening Settings")
+
         // 14: clicking OFF the notch collapses it, the way a menu closes — the
         // ✕ is a way out, not the only one. The monitors themselves need a
         // running app to deliver events, so this drives the decision behind

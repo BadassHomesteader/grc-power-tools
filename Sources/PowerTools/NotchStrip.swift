@@ -121,6 +121,11 @@ final class NotchStrip {
         /// the notch stays a notch.
         let height: CGFloat
         let make: () -> NSView
+        /// An ACTION tile, not a hosted panel: Settings is an 860pt window that
+        /// cannot live under the housing, so its tile opens that window and
+        /// folds the notch away instead of hosting a view. When set, `make` is
+        /// never called and `height` is ignored.
+        var open: (() -> Void)? = nil
     }
 
     /// Ceiling on a module's content, the same discipline the list has: the
@@ -496,6 +501,13 @@ final class NotchStrip {
     func openPicker() { mode = .picker; pinned = true; refresh() }
     func openModule(_ i: Int) {
         guard i < modules.count else { return }
+        // An action tile (Settings) fires and folds the notch away — it opens
+        // its own window elsewhere rather than hosting under the housing.
+        if let open = modules[i].open {
+            collapse()
+            open()
+            return
+        }
         moduleView?.removeFromSuperview(); moduleView = nil
         mode = .module(index: i)
         pinned = true

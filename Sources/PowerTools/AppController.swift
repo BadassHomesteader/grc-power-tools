@@ -1082,6 +1082,15 @@ final class AppController {
         for (id, module) in all where config.notchModules.contains(id) {
             notchStrip.registerModule(module)
         }
+        // Settings rides LAST and is not gated — a notch that is on screen at
+        // all should always offer a way into its own settings. An action tile,
+        // not a hosted module: it opens the real 860pt window and folds the
+        // notch away. Routed through the responder chain to AppDelegate, the
+        // same path the menu-bar "Settings…" item takes.
+        notchStrip.registerModule(NotchStrip.Module(
+            id: "settings", glyph: "⚙", title: "Settings", height: 0,
+            make: { NSView() },
+            open: { NSApp.sendAction(#selector(AppDelegate.showSettings(_:)), to: nil, from: nil) }))
     }
 
     /// The ✱ menu for a notch row. Built here rather than borrowed from the

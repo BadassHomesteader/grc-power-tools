@@ -1202,8 +1202,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         quotaNote.textColor = .secondaryLabelColor
         quotaNote.preferredMaxLayoutWidth = 500
         let modNote = NSTextField(wrappingLabelWithString:
-            "The ⋯ mark at the end of the strip opens the module row: Usage, Hotkeys, "
-            + "Snap, Clock, Weather and Ask.")
+            "Hover the four-square mark at the end of the strip to open the module row: "
+            + "Usage, Hotkeys, Snap, Clock, Weather, Ask — and a ⚙ Settings tile that "
+            + "opens this window.")
         modNote.font = .systemFont(ofSize: 11)
         modNote.textColor = .secondaryLabelColor
         modNote.preferredMaxLayoutWidth = 500
