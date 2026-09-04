@@ -28,6 +28,9 @@ final class NotchStrip {
         /// Recede it — stale, or a snapshot too old to trust.
         var dim = false
         var tooltip = ""
+        /// Four small squares instead of a dot: the module mark is a nav
+        /// glyph, not another status light, and should not read as one.
+        var grid = false
     }
 
     /// The Mid state, and the whole reason Mid exists: a permission ask is
@@ -100,7 +103,7 @@ final class NotchStrip {
     enum Mode: Equatable {
         case min
         case list(source: Int)
-        /// The module row — what the ⋯ mark opens.
+        /// The module row — what the grid mark opens.
         case picker
         /// One module filling the space below the housing.
         case module(index: Int)
@@ -137,7 +140,14 @@ final class NotchStrip {
     private var moduleView: NSView?
     private var timer: Timer?
     private(set) var mode: Mode = .min {
-        didSet { if oldValue != mode { syncClickAway() } }
+        didSet {
+            guard oldValue != mode else { return }
+            syncClickAway()
+            // Transitions are user actions, so this is a breadcrumb trail, not
+            // a firehose — it is what makes "the notch did X on its own"
+            // diagnosable from the log instead of by guessing.
+            onLog?("notch: \(oldValue) → \(mode)")
+        }
     }
     /// Global + local mouse monitors, armed only while the notch is open.
     private var clickAway: [Any] = []
@@ -159,7 +169,7 @@ final class NotchStrip {
 
     func registerModule(_ module: Module) { modules.append(module) }
 
-    /// The ⋯ mark rides at the end of the strip as its own pseudo-source, so it
+    /// The grid mark (four squares) rides at the end of the strip as its own pseudo-source, so it
     /// gets the existing layout, hit-testing and cutout safety for free.
     private var moduleMarkGroup: Int? { modules.isEmpty ? nil : activeSources.count }
 
@@ -207,7 +217,7 @@ final class NotchStrip {
     private func groups() -> [[Mark]] {
         var out = sourceGroups()
         if !modules.isEmpty {
-            out.append([Mark(color: NSColor(white: 0.75, alpha: 1), dim: true, tooltip: "Modules")])
+            out.append([Mark(color: NSColor(white: 0.75, alpha: 1), dim: true, tooltip: "Modules", grid: true)])
         }
         return out
     }
@@ -232,7 +242,7 @@ final class NotchStrip {
         // No empty state, deliberately: zero marks means zero pixels. That is
         // what makes "on by default" safe — a quiet machine shows nothing at
         // all rather than a placeholder dot sitting in the menu bar forever.
-        // The ⋯ mark alone is not a reason to occupy the menu bar: an app with
+        // The grid mark alone is not a reason to occupy the menu bar: an app with
         // nothing to say still shows nothing.
         guard let screen = notchScreen, sourceGroups().contains(where: { !$0.isEmpty }) else {
             teardown()
@@ -311,7 +321,7 @@ final class NotchStrip {
         if panel != nil { return }
         let v = NotchStripView()
         v.onHover = { [weak self] hit in self?.hover(hit) }
-        v.onExit = { [weak self] in self?.hoverOut() }
+        v.onExit = { [weak self] genuinelyOutside in self?.hoverOut(outside: genuinelyOutside) }
         v.onClick = { [weak self] hit in self?.click(hit) }
         // -1 closes; anything else switches module.
         v.onModuleTab = { [weak self] i in
@@ -379,13 +389,21 @@ final class NotchStrip {
     /// the wrong answer to "what have I got running?".
     private func hover(_ hit: Placed?) {
         guard let hit else { return }
-        // The ⋯ mark opens on CLICK, not on hover — a module row appearing
-        // because the cursor crossed the menu bar would be maddening.
-        if hit.source == moduleMarkGroup { return }
-        guard hit.source < activeSources.count else { return }
-        if case .list(hit.source) = mode { return }   // already showing it
         if case .picker = mode { return }
         if case .module = mode { return }
+        // The grid mark opens the module row on hover, the way a dot opens its
+        // list — and, like the list, UNPINNED: leave and it folds back. A tile
+        // click is what keeps it (the module opens pinned). Crossing the menu
+        // bar over it therefore shows the row only for as long as the cursor
+        // is on it.
+        if hit.source == moduleMarkGroup {
+            mode = .picker
+            refresh()
+            pinned = false
+            return
+        }
+        guard hit.source < activeSources.count else { return }
+        if case .list(hit.source) = mode { return }   // already showing it
         mode = .list(source: hit.source)
         refresh()
         pinned = false
@@ -414,8 +432,17 @@ final class NotchStrip {
         }
     }
 
-    /// The cursor left. A pinned list stays; a hovered one goes.
-    private func hoverOut() {
+    /// The cursor left the WHOLE surface — a pinned list stays, a hovered one
+    /// goes. `outside` is the load-bearing word: opening the row resizes the
+    /// window, every resize rebuilds the tracking area, and removing a tracking
+    /// area under the cursor fires a spurious `mouseExited` whose location is
+    /// still inside the bounds. Collapsing on that produced an open→resize→
+    /// exit→collapse→resize→enter→open flap that never let a hover-opened row
+    /// stand. So only a genuine leave (cursor truly off the window) collapses;
+    /// moving DOWN onto a tile keeps it open, exactly like a menu.
+    private func hoverOut(outside: Bool) {
+        guard outside else { return }
+        if mode != .min { onLog?("notch: cursor left\(pinned ? " (pinned, stays)" : "")") }
         guard !pinned else { return }
         collapse()
     }
@@ -514,7 +541,9 @@ final class NotchStrip {
 /// the screen — which is also the top of the housing.
 final class NotchStripView: NSView {
     var onHover: ((NotchStrip.Placed?) -> Void)?
-    var onExit: (() -> Void)?
+    /// Bool: the cursor is genuinely off the window, not a tracking-area
+    /// rebuild artifact whose exit location is still inside the bounds.
+    var onExit: ((Bool) -> Void)?
     var onClick: ((NotchStrip.Placed?) -> Void)?
     /// Tab index, or -1 for the close button.
     var onModuleTab: ((Int) -> Void)?
@@ -775,9 +804,23 @@ final class NotchStripView: NSView {
         for (idx, p) in layout.enumerated() {
             guard p.source < groups.count, p.mark < groups[p.source].count else { continue }
             let mark = groups[p.source][p.mark]
-                let alpha: CGFloat = mark.dim ? 0.35 : 0.9
+                // The grid mark is dim like the overflow dot but a notch
+                // brighter, or four 4pt squares smear into a smudge.
+                let alpha: CGFloat = mark.dim ? (mark.grid ? 0.5 : 0.35) : 0.9
                 let lit = hovered == idx
                 mark.color.withAlphaComponent(lit ? 1 : alpha).setFill()
+                if mark.grid {
+                    // Four squares in the dot's own box: 4pt each, 1pt apart,
+                    // so the layout, hit-testing and cutout math see a 9pt mark.
+                    let s = (p.rect.width - 1) / 2
+                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let r = NSRect(x: p.rect.minX + CGFloat(dx) * (s + 1),
+                                       y: p.rect.minY + CGFloat(dy) * (s + 1),
+                                       width: s, height: s)
+                        NSBezierPath(roundedRect: r, xRadius: 1, yRadius: 1).fill()
+                    }
+                    continue
+                }
                 let path = NSBezierPath(roundedRect: p.rect,
                                         xRadius: p.rect.width / 2, yRadius: p.rect.width / 2)
                 path.fill()
@@ -1070,7 +1113,11 @@ final class NotchStripView: NSView {
     override func mouseExited(with event: NSEvent) {
         hovered = nil
         needsDisplay = true
-        onExit?()
+        // A resize rebuilds the tracking area and fires an exit whose location
+        // is still inside us — that is not a leave. A real leave lands outside
+        // the bounds. Only the latter should fold the row away.
+        let p = convert(event.locationInWindow, from: nil)
+        onExit?(!bounds.contains(p))
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -1109,7 +1156,7 @@ final class NotchStripView: NSView {
             if let card, let i = actionRects.firstIndex(where: { $0.contains(p) }),
                i < card.actions.count {
                 card.actions[i].run()
-                onExit?()
+                onExit?(true)   // acted on the card — close, as before
                 return
             }
             return

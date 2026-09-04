@@ -1520,6 +1520,51 @@ case "notchstrip-live-test":
         let pickerBad = strip.contentRectsInScreen.filter { $0.intersects(field.notch) }
         check(pickerBad.isEmpty, "13b: the ⋯ mark is clear of the housing")
 
+        // 13b1-2: the grid mark opens the module row on HOVER, unpinned — leave
+        // and it folds back; only a tile click (13e) keeps it.
+        if let (panel, view) = strip.testSurface, let grid = withPicker.first(where: { $0.source == 1 }) {
+            let move = NSEvent.mouseEvent(with: .mouseMoved,
+                                          location: view.convert(NSPoint(x: grid.rect.midX, y: grid.rect.midY), to: nil),
+                                          modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: panel.windowNumber, context: nil,
+                                          eventNumber: 0, clickCount: 0, pressure: 0)!
+            view.mouseMoved(with: move); pump(0.4)
+            check(strip.mode == .picker, "13b1: hovering the grid mark opens the module row")
+            check(strip.frame.height > field.notch.height, "13b2: …and the strip grew (h \(Int(strip.frame.height)))")
+            // 13b3a: an exit whose location is still INSIDE the bounds is a
+            // resize/tracking-rebuild artifact, not a leave — the row must
+            // stand, or hover-open flaps open→closed forever.
+            let insideExit = NSEvent.mouseEvent(with: .mouseMoved,
+                                                location: view.convert(NSPoint(x: grid.rect.midX, y: grid.rect.midY), to: nil),
+                                                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: panel.windowNumber, context: nil,
+                                                eventNumber: 0, clickCount: 0, pressure: 0)!
+            view.mouseExited(with: insideExit); pump(0.3)
+            check(strip.mode == .picker, "13b3a: an exit still inside the bounds does NOT collapse (no flap)")
+            // 13b3b: a genuine leave — location off the window — folds it back.
+            let outsideExit = NSEvent.mouseEvent(with: .mouseMoved,
+                                                 location: view.convert(NSPoint(x: -50, y: -50), to: nil),
+                                                 modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                 windowNumber: panel.windowNumber, context: nil,
+                                                 eventNumber: 0, clickCount: 0, pressure: 0)!
+            view.mouseExited(with: outsideExit); pump(0.4)
+            check(strip.mode == .min, "13b3: leaving folds a hover-opened row back to Min")
+            // 13b4: a CLICK on the grid mark from Min opens the row PINNED —
+            // the one path the live driver takes and the harness never did.
+            let down = NSEvent.mouseEvent(with: .leftMouseDown,
+                                          location: view.convert(NSPoint(x: grid.rect.midX, y: grid.rect.midY), to: nil),
+                                          modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: panel.windowNumber, context: nil,
+                                          eventNumber: 0, clickCount: 1, pressure: 1)!
+            view.mouseDown(with: down); pump(0.4)
+            check(strip.mode == .picker, "13b4: clicking the grid mark opens the module row")
+            view.mouseExited(with: move); pump(0.4)
+            check(strip.mode == .picker, "13b5: …pinned — leaving does not fold a clicked row")
+            strip.collapse(); pump(0.3)
+        } else {
+            check(false, "13b1: no grid mark to hover")
+        }
+
         strip.openPicker(); pump(0.4)
         check(strip.frame.height > field.notch.height, "13c: ⋯ opens the module row")
         check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
