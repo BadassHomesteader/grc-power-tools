@@ -389,8 +389,17 @@ struct Config: Codable {
     var notchModules: [String] = ["usage", "hotkeys", "snap", "clock", "weather", "chat"]
     /// World clock zones, IANA identifiers.
     var notchClockZones: [String] = ["America/New_York", "Europe/London", "Asia/Tokyo"]
-    /// Weather: a place typed in Settings, geocoded once to a lat/lon so the
-    /// module needs no location permission and no API key.
+    /// Weather: places typed in Settings, each geocoded once to a lat/lon so
+    /// the module needs no location permission and no API key. Several are
+    /// allowed — the module stacks them.
+    struct WeatherPlace: Codable, Equatable {
+        var name: String
+        var lat: Double
+        var lon: Double
+    }
+    var weatherPlaces: [WeatherPlace] = []
+    /// Legacy single-place fields, kept so an older config still loads; folded
+    /// into `weatherPlaces` in `init(from:)` and no longer read anywhere else.
     var weatherPlace: String = ""
     var weatherLat: Double = 0
     var weatherLon: Double = 0
@@ -486,7 +495,7 @@ struct Config: Codable {
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case showInCaptures
-        case notchModules, notchClockZones, weatherPlace, weatherLat, weatherLon, weatherFahrenheit
+        case notchModules, notchClockZones, weatherPlaces, weatherPlace, weatherLat, weatherLon, weatherFahrenheit
         case powerRing, powerRingSlots
         case whiteboard
         case pronunciations
@@ -569,10 +578,16 @@ struct Config: Codable {
         showInCaptures = field(.showInCaptures, true)
         notchModules = field(.notchModules, ["usage", "hotkeys", "snap", "clock", "weather", "chat"])
         notchClockZones = field(.notchClockZones, ["America/New_York", "Europe/London", "Asia/Tokyo"])
+        weatherPlaces = field(.weatherPlaces, [])
         weatherPlace = field(.weatherPlace, "")
         weatherLat = field(.weatherLat, 0)
         weatherLon = field(.weatherLon, 0)
         weatherFahrenheit = field(.weatherFahrenheit, true)
+        // An older config carried a single place — fold it into the list once
+        // so multi-place users and legacy users converge on `weatherPlaces`.
+        if weatherPlaces.isEmpty, abs(weatherLat) + abs(weatherLon) > 0 {
+            weatherPlaces = [WeatherPlace(name: weatherPlace, lat: weatherLat, lon: weatherLon)]
+        }
         powerRing = field(.powerRing, true)
         powerRingSlots = field(.powerRingSlots, PowerRingCatalog.defaultSlots)
         whiteboard = field(.whiteboard, true)

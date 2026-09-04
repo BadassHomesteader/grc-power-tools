@@ -1068,10 +1068,8 @@ final class AppController {
             ("clock", .init(id: "clock", glyph: "◷", title: "Clock", height: 150) { [weak self] in
                 ClockModuleView(zones: self?.config.notchClockZones ?? [])
             }),
-            ("weather", .init(id: "weather", glyph: "☀", title: "Weather", height: 170) { [weak self] in
-                WeatherModuleView(place: self?.config.weatherPlace ?? "",
-                                  lat: self?.config.weatherLat ?? 0,
-                                  lon: self?.config.weatherLon ?? 0,
+            ("weather", .init(id: "weather", glyph: "☀", title: "Weather", height: 200) { [weak self] in
+                WeatherModuleView(places: self?.config.weatherPlaces ?? [],
                                   fahrenheit: self?.config.weatherFahrenheit ?? true)
             }),
             ("chat", .init(id: "chat", glyph: "✦", title: "Ask", height: 200) { [weak self] in

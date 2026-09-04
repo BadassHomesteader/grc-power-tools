@@ -204,7 +204,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         captureCheck.action = #selector(captureToggled)
         weatherField.target = self
         weatherField.action = #selector(weatherPlaceEntered)
-        weatherField.placeholderString = "City — press Return to look it up"
+        weatherField.placeholderString = "Cities, comma-separated — press Return to look them up"
         clockZonesField.target = self
         clockZonesField.action = #selector(clockZonesEntered)
         clockZonesField.placeholderString = "America/New_York, Europe/London, Asia/Tokyo"
@@ -1235,23 +1235,42 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     @objc private func weatherPlaceEntered() {
-        let typed = weatherField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty else {
+        // Comma-separated cities, like the world-clock field. Each is geocoded
+        // once; results keep the typed order even though the lookups race.
+        let typedCities = weatherField.stringValue
+            .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !typedCities.isEmpty else {
+            config.weatherPlaces = []
             config.weatherPlace = ""; config.weatherLat = 0; config.weatherLon = 0
-            weatherStatus.stringValue = "No city set — the Weather module will say so."
+            weatherStatus.stringValue = "No cities set — the Weather module will say so."
             config.save(); onConfigChange(config)
             return
         }
-        weatherStatus.stringValue = "Looking up \(typed)…"
-        WeatherReader.geocode(typed) { [weak self] name, lat, lon in
-            guard let self else { return }
-            self.config.weatherPlace = name
-            self.config.weatherLat = lat
-            self.config.weatherLon = lon
-            self.weatherField.stringValue = name
-            self.weatherStatus.stringValue = String(format: "%@ · %.2f, %.2f", name, lat, lon)
-            self.config.save()
-            self.onConfigChange(self.config)
+        weatherStatus.stringValue = "Looking up \(typedCities.count) "
+            + (typedCities.count == 1 ? "city…" : "cities…")
+        var resolved = [Config.WeatherPlace?](repeating: nil, count: typedCities.count)
+        var remaining = typedCities.count
+        for (i, city) in typedCities.enumerated() {
+            WeatherReader.geocode(city) { [weak self] name, lat, lon in
+                guard let self else { return }
+                resolved[i] = Config.WeatherPlace(name: name, lat: lat, lon: lon)
+                remaining -= 1
+                guard remaining == 0 else { return }
+                let places = resolved.compactMap { $0 }
+                self.config.weatherPlaces = places
+                // Keep the legacy single fields pointing at the first city so an
+                // older build reading this config still shows something.
+                self.config.weatherPlace = places.first?.name ?? ""
+                self.config.weatherLat = places.first?.lat ?? 0
+                self.config.weatherLon = places.first?.lon ?? 0
+                self.weatherField.stringValue = places.map(\.name).joined(separator: ", ")
+                self.weatherStatus.stringValue = places.isEmpty
+                    ? "Couldn't find those cities."
+                    : "\(places.count) " + (places.count == 1 ? "city" : "cities") + " set."
+                self.config.save()
+                self.onConfigChange(self.config)
+            }
         }
     }
 
@@ -1450,12 +1469,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         notchStripCheck.state = config.notchStrip ? .on : .off
         notchAgentsCheck.state = config.notchAgents ? .on : .off
         notchQuotaCheck.state = config.notchQuota ? .on : .off
-        weatherField.stringValue = config.weatherPlace
+        weatherField.stringValue = config.weatherPlaces.map(\.name).joined(separator: ", ")
         weatherUnitCheck.state = config.weatherFahrenheit ? .on : .off
         clockZonesField.stringValue = config.notchClockZones.joined(separator: ", ")
-        weatherStatus.stringValue = config.weatherLat == 0 && config.weatherLon == 0
-            ? "No city set — the Weather module will say so."
-            : String(format: "%@ · %.2f, %.2f", config.weatherPlace, config.weatherLat, config.weatherLon)
+        weatherStatus.stringValue = config.weatherPlaces.isEmpty
+            ? "No cities set — the Weather module will say so."
+            : "\(config.weatherPlaces.count) "
+                + (config.weatherPlaces.count == 1 ? "city" : "cities") + " set."
         agentCodexCheck.state = config.agentPadCodex ? .on : .off
         agentCursorCheck.state = config.agentPadCursor ? .on : .off
         refreshHooksStatus()
