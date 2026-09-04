@@ -288,6 +288,111 @@ final class SnapModuleView: NotchModuleView {
     }
 }
 
+// MARK: - Calendar
+
+/// A month at a glance, MacNotch-style: the grid on the left with today ringed,
+/// ‹ › to page months, and the date spelled out on the right. No EventKit and
+/// no Calendar permission prompt — this is the glance, not the agenda.
+final class CalendarModuleView: NotchModuleView {
+    private var offset = 0          // months from the current one
+    private var prevRect = NSRect.zero, nextRect = NSRect.zero
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        tick(every: 60)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private var cal: Calendar { Calendar.current }
+    private var shown: Date {
+        cal.date(byAdding: .month, value: offset, to: cal.startOfDay(for: Date())) ?? Date()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let today = cal.startOfDay(for: Date())
+        let month = shown
+        let comps = cal.dateComponents([.year, .month], from: month)
+        let first = cal.date(from: comps) ?? month
+        let days = cal.range(of: .day, in: .month, for: first)?.count ?? 30
+        let lead = (cal.component(.weekday, from: first) - cal.firstWeekday + 7) % 7
+
+        // Month title with paging arrows.
+        let title = DateFormatter()
+        title.setLocalizedDateFormatFromTemplate("MMMM yyyy")
+        let left: CGFloat = 16
+        (title.string(from: first) as NSString).draw(at: NSPoint(x: left, y: 8), withAttributes: NotchTheme.title())
+        let gridW: CGFloat = 7 * 40
+        prevRect = NSRect(x: left + gridW - 52, y: 6, width: 22, height: 18)
+        nextRect = NSRect(x: left + gridW - 26, y: 6, width: 22, height: 18)
+        for (r, g) in [(prevRect, "‹"), (nextRect, "›")] {
+            NotchTheme.faint.setFill()
+            NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4).fill()
+            let a: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14, weight: .medium),
+                                                    .foregroundColor: NotchTheme.fg.withAlphaComponent(0.8)]
+            let sz = (g as NSString).size(withAttributes: a)
+            (g as NSString).draw(at: NSPoint(x: r.midX - sz.width / 2, y: r.midY - sz.height / 2 - 1), withAttributes: a)
+        }
+
+        // Weekday header, honouring the locale's first weekday.
+        let symbols = cal.veryShortStandaloneWeekdaySymbols
+        for c in 0..<7 {
+            let s = symbols[(cal.firstWeekday - 1 + c) % 7] as NSString
+            let x = left + CGFloat(c) * 40 + 20 - s.size(withAttributes: NotchTheme.small(10)).width / 2
+            s.draw(at: NSPoint(x: x, y: 34), withAttributes: NotchTheme.small(10))
+        }
+
+        // Six rows of days; today ringed, other months' days blank.
+        for i in 0..<42 {
+            let day = i - lead + 1
+            guard day >= 1, day <= days else { continue }
+            let col = i % 7, row = i / 7
+            let cx = left + CGFloat(col) * 40 + 20, cy: CGFloat = 52 + CGFloat(row) * 26 + 12
+            let date = cal.date(byAdding: .day, value: day - 1, to: first) ?? first
+            let isToday = cal.isDate(date, inSameDayAs: today)
+            let weekend = cal.isDateInWeekend(date)
+            if isToday {
+                NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1).setFill()
+                NSBezierPath(ovalIn: NSRect(x: cx - 12, y: cy - 12, width: 24, height: 24)).fill()
+            }
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 12, weight: isToday ? .bold : .regular),
+                .foregroundColor: isToday ? NSColor.white : (weekend ? NotchTheme.dim : NotchTheme.fg.withAlphaComponent(0.85))]
+            let s = "\(day)" as NSString
+            let sz = s.size(withAttributes: attrs)
+            s.draw(at: NSPoint(x: cx - sz.width / 2, y: cy - sz.height / 2), withAttributes: attrs)
+        }
+
+        // The right column: today, spelled out.
+        let rx = left + gridW + 40
+        let dow = DateFormatter(); dow.setLocalizedDateFormatFromTemplate("EEEE")
+        let dm = DateFormatter(); dm.setLocalizedDateFormatFromTemplate("MMMM d")
+        (dow.string(from: today) as NSString).draw(at: NSPoint(x: rx, y: 44), withAttributes: NotchTheme.small(13))
+        ("\(cal.component(.day, from: today))" as NSString)
+            .draw(at: NSPoint(x: rx, y: 60), withAttributes: [.font: NSFont.systemFont(ofSize: 56, weight: .semibold),
+                                                              .foregroundColor: NotchTheme.fg])
+        (dm.string(from: today) as NSString).draw(at: NSPoint(x: rx, y: 128), withAttributes: NotchTheme.body(13))
+        let week = cal.component(.weekOfYear, from: today)
+        let doy = cal.ordinality(of: .day, in: .year, for: today) ?? 0
+        let total = cal.range(of: .day, in: .year, for: today)?.count ?? 365
+        ("Week \(week)  ·  Day \(doy) of \(total)  ·  \(total - doy) left" as NSString)
+            .draw(at: NSPoint(x: rx, y: 150), withAttributes: NotchTheme.small(11))
+        if offset != 0 {
+            let back = "Back to today" as NSString
+            back.draw(at: NSPoint(x: rx, y: 176), withAttributes: [.font: NSFont.systemFont(ofSize: 11),
+                                                                  .foregroundColor: NSColor(srgbRed: 0.55, green: 0.6, blue: 1, alpha: 1)])
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if prevRect.insetBy(dx: -4, dy: -4).contains(p) { offset -= 1 }
+        else if nextRect.insetBy(dx: -4, dy: -4).contains(p) { offset += 1 }
+        else if offset != 0, p.x > 16 + 7 * 40 { offset = 0 }   // the right column: back to today
+        else { return }
+        needsDisplay = true
+    }
+}
+
 // MARK: - Weather
 
 /// Conditions from Open-Meteo — no API key, no account, and no CoreLocation

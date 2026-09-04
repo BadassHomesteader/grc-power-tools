@@ -387,7 +387,7 @@ struct Config: Codable {
     /// Notch modules — panels the notch hosts, as opposed to sources that
     /// publish into it. Each can be switched off; the ⋯ mark disappears when
     /// none are on.
-    var notchModules: [String] = ["usage", "hotkeys", "snap", "clock", "weather", "chat"]
+    var notchModules: [String] = ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"]
     /// World clock zones, IANA identifiers.
     var notchClockZones: [String] = ["America/New_York", "Europe/London", "Asia/Tokyo"]
     /// Weather: places typed in Settings, each geocoded once to a lat/lon so
@@ -578,7 +578,7 @@ struct Config: Codable {
         notchQuotaAt = field(.notchQuotaAt, 60)
         notchStripMigrated = field(.notchStripMigrated, false)
         showInCaptures = field(.showInCaptures, true)
-        notchModules = field(.notchModules, ["usage", "hotkeys", "snap", "clock", "weather", "chat"])
+        notchModules = field(.notchModules, ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"])
         notchClockZones = field(.notchClockZones, ["America/New_York", "Europe/London", "Asia/Tokyo"])
         weatherPlaces = field(.weatherPlaces, [])
         weatherPlace = field(.weatherPlace, "")

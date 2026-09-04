@@ -171,6 +171,11 @@ final class NotchStrip {
         /// folds the notch away instead of hosting a view. When set, `make` is
         /// never called and `height` is ignored.
         var open: (() -> Void)? = nil
+        /// A LIST tile: hovering or clicking it shows this source's session list
+        /// (the agent list) instead of hosting a view — the Agent Pad tile shows
+        /// the agents right there in the notch. When the source is switched
+        /// off, the tile falls back to `open` (toggling the floating pad).
+        var list: String? = nil
     }
 
     /// Ceiling on a module's content, the same discipline the list has: the
@@ -606,8 +611,25 @@ final class NotchStrip {
     /// it so it stays. Default pinned so the test hooks and click paths keep
     /// their old behavior; the hover callers pass `pinned: false`.
     func openPicker(pinned pin: Bool = true) { mode = .picker; pinned = pin; refresh() }
+    /// The source index a list tile points at, if that source is switched on.
+    private func listSource(of module: Module) -> Int? {
+        guard let sid = module.list else { return nil }
+        return activeSources.firstIndex { $0.id == sid }
+    }
+
+    /// Show a source's list from a tile — the same shape a dot hover opens,
+    /// reached from the module row. Tears down any hosted module first.
+    private func showList(_ si: Int, pinned pin: Bool) {
+        moduleView?.removeFromSuperview(); moduleView = nil
+        mode = .list(source: si)
+        pinned = pin
+        refresh()
+    }
+
     func openModule(_ i: Int, pinned pin: Bool = true) {
         guard i < modules.count else { return }
+        // A list tile (Agent Pad) shows the agents in the notch itself.
+        if let si = listSource(of: modules[i]) { showList(si, pinned: pin); return }
         // An action tile (Settings) fires and folds the notch away — it opens
         // its own window elsewhere rather than hosting under the housing.
         if let open = modules[i].open {
@@ -648,6 +670,18 @@ final class NotchStrip {
     /// so brushing across the row doesn't thrash. Already-open module: no-op.
     private func hoverModule(_ i: Int?) {
         guard let i, i >= 0, i < modules.count else { cancelHover(); return }
+        // A list tile opens its source's list on hover, unpinned, like a dot.
+        if let si = listSource(of: modules[i]) {
+            if case .list(si) = mode { cancelHover(); return }
+            armHover(0.15) { [weak self] in
+                guard let self else { return }
+                switch self.mode {
+                case .picker, .module: self.showList(si, pinned: false)
+                default: break
+                }
+            }
+            return
+        }
         // Action tiles (Settings opens an 860pt window and folds the notch
         // away) need a deliberate CLICK — a hover must never launch them.
         guard modules[i].open == nil else { cancelHover(); return }

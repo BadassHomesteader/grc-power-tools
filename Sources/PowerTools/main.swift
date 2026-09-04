@@ -1202,6 +1202,22 @@ case "dockoverlay-preview":
         }
     }
 
+case "notchcalendar-preview":
+    // Offscreen render of the Calendar module (month grid, today ringed, the
+    // date spelled out) on the housing black at the notch's body width.
+    let out = args.count >= 2 ? args[1] : "notchcalendar-preview.png"
+    MainActor.assumeIsolated {
+        let host = NotchPreviewPlate(frame: NSRect(x: 0, y: 0, width: 660, height: 216))
+        let v = CalendarModuleView(frame: host.bounds)
+        host.addSubview(v)
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out) — calendar 660x216")
+        }
+    }
+
 case "notchweather-preview":
     // Offscreen render of the MacNotch-style weather module with a planted
     // reading (no network), on the housing black, at the notch's body width.
@@ -1324,7 +1340,7 @@ case "notchstrip-preview":
         case "picker":
             // The module row as the app registers it, pads and Settings included.
             let tiles: [(glyph: String, title: String)] = [
-                ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("☀", "Weather"),
+                ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("▤", "Calendar"), ("☀", "Weather"),
                 ("✦", "Ask"), ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⚙", "Settings")]
             v.configure(groups: [marks], cards: [], listMode: false, field: field, picker: tiles)
         case "card":
@@ -1829,6 +1845,19 @@ case "notchstrip-live-test":
             let g = view.listGridRect
             moveTo(NSPoint(x: g.midX, y: g.midY)); pump(0.35)
             check(strip.mode == .picker, "15b: the in-list launcher opens the module row on hover")
+            // 15c: a LIST tile (Agent Pad) shows the agents list on hover, unpinned.
+            strip.collapse(); pump(0.3)
+            strip.registerModule(NotchStrip.Module(id: "agentpad", glyph: "◫", title: "Agent Pad", height: 0,
+                                                   make: { NSView() }, list: "agents"))
+            agentCount = 3
+            strip.apply(master: true, enabled: ["agents"]); pump(0.3)
+            strip.openPicker(); pump(0.3)
+            let lt = view.tileRect(strip.moduleCount - 1)
+            moveTo(NSPoint(x: lt.midX, y: lt.midY)); pump(0.35)
+            check({ if case .list(0) = strip.mode { return true } else { return false } }(),
+                  "15c: hovering the Agent Pad tile shows the agents list in the notch")
+            view.mouseExited(with: outEv); pump(0.4)
+            check(strip.mode == .min, "15c2: a hover-opened list folds back on leave")
         } else {
             check(false, "15a: no surface")
         }

@@ -1153,6 +1153,9 @@ final class AppController {
             ("clock", .init(id: "clock", glyph: "◷", title: "Clock", height: 150) { [weak self] in
                 ClockModuleView(zones: self?.config.notchClockZones ?? [])
             }),
+            ("calendar", .init(id: "calendar", glyph: "▤", title: "Calendar", height: 216) {
+                CalendarModuleView(frame: .zero)
+            }),
             ("weather", .init(id: "weather", glyph: "☀", title: "Weather", height: 270) { [weak self] in
                 WeatherModuleView(places: self?.config.weatherPlaces ?? [],
                                   fahrenheit: self?.config.weatherFahrenheit ?? true)
@@ -1165,14 +1168,17 @@ final class AppController {
         for (id, module) in all where config.notchModules.contains(id) {
             notchStrip.registerModule(module)
         }
-        // The two pads as ACTION tiles: they are floating panels with their own
-        // docks, so a tile toggles the pad and folds the notch — the same thing
-        // hold+J / hold+B and the menu bar do. Not gated: a notch on screen
-        // should always be able to summon them.
+        // Agent Pad is a LIST tile: hovering it shows the agent list right in
+        // the notch (the same view a session dot opens); only when the agents
+        // source is switched off does it fall back to toggling the floating
+        // pad. Macro Pad is an ACTION tile: a floating panel with its own dock,
+        // so the tile toggles it and folds the notch, as hold+B does. Neither
+        // is gated: a notch on screen should always be able to reach them.
         notchStrip.registerModule(NotchStrip.Module(
             id: "agentpad", glyph: "◫", title: "Agent Pad", height: 0,
             make: { NSView() },
-            open: { [weak self] in self?.toggleAgentPad() }))
+            open: { [weak self] in self?.toggleAgentPad() },
+            list: "agents"))
         notchStrip.registerModule(NotchStrip.Module(
             id: "macropad", glyph: "⊞", title: "Macro Pad", height: 0,
             make: { NSView() },
