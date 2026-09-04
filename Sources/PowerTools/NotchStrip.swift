@@ -809,21 +809,27 @@ final class NotchStripView: NSView {
         let W = bounds.width, H = bounds.height, nh = notchHeight
         let span = min(notchSpan, W)
         let hx0 = (W - span) / 2, hx1 = (W + span) / 2
-        let rT: CGFloat = 12
+        // Outer top corners are INVERTED (concave) — they scoop toward the
+        // interior so the panel flares out to the screen edge and reads as
+        // fused to the menu bar, the MacNotch/Dynamic-Island look, rather than
+        // a floating card with convex rounds.
+        let rC: CGFloat = 16
         // Never let the fillet outrun the shoulder or the housing height.
         let rF = max(0, min(10, nh - 1, (W - span) / 2 - 1))
         let p = NSBezierPath()
         p.move(to: NSPoint(x: 0, y: H))              // bottom-left (layer rounds it)
-        p.line(to: NSPoint(x: 0, y: rT))             // up the left edge
-        quarter(p, corner: NSPoint(x: 0, y: 0), to: NSPoint(x: rT, y: 0))   // top-left outer round
+        p.line(to: NSPoint(x: 0, y: rC))             // up the left edge to the scoop
+        // top-left inverted corner: pull toward the INTERIOR corner (rC,rC)
+        quarter(p, corner: NSPoint(x: rC, y: rC), to: NSPoint(x: rC, y: 0))
         p.line(to: NSPoint(x: hx0, y: 0))            // left shoulder, along the screen edge
         p.line(to: NSPoint(x: hx0, y: nh - rF))      // down the left housing wall
         quarter(p, corner: NSPoint(x: hx0, y: nh), to: NSPoint(x: hx0 + rF, y: nh))   // left fillet
         p.line(to: NSPoint(x: hx1 - rF, y: nh))      // under the housing
         quarter(p, corner: NSPoint(x: hx1, y: nh), to: NSPoint(x: hx1, y: nh - rF))   // right fillet
         p.line(to: NSPoint(x: hx1, y: 0))            // up the right housing wall
-        p.line(to: NSPoint(x: W - rT, y: 0))         // right shoulder
-        quarter(p, corner: NSPoint(x: W, y: 0), to: NSPoint(x: W, y: rT))   // top-right outer round
+        p.line(to: NSPoint(x: W - rC, y: 0))         // right shoulder
+        // top-right inverted corner: pull toward the INTERIOR corner (W-rC,rC)
+        quarter(p, corner: NSPoint(x: W - rC, y: rC), to: NSPoint(x: W, y: rC))
         p.line(to: NSPoint(x: W, y: H))              // bottom-right (layer rounds it)
         p.close()
         return p
