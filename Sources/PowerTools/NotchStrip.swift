@@ -136,7 +136,11 @@ final class NotchStrip {
     /// The hosted module's view, kept so it can be torn down on collapse.
     private var moduleView: NSView?
     private var timer: Timer?
-    private(set) var mode: Mode = .min
+    private(set) var mode: Mode = .min {
+        didSet { if oldValue != mode { syncClickAway() } }
+    }
+    /// Global + local mouse monitors, armed only while the notch is open.
+    private var clickAway: [Any] = []
     /// Opened by a click rather than a hover, so leaving does not close it.
     private var pinned = false
     /// Which source ids the user has switched on, plus the master toggle.
@@ -423,6 +427,42 @@ final class NotchStrip {
         moduleView?.removeFromSuperview()
         moduleView = nil
         refresh()
+    }
+
+    /// Clicking OFF the notch folds it back into the housing, the way a menu
+    /// closes — the ✕ on the tab row is a way out, not the only one. Armed by
+    /// `mode`: a global monitor hears clicks in other apps (it never sees our
+    /// own windows), a local one hears clicks on our other windows. Nothing
+    /// here swallows anything; the click still lands where it was aimed.
+    private func syncClickAway() {
+        if mode == .min {
+            clickAway.forEach { NSEvent.removeMonitor($0) }
+            clickAway = []
+            return
+        }
+        guard clickAway.isEmpty else { return }
+        let buttons: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
+        if let g = NSEvent.addGlobalMonitorForEvents(matching: buttons, handler: { [weak self] _ in
+            Task { @MainActor in self?.clickedAway(in: nil) }
+        }) { clickAway.append(g) }
+        if let l = NSEvent.addLocalMonitorForEvents(matching: buttons, handler: { [weak self] event in
+            let window = event.window
+            MainActor.assumeIsolated { self?.clickedAway(in: window) }
+            return event
+        }) { clickAway.append(l) }
+    }
+
+    /// The decision behind the monitors, kept apart so the harness can drive
+    /// it. `nil` is a click in another app. Our own panel stays open, and so
+    /// does anything riding ABOVE the status-bar level — the ✱ menu popped from
+    /// a row, a tooltip — because that click is part of using the notch.
+    func clickedAway(in window: NSWindow?) {
+        guard mode != .min else { return }
+        if let window {
+            if window === panel { return }
+            if window.level.rawValue > NSWindow.Level.statusBar.rawValue { return }
+        }
+        collapse()
     }
 
     /// Open the module row, or a module by index.

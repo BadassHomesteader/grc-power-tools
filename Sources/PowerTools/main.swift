@@ -1562,6 +1562,32 @@ case "notchstrip-live-test":
         strip.collapse(); pump(0.4)
         check(abs(strip.frame.height - minFrame.height) < 1, "13l: collapse returns to Min")
 
+        // 14: clicking OFF the notch collapses it, the way a menu closes — the
+        // ✕ is a way out, not the only one. The monitors themselves need a
+        // running app to deliver events, so this drives the decision behind
+        // them with the three shapes a monitor reports: our own panel, a menu
+        // riding above the status-bar level, and another app (nil).
+        strip.openModule(0); pump(0.4)
+        strip.clickedAway(in: strip.testSurface?.panel); pump(0.2)
+        check(strip.frame.height > minFrame.height + 1, "14a: a click on the notch itself leaves it open")
+        let menuish = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        menuish.level = .popUpMenu
+        strip.clickedAway(in: menuish); pump(0.2)
+        check(strip.frame.height > minFrame.height + 1, "14b: a click in a menu riding above the notch leaves it open")
+        strip.clickedAway(in: nil); pump(0.4)
+        check(abs(strip.frame.height - minFrame.height) < 1, "14c: a click in another app folds a module back to Min")
+        // The pinned list is the other thing that used to outlive the cursor.
+        strip.openList(source: 0); pump(0.4)
+        check(strip.frame.height > minFrame.height + 1, "14d: list pinned open")
+        let sibling = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
+                              styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        sibling.level = .statusBar
+        strip.clickedAway(in: sibling); pump(0.4)
+        check(abs(strip.frame.height - minFrame.height) < 1, "14e: a click on another window of ours folds the list back to Min")
+        strip.clickedAway(in: nil); pump(0.2)
+        check(abs(strip.frame.height - minFrame.height) < 1, "14f: a click-away at Min is a no-op")
+
         // 8: berth migration, including idempotence.
         let fake: [String: [String: Any]] = [
             "agent": ["anchor": "notchLeft", "mini": true, "open": true, "x": 12, "y": 616],
