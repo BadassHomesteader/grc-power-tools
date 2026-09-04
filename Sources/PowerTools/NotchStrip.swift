@@ -104,6 +104,8 @@ final class NotchStrip {
     private var sources: [Source] = []
     private var timer: Timer?
     private(set) var mode: Mode = .min
+    /// Opened by a click rather than a hover, so leaving does not close it.
+    private var pinned = false
     /// Which source ids the user has switched on, plus the master toggle.
     private var enabledIDs: Set<String> = []
     private var masterOn = true
@@ -216,7 +218,7 @@ final class NotchStrip {
         if panel != nil { return }
         let v = NotchStripView()
         v.onHover = { [weak self] hit in self?.hover(hit) }
-        v.onExit = { [weak self] in self?.collapse() }
+        v.onExit = { [weak self] in self?.hoverOut() }
         v.onClick = { [weak self] hit in self?.click(hit) }
         let win = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                           backing: .buffered, defer: false)
@@ -282,17 +284,35 @@ final class NotchStrip {
         if case .list(hit.source) = mode { return }   // already showing it
         mode = .list(source: hit.source)
         refresh()
+        pinned = false
     }
 
+    /// Clicking stays IN the notch. A dot pins the list open so it can be read
+    /// and acted on without holding the cursor still; a row acts on that row.
+    /// Neither one opens the pad — that is what the hotkey and the menu bar are
+    /// for, and a status surface that launches windows when touched is not a
+    /// status surface.
     private func click(_ hit: Placed?) {
         guard let hit, hit.source < activeSources.count else { return }
-        // Click is the way OUT of the notch: the owning feature opens its own
-        // window, and the strip drops back to a glance.
+        switch mode {
+        case .min:
+            pinned = true
+            openList(source: hit.source)
+        case .list:
+            activeSources[hit.source].activate(hit.mark)
+            pinned = false
+            collapse()
+        }
+    }
+
+    /// The cursor left. A pinned list stays; a hovered one goes.
+    private func hoverOut() {
+        guard !pinned else { return }
         collapse()
-        activeSources[hit.source].activate(hit.mark)
     }
 
     func collapse() {
+        pinned = false
         guard mode != .min else { return }
         mode = .min
         refresh()

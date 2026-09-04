@@ -1366,19 +1366,24 @@ case "notchstrip-live-test":
         strip.collapse(); pump(0.4)
         check(abs(strip.frame.height - minFrame.height) < 1, "5b: collapse returns to Min height")
 
-        // 6: click routing — synthesised against the real view, so hit-testing
-        // and drawing are proven to read the same layout array.
+        // 6: a dot click PINS the list open — it must not fire activate, and it
+        // must not close when the cursor leaves.
         if let (panel, view) = strip.testSurface, let target = strip.placedMarks.last {
             let p = view.convert(NSPoint(x: target.rect.midX, y: target.rect.midY), to: nil)
             let ev = NSEvent.mouseEvent(with: .leftMouseDown, location: p, modifierFlags: [],
                                         timestamp: ProcessInfo.processInfo.systemUptime,
                                         windowNumber: panel.windowNumber, context: nil,
                                         eventNumber: 0, clickCount: 1, pressure: 1)!
+            clicked.removeAll()
             view.mouseDown(with: ev)
-            pump(0.1)
-            let expected = target.source == 0 ? "agents" : "quota"
-            check(clicked.last?.0 == expected && clicked.last?.1 == target.mark,
-                  "6: click on the last mark routed to \(expected)[\(target.mark)] — got \(clicked.last.map { "\($0.0)[\($0.1)]" } ?? "nothing")")
+            pump(0.4)
+            check(clicked.isEmpty, "6a: a dot click does NOT activate (would have opened the pad)")
+            check(strip.frame.height > field.notch.height, "6b: a dot click expands the notch")
+            // Pinned: the cursor leaving must not take it away.
+            view.mouseExited(with: ev)
+            pump(0.4)
+            check(strip.frame.height > field.notch.height, "6c: pinned — leaving does not collapse it")
+            strip.collapse(); pump(0.3)
         } else {
             check(false, "6: no surface to click")
         }
@@ -1421,7 +1426,8 @@ case "notchstrip-live-test":
             view.mouseDown(with: ev)
             pump(0.1)
             check(clicked.last?.0 == "agents" && clicked.last?.1 == 2,
-                  "10: click on row 3 routed to agents[2] — got \(clicked.last.map { "\($0.0)[\($0.1)]" } ?? "nothing")")
+                  "10a: row 3 acts on agents[2] (focus, not open-the-pad) — got \(clicked.last.map { "\($0.0)[\($0.1)]" } ?? "nothing")")
+            check(strip.mode == .min, "10b: acting on a row collapses the notch")
         } else {
             check(false, "10: no rows to click")
         }

@@ -982,7 +982,12 @@ final class AppController {
                 }
                 return card
             },
-            activate: { [weak self] _ in self?.toggleAgentPad() }))
+            // Row click = focus that session's terminal, the same thing the
+            // pad's own row click does. The notch does not launch the pad.
+            activate: { [weak self] i in
+                guard let self, i < self.stripSessions.count else { return }
+                self.handleAgentPadAction(self.stripSessions[i], .focus)
+            }))
 
         notchStrip.register(NotchStrip.Source(
             id: "quota", priority: 10, maxMarks: 1,
@@ -1012,7 +1017,8 @@ final class AppController {
                     metrics: [window?.0, window?.1.label].compactMap { $0 }
                         .filter { !$0.isEmpty }.joined(separator: " · "))
             },
-            activate: { [weak self] _ in self?.toggleAgentPad() }))
+            // Quota's detail already lives on its row; a click just closes.
+            activate: { _ in }))
 
         // ONE owner for the reader's single update closure, fanned out here.
         UsageReader.shared.onUpdate = { [weak self] in
