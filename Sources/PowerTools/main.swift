@@ -1274,6 +1274,8 @@ case "notchstrip-live-test":
         // layout well past its caps.
         var agentCount = 3
         var quotaOn = false
+        var permissionWaiting = false
+        var answered: [String] = []
         var clicked: [(String, Int)] = []
         let strip = NotchStrip()
         strip.register(NotchStrip.Source(
@@ -1284,9 +1286,18 @@ case "notchstrip-live-test":
             // the overflow dot's index cannot conjure one.
             card: { i in
                 guard i < agentCount else { return nil }
-                return NotchStrip.Card(title: "session \(i)", subtitle: "needs permission",
-                                       accent: .systemOrange,
-                                       actions: [("✓", .systemGreen, {}), ("✕", .systemRed, {})])
+                var c = NotchStrip.Card(title: "task \(i)", subtitle: "Bash: ls",
+                                        accent: .systemOrange, repo: "repo\(i)",
+                                        state: "Running", model: "Opus", branch: "main",
+                                        metrics: "12 msgs · 3.4k tok")
+                // Only row 0 is waiting, so the test can prove the buttons
+                // appear on the right row and nowhere else.
+                if permissionWaiting && i == 0 {
+                    c.state = "Permission"
+                    c.actions = [("✓", .systemGreen, { answered.append("accept") }),
+                                 ("✕", .systemRed, { answered.append("deny") })]
+                }
+                return c
             },
             activate: { clicked.append(("agents", $0)) }))
         strip.register(NotchStrip.Source(
@@ -1337,28 +1348,23 @@ case "notchstrip-live-test":
         }
         check(worstOverlap == 0, "3: nothing drawn behind the housing across 39 layouts (Min)")
 
-        // 4: Mid is CAPPED — the notch must never reach full-panel size.
+        // 4: the notch never opens ITSELF. A permission arriving must leave
+        // the strip collapsed — the ✓/✕ live on the row, one hover away.
         agentCount = 3
         quotaOn = true
-        strip.apply(master: true, enabled: ["agents", "quota"])
-        pump(0.1)
-        strip.open(source: 0, mark: 0, hold: nil)
-        pump(0.4)
-        let mid = strip.frame
-        let midCap = field.notch.width * NotchStrip.midWidthFactor
-        let heightCap = field.notch.height + NotchStrip.midCardHeightWithActions
-        check(mid.width <= midCap + 1, "4a: Mid width \(Int(mid.width)) within the \(Int(midCap))pt cap")
-        check(mid.height <= heightCap + 1, "4b: Mid height \(Int(mid.height)) within the \(Int(heightCap))pt cap")
-        check(abs(mid.maxY - screen.frame.maxY) < 1, "4c: Mid still hangs from the screen edge")
-        check(abs(mid.midX - field.notch.midX) < 1, "4c2: Mid IS centred on the housing")
-        let midBad = strip.contentRectsInScreen.filter { $0.intersects(field.notch) }
-        check(midBad.isEmpty, "4d: Mid card content sits clear of the housing")
-        check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
-              "4e: Mid card content is entirely BELOW the housing")
+        permissionWaiting = true
+        strip.apply(master: true, enabled: ["agents", "quota"]); pump(0.4)
+        check(strip.mode == .min, "4a: a waiting permission does NOT open the notch")
+        check(abs(strip.frame.height - field.notch.height) < 1,
+              "4b: still Min height (\(Int(strip.frame.height))pt) with a permission pending")
+        let ringed = strip.placedMarks.filter { $0.source == 0 }.count
+        check(ringed > 0, "4c: it is still represented — \(ringed) agent mark(s) on the strip")
 
-        // 5: collapse returns to Min.
+        // 5: hovering is the ONLY way in, and it collapses back.
+        strip.openList(source: 0); pump(0.4)
+        check(strip.frame.height > field.notch.height, "5a: hover expands")
         strip.collapse(); pump(0.4)
-        check(abs(strip.frame.height - minFrame.height) < 1, "5: collapse returns to Min height")
+        check(abs(strip.frame.height - minFrame.height) < 1, "5b: collapse returns to Min height")
 
         // 6: click routing — synthesised against the real view, so hit-testing
         // and drawing are proven to read the same layout array.
@@ -1420,6 +1426,30 @@ case "notchstrip-live-test":
             check(false, "10: no rows to click")
         }
         strip.collapse(); pump(0.3)
+
+        // 11: answering from the row — the whole point of moving ✓/✕ there.
+        agentCount = 3
+        permissionWaiting = true
+        strip.apply(master: true, enabled: ["agents"]); pump(0.3)
+        strip.openList(source: 0); pump(0.4)
+        let acts = strip.testSurface?.view.listActionRects ?? []
+        check(acts.filter { $0.row == 0 }.count == 2, "11a: the waiting row carries ✓ and ✕")
+        check(acts.allSatisfy { $0.row == 0 }, "11b: rows that are not waiting carry none")
+        if let (panel, view) = strip.testSurface, let accept = acts.first(where: { $0.row == 0 && $0.index == 0 }) {
+            let p = view.convert(NSPoint(x: accept.rect.midX, y: accept.rect.midY), to: nil)
+            let ev = NSEvent.mouseEvent(with: .leftMouseDown, location: p, modifierFlags: [],
+                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: panel.windowNumber, context: nil,
+                                        eventNumber: 0, clickCount: 1, pressure: 1)!
+            clicked.removeAll()
+            view.mouseDown(with: ev)
+            pump(0.1)
+            check(answered == ["accept"], "11c: ✓ answered in place — got \(answered)")
+            check(clicked.isEmpty, "11d: answering did NOT also open the pad")
+        } else {
+            check(false, "11: no ✓ to click")
+        }
+        strip.collapse(); permissionWaiting = false; pump(0.3)
 
         // 8: berth migration, including idempotence.
         let fake: [String: [String: Any]] = [

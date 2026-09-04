@@ -90,28 +90,24 @@ final class NotchStrip {
         let rect: NSRect
     }
 
-    /// Mid comes in two shapes, because hovering and being notified are
-    /// different questions. Hovering asks "what have I got running?" and wants
-    /// the WHOLE list; a permission arriving asks "answer this" and wants one
-    /// card with the answer on it. Both stay bounded — neither is ever Max.
+    /// Two states, and the notch NEVER opens itself. A permission arriving
+    /// makes its dot ring; it does not throw a banner over your work. The
+    /// ✓/✕ live on the row, one hover away — which is the difference between
+    /// a status surface and an interruption.
     enum Mode: Equatable {
         case min
         case list(source: Int)
-        case card(source: Int, mark: Int)
     }
 
     private var panel: NSPanel?
     private var view: NotchStripView?
     private var sources: [Source] = []
     private var timer: Timer?
-    private var midTimer: Timer?
     private(set) var mode: Mode = .min
     /// Which source ids the user has switched on, plus the master toggle.
     private var enabledIDs: Set<String> = []
     private var masterOn = true
-    /// Sessions already announced with a Mid card, so a permission that stays
     /// on screen doesn't re-present the banner on every 10s refresh.
-    private var announced: Set<String> = []
 
     var onLog: ((String) -> Void)?
 
@@ -192,13 +188,7 @@ final class NotchStrip {
         build(on: screen)
         if firstShow { onLog?("notch: strip up — \(live.map(\.count)) mark(s) per source") }
         // A Mid whose source or mark has gone away falls back to Min.
-        switch mode {
-        case .min: break
-        case let .list(si):
-            if si >= live.count || live[si].isEmpty { mode = .min }
-        case let .card(si, mi):
-            if si >= live.count || mi >= live[si].count { mode = .min }
-        }
+        if case let .list(si) = mode, si >= live.count || live[si].isEmpty { mode = .min }
         var cards: [Card] = []
         var listMode = false
         switch mode {
@@ -212,8 +202,6 @@ final class NotchStrip {
             let total = activeSources[si].marks().count
             cards = (0..<Swift.min(total, NotchStrip.maxListRows)).compactMap { activeSources[si].card($0) }
             if cards.isEmpty { mode = .min }
-        case let .card(si, mi) where si < activeSources.count:
-            if let one = activeSources[si].card(mi) { cards = [one] } else { mode = .min }
         default:
             mode = .min
         }
@@ -253,7 +241,6 @@ final class NotchStrip {
     /// all — it woke only on a registry change, and a change that landed before
     /// the sources were registered left it invisible until the next one.
     private func teardown() {
-        midTimer?.invalidate(); midTimer = nil
         panel?.orderOut(nil)
         panel = nil
         view = nil
@@ -293,8 +280,6 @@ final class NotchStrip {
     private func hover(_ hit: Placed?) {
         guard let hit else { return }
         if case .list(hit.source) = mode { return }   // already showing it
-        if case .card = mode { return }               // a notification owns the surface
-        midTimer?.invalidate(); midTimer = nil
         mode = .list(source: hit.source)
         refresh()
     }
@@ -307,41 +292,10 @@ final class NotchStrip {
         activeSources[hit.source].activate(hit.mark)
     }
 
-    /// Present one card. `hold` auto-collapses after that many seconds — used by
-    /// the permission banner, which has to stand on its own without a cursor.
-    func open(source: Int, mark: Int, hold: TimeInterval?) {
-        guard source < activeSources.count, activeSources[source].card(mark) != nil else { return }
-        mode = .card(source: source, mark: mark)
-        midTimer?.invalidate(); midTimer = nil
-        if let hold {
-            midTimer = Timer.scheduledTimer(withTimeInterval: hold, repeats: false) { [weak self] _ in
-                MainActor.assumeIsolated { self?.collapse() }
-            }
-        }
-        refresh()
-    }
-
     func collapse() {
-        midTimer?.invalidate(); midTimer = nil
         guard mode != .min else { return }
         mode = .min
         refresh()
-    }
-
-    /// Announce a session that wants an answer, once. Replaces flinging the
-    /// whole Agent Pad open — this is smaller, carries ✓/✕ itself, and gets out
-    /// of the way on its own.
-    func announce(sessionID: String, source id: String, mark: Int, hold: TimeInterval = 6) {
-        guard !announced.contains(sessionID),
-              let si = activeSources.firstIndex(where: { $0.id == id }) else { return }
-        announced.insert(sessionID)
-        open(source: si, mark: mark, hold: hold)
-    }
-
-    /// Forget sessions that are no longer waiting, so the SAME session asking
-    /// again later still gets a banner.
-    func forgetAnnounced(keeping live: Set<String>) {
-        announced.formIntersection(live)
     }
 
     // MARK: Test hooks
@@ -349,7 +303,6 @@ final class NotchStrip {
     /// Show a source's whole list — the hover shape, exposed for the harness.
     func openList(source: Int) {
         guard source < activeSources.count else { return }
-        midTimer?.invalidate(); midTimer = nil
         mode = .list(source: source)
         refresh()
     }
@@ -391,8 +344,13 @@ final class NotchStripView: NSView {
     /// Which source the open list belongs to, so a row click routes to it.
     var listSource = 0
     private var listMode = false
-    private var card: NotchStrip.Card? { listMode ? nil : cards.first }
+    /// There is no single-card state any more; kept only so the collapsed
+    /// path reads clearly.
+    private var card: NotchStrip.Card? { nil }
     private var hoveredRow: Int?
+    private var hoveredAction: (row: Int, index: Int)?
+    /// Rebuilt each draw; read by mouseDown so a click lands on what was drawn.
+    private var rowActionRects: [(row: Int, index: Int, rect: NSRect)] = []
     private var notchSpan: CGFloat = 0
     private var notchHeight: CGFloat = 0
     private var maxWidth: CGFloat = 10_000
@@ -528,6 +486,8 @@ final class NotchStripView: NSView {
 
     /// Test hook: the row rects, so a click can be aimed at one.
     var listRowRects: [NSRect] { listMode ? (0..<visibleRows).map(rowRect) : [] }
+    /// Test hook: the ✓/✕ rects drawn on the rows.
+    var listActionRects: [(row: Int, index: Int, rect: NSRect)] { rowActionRects }
 
     /// Also computed — same reasoning as `placed`.
     var actionRects: [NSRect] {
@@ -605,6 +565,7 @@ final class NotchStripView: NSView {
     /// display behind the camera and anything drawn there never reaches the
     /// glass.
     private func drawList() {
+        rowActionRects = []
         let p = NSMutableParagraphStyle()
         p.lineBreakMode = .byTruncatingTail
         let white = NSColor.white
@@ -660,13 +621,35 @@ final class NotchStripView: NSView {
                                      .foregroundColor: white.withAlphaComponent(0.85),
                                      .paragraphStyle: p])
             }
+            // ✓ / ✕ on the row itself. This is where answering a permission
+            // lives now: the notch does not open itself to ask.
+            var right2 = right
+            if !c.actions.isEmpty {
+                for (ai, action) in c.actions.enumerated() {
+                    let br = NSRect(x: right - CGFloat(c.actions.count - ai) * 34, y: r.minY + 24,
+                                    width: 30, height: 24)
+                    rowActionRects.append((row: i, index: ai, rect: br))
+                    let path = NSBezierPath(roundedRect: br, xRadius: 6, yRadius: 6)
+                    let hot = hoveredAction?.row == i && hoveredAction?.index == ai
+                    (action.tint ?? white).withAlphaComponent(hot ? 0.95 : 0.35).setFill()
+                    path.fill()
+                    let aAttrs: [NSAttributedString.Key: Any] = [
+                        .font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: white]
+                    let sz = (action.glyph as NSString).size(withAttributes: aAttrs)
+                    (action.glyph as NSString).draw(at: NSPoint(x: br.midX - sz.width / 2,
+                                                               y: br.midY - sz.height / 2),
+                                                    withAttributes: aAttrs)
+                }
+                right2 = right - CGFloat(c.actions.count) * 34 - 6
+            }
+
             // Line 3 — what it is touching, and what it has spent.
-            var metricsX = right
+            var metricsX = right2
             if !c.metrics.isEmpty {
                 let mAttrs: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim]
                 let w = (c.metrics as NSString).size(withAttributes: mAttrs).width
-                metricsX = right - w
+                metricsX = right2 - w
                 (c.metrics as NSString).draw(at: NSPoint(x: metricsX, y: r.minY + 40), withAttributes: mAttrs)
             }
             if !c.subtitle.isEmpty {
@@ -752,7 +735,14 @@ final class NotchStripView: NSView {
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
             let row = (0..<visibleRows).first { rowRect($0).insetBy(dx: -4, dy: 0).contains(p) }
-            if row != hoveredRow { hoveredRow = row; needsDisplay = true }
+            let act = rowActionRects.first { $0.rect.insetBy(dx: -3, dy: -3).contains(p) }
+            let newAct = act.map { (row: $0.row, index: $0.index) }
+            if row != hoveredRow || newAct?.row != hoveredAction?.row
+                || newAct?.index != hoveredAction?.index {
+                hoveredRow = row
+                hoveredAction = newAct
+                needsDisplay = true
+            }
             return
         }
         let layout = placed
@@ -774,6 +764,12 @@ final class NotchStripView: NSView {
     override func mouseDown(with event: NSEvent) {
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
+            // A ✓/✕ answers in place; anywhere else on the row opens the pad.
+            if let hit = rowActionRects.first(where: { $0.rect.insetBy(dx: -3, dy: -3).contains(p) }),
+               hit.row < cards.count, hit.index < cards[hit.row].actions.count {
+                cards[hit.row].actions[hit.index].run()
+                return
+            }
             if let row = (0..<visibleRows).first(where: { rowRect($0).insetBy(dx: -4, dy: 0).contains(p) }) {
                 onClick?(NotchStrip.Placed(source: listSource, mark: row, rect: rowRect(row)))
             }

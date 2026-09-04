@@ -316,7 +316,6 @@ final class AppController {
                 guard let self else { return }
                 self.agentPad.updateSessions(sessions, hooksInstalled: ClaudeHooksInstaller.isInstalled())
                 self.notchStrip.refresh()
-                self.announceWaiting(sessions)
                 self.revealAgentPadIfWaiting(sessions)
             }
             agentPad.onRefresh = { [weak self] in
@@ -1042,15 +1041,6 @@ final class AppController {
         notchStrip.apply(master: config.notchStrip, enabled: on)
     }
 
-    /// Banner a session that wants an answer — once per ask, so a permission
-    /// left on screen doesn't re-present on every refresh.
-    private func announceWaiting(_ sessions: [ClaudeSession]) {
-        guard stripShowsAgents else { return }
-        let shown = stripSessions
-        notchStrip.forgetAnnounced(keeping: Set(shown.filter { $0.state == .needsPermission }.map(\.id)))
-        guard let i = shown.firstIndex(where: { $0.state == .needsPermission }) else { return }
-        notchStrip.announce(sessionID: shown[i].id, source: "agents", mark: i)
-    }
 
     func toggleAgentPad() {
         interruptDictation()
