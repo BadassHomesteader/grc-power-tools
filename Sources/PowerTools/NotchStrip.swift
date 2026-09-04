@@ -140,7 +140,7 @@ final class NotchStrip {
     /// While a module is open, its siblings stay one click away on a tab row
     /// under the housing. Without it a module was a dead end — there was no way
     /// back to the row and no way out at all.
-    static let moduleTabRow: CGFloat = 28
+    static let moduleTabRow: CGFloat = 46
 
     private var panel: NSPanel?
     private var view: NotchStripView?
@@ -999,17 +999,22 @@ final class NotchStripView: NSView {
             let r = tabRect(i)
             if t.active {
                 NSColor.white.withAlphaComponent(0.14).setFill()
-                NSBezierPath(roundedRect: r.insetBy(dx: 3, dy: 4), xRadius: 6, yRadius: 6).fill()
+                NSBezierPath(roundedRect: r.insetBy(dx: 3, dy: 5), xRadius: 8, yRadius: 8).fill()
             } else if hoveredTab == i {
                 NSColor.white.withAlphaComponent(0.08).setFill()
-                NSBezierPath(roundedRect: r.insetBy(dx: 3, dy: 4), xRadius: 6, yRadius: 6).fill()
+                NSBezierPath(roundedRect: r.insetBy(dx: 3, dy: 5), xRadius: 8, yRadius: 8).fill()
             }
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 12),
-                .foregroundColor: NSColor.white.withAlphaComponent(t.active ? 1 : 0.55)]
-            let label = "\(t.glyph)  \(t.title)" as NSString
-            let sz = label.size(withAttributes: attrs)
-            label.draw(at: NSPoint(x: r.midX - sz.width / 2, y: r.midY - sz.height / 2), withAttributes: attrs)
+            // Icon over label, the same shape as the launcher tiles.
+            let g: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 17),
+                .foregroundColor: NSColor.white.withAlphaComponent(t.active ? 1 : 0.85)]
+            let gs = (t.glyph as NSString).size(withAttributes: g)
+            (t.glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.minY + 6), withAttributes: g)
+            let ta: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 8.5, weight: .medium),
+                .foregroundColor: NSColor.white.withAlphaComponent(t.active ? 0.95 : 0.6)]
+            let ts = (t.title as NSString).size(withAttributes: ta)
+            (t.title as NSString).draw(at: NSPoint(x: r.midX - ts.width / 2, y: r.minY + 29), withAttributes: ta)
         }
         let close = tabRect(-1)
         if hoveredTab == -1 {
