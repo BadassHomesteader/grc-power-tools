@@ -442,7 +442,8 @@ final class WeatherModuleView: NotchModuleView {
 /// MINIMUM — taller than the notch is allowed to be — so this takes one
 /// question, shows one answer, and hands off to the real window for anything
 /// that wants scrollback.
-final class ChatModuleView: NotchModuleView {
+final class ChatModuleView: NotchModuleView, NotchKeyboardModule {
+    func firstResponderView() -> NSView? { field }
     private let field = NSTextField()
     private var answer = ""
     private var asking = false

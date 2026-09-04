@@ -1072,10 +1072,10 @@ final class AppController {
                 WeatherModuleView(places: self?.config.weatherPlaces ?? [],
                                   fahrenheit: self?.config.weatherFahrenheit ?? true)
             }),
-            ("chat", .init(id: "chat", glyph: "✦", title: "Ask", height: 200) { [weak self] in
+            ("chat", .init(id: "chat", glyph: "✦", title: "Ask", height: 200, make: { [weak self] in
                 ChatModuleView(model: self?.config.claudeModel ?? "claude-haiku-4-5",
                                openFull: { [weak self] text in self?.openChat(with: text) })
-            }),
+            }, wantsKeyboard: true)),
         ]
         for (id, module) in all where config.notchModules.contains(id) {
             notchStrip.registerModule(module)

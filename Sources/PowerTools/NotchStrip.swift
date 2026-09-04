@@ -1,5 +1,20 @@
 import Cocoa
 
+/// A borderless panel refuses to become key, so a text field inside it can never
+/// take keyboard focus. The notch is deliberately non-activating for hover, but
+/// while the Ask module is open it must accept typing — so `keyable` is flipped
+/// on only then, and the panel can become key without activating the app.
+final class NotchPanel: NSPanel {
+    var keyable = false
+    override var canBecomeKey: Bool { keyable }
+}
+
+/// A hosted module that wants keyboard focus points the strip at the view that
+/// should become first responder (its text field).
+protocol NotchKeyboardModule: AnyObject {
+    func firstResponderView() -> NSView?
+}
+
 /// The one thing that lives in the notch.
 ///
 /// Before this, the Macro Pad and the Agent Pad each grew their own notch
@@ -126,6 +141,10 @@ final class NotchStrip {
         /// the notch stays a notch.
         let height: CGFloat
         let make: () -> NSView
+        /// This module hosts a text field, so the panel is made key-capable and
+        /// its field focused while the module is open (Ask). Off for the rest,
+        /// which keeps the notch non-activating for hover.
+        var wantsKeyboard: Bool = false
         /// An ACTION tile, not a hosted panel: Settings is an 860pt window that
         /// cannot live under the housing, so its tile opens that window and
         /// folds the notch away instead of hosting a view. When set, `make` is
@@ -288,6 +307,26 @@ final class NotchStrip {
                         picker: pickerEntries, moduleHeight: hostedHeight, tabs: moduleTabs)
         hostModuleIfNeeded(field: field)
         place(field: field, animated: true)
+        applyKeyboardFocus()
+    }
+
+    /// While the Ask module is open, let the panel become key and focus its
+    /// field so the user can type; otherwise keep the notch non-activating.
+    private func applyKeyboardFocus() {
+        guard let panel = panel as? NotchPanel else { return }
+        let wants: Bool
+        if case let .module(i) = mode, i < modules.count { wants = modules[i].wantsKeyboard }
+        else { wants = false }
+        if wants {
+            panel.keyable = true
+            panel.makeKeyAndOrderFront(nil)
+            if let field = (moduleView as? NotchKeyboardModule)?.firstResponderView() {
+                panel.makeFirstResponder(field)
+            }
+        } else if panel.keyable {
+            panel.keyable = false
+            panel.makeFirstResponder(nil)   // drop the text cursor; key leaves on next app switch
+        }
     }
 
     private var pickerEntries: [(glyph: String, title: String)] {
@@ -343,8 +382,8 @@ final class NotchStrip {
         v.onTileHover = { [weak self] i in self?.hoverModule(i) }
         v.onTabHover = { [weak self] i in self?.hoverModule(i) }
         v.onGridHover = { [weak self] open in self?.hoverGrid(open) }
-        let win = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
-                          backing: .buffered, defer: false)
+        let win = NotchPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                             backing: .buffered, defer: false)
         win.isOpaque = false
         win.backgroundColor = .clear
         win.level = .statusBar
