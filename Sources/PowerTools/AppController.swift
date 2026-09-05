@@ -1067,6 +1067,12 @@ final class AppController {
                         ]
                     }
                 }
+                // A row that has sat idle for hours has one control: ✕ clears
+                // it from the list (the pad's Close Chat), until it speaks again.
+                if card.isRecent {
+                    card.actionsAlways = true
+                    card.actions = [("✕", nil, { [weak self] in self?.claudeRegistry.dismissSession(s.id) })]
+                }
                 return card
             },
             // Row click = focus that session's terminal, the same thing the
@@ -1093,6 +1099,9 @@ final class AppController {
                     card.icon = AgentPad.agentIcon(for: s)
                     card.kind = s.kindChip
                     card.elapsed = s.endedAt.map { Elapsed.format(Date().timeIntervalSince($0)) + " ago" } ?? ""
+                    // ✕ forgets the tombstone (and keeps it out until the session speaks again).
+                    card.actionsAlways = true
+                    card.actions = [("✕", nil, { [weak self] in self?.claudeRegistry.dismissSession(s.id) })]
                     return card
                 }
             },

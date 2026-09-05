@@ -925,12 +925,15 @@ final class NotchStripView: NSView {
     /// a finished row.
     private func showsActions(_ i: Int) -> Bool {
         let c = cards[i]
-        return !c.actions.isEmpty && !c.isRecent && (c.actionsAlways || hoveredRow == i)
+        // A finished row has no hover set — only what is always on (its ✕).
+        return !c.actions.isEmpty && (c.actionsAlways || (hoveredRow == i && !c.isRecent))
     }
-    /// 30×24 on a 34pt pitch, right-anchored, on the row's second line.
+    /// 30×24 on a 34pt pitch, right-anchored: on a live row's second line, and
+    /// vertically centred on a two-line finished row.
     private func actionRect(row i: Int, index ai: Int) -> NSRect {
         let r = rowRect(i).insetBy(dx: 0, dy: 3)
-        return NSRect(x: r.maxX - 10 - CGFloat(cards[i].actions.count - ai) * 34, y: r.minY + 26,
+        return NSRect(x: r.maxX - 10 - CGFloat(cards[i].actions.count - ai) * 34,
+                      y: r.minY + (cards[i].isRecent ? (r.height - 24) / 2 : 26),
                       width: 30, height: 24)
     }
     /// COMPUTED, like `placed`: with variable row heights, an array cached at
@@ -1378,6 +1381,9 @@ final class NotchStripView: NSView {
         // Where text on the right must stop: short of the controls when they
         // show, else short of the elapsed/spend column.
         let actionsLeft = showActions ? right - CGFloat(c.actions.count) * 34 - 6 : right
+        // A live row's controls REPLACE its right column; a finished row keeps
+        // its time and spend and tucks the ✕ to the right of them.
+        let colRight = c.isRecent ? actionsLeft : right
 
         // Line 1 — identity: repo · state · model · program · branch; elapsed right.
         var x = x0
@@ -1388,11 +1394,11 @@ final class NotchStripView: NSView {
         repo.draw(in: NSRect(x: x, y: r.minY + 6, width: repoW, height: 15), withAttributes: repoAttrs)
         x += repoW + 6
         var line1Right = actionsLeft
-        if !showActions, !c.elapsed.isEmpty {
+        if !showActions || c.isRecent, !c.elapsed.isEmpty {
             let eAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: dim]
             let w = (c.elapsed as NSString).size(withAttributes: eAttrs).width
-            (c.elapsed as NSString).draw(at: NSPoint(x: right - w, y: r.minY + 7), withAttributes: eAttrs)
-            line1Right = right - w - 8
+            (c.elapsed as NSString).draw(at: NSPoint(x: colRight - w, y: r.minY + 7), withAttributes: eAttrs)
+            line1Right = colRight - w - 8
         }
         if !c.state.isEmpty, !c.isRecent { x = chip(c.state, at: x, y: r.minY + 7, color: c.accent) }
         if !c.model.isEmpty { x = chip(c.model, at: x, y: r.minY + 7, color: NotchStripView.modelColor(c.model)) }
@@ -1416,8 +1422,8 @@ final class NotchStripView: NSView {
         if c.isRecent, !c.metrics.isEmpty {
             let mAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim]
             let w = (c.metrics as NSString).size(withAttributes: mAttrs).width
-            (c.metrics as NSString).draw(at: NSPoint(x: right - w, y: r.minY + 26), withAttributes: mAttrs)
-            line2Right = right - w - 8
+            (c.metrics as NSString).draw(at: NSPoint(x: colRight - w, y: r.minY + 26), withAttributes: mAttrs)
+            line2Right = colRight - w - 8
         }
         if !c.title.isEmpty, !c.repo.isEmpty {
             (c.title as NSString).draw(

@@ -1438,6 +1438,9 @@ case "notchstrip-live-test":
                                             repo: "old\(i)", model: "Opus", branch: "main",
                                             metrics: "9 msgs · 1.2k tok")
                     c.elapsed = "1h ago"
+                    // The real source gives finished rows one control: ✕ clears them.
+                    c.actionsAlways = true
+                    c.actions = [("✕", nil, { answered.append("dismiss-recent") })]
                     return c
                 }
             }))
@@ -1573,6 +1576,24 @@ case "notchstrip-live-test":
               "9g3: Recent rows and divider entirely below the housing")
         check(rows2.count > 5 && rows2[5].minY - rows2[4].maxY >= NotchStrip.recentHeaderH - 1,
               "9g4: the Recent divider has its own slot between live and finished rows")
+        // 9g5/9g6: each finished row carries its ✕, and clicking it fires the
+        // dismiss in place — it neither focuses nor folds the notch on its own.
+        let recentActs = strip.testSurface?.view.listActionRects.filter { $0.row >= NotchStrip.maxListRows } ?? []
+        check(recentActs.count == 2, "9g5: each Recent row carries its ✕ (\(recentActs.count) found)")
+        if let (panel, view) = strip.testSurface, let xr = recentActs.first {
+            answered.removeAll(); clicked.removeAll()
+            let ev = NSEvent.mouseEvent(with: .leftMouseDown,
+                                        location: view.convert(NSPoint(x: xr.rect.midX, y: xr.rect.midY), to: nil),
+                                        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: panel.windowNumber, context: nil,
+                                        eventNumber: 0, clickCount: 1, pressure: 1)!
+            view.mouseDown(with: ev); pump(0.1)
+            check(answered == ["dismiss-recent"] && clicked.isEmpty,
+                  "9g6: ✕ on a Recent row dismisses in place — got \(answered), clicked \(clicked.count)")
+        } else {
+            check(false, "9g6: no ✕ to click")
+        }
+        answered.removeAll()   // 11c compares the whole list
         recentCount = 0
         strip.openList(source: 0); pump(0.3)
 
