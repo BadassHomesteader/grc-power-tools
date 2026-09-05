@@ -1015,8 +1015,10 @@ final class AppController {
                 (self?.stripSessions ?? []).map { s in
                     NotchStrip.Mark(
                         color: AgentPadView.stateColor(s.state),
-                        ring: s.state == .needsPermission || s.state == .needsInput
-                            || s.state == .unseen || s.state == .error,
+                        // The colour already says needs-you (terracotta / red);
+                        // a white ring on top read as a second, different
+                        // signal. The ring is a quota-only cue now.
+                        ring: false,
                         dim: s.state == .idle && s.stateChanged.timeIntervalSinceNow < -3600,
                         tooltip: "\(s.projectName) · \(s.state.label)")
                 }
