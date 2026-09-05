@@ -104,6 +104,7 @@ public sealed class Config
     public int AgentPadPort = 8377;
     public bool AgentPadCodex = true;
     public bool AgentPadCursor = true;
+    public bool AgentPadGrok = true;
     public bool RestorePads = true;
     public bool PowerRing = true;
     public List<string> PowerRingSlots = new(DefaultPowerRingSlots);
@@ -233,6 +234,7 @@ public sealed class Config
         c.AgentPadPort = Int(root, "agentPadPort", 8377);
         c.AgentPadCodex = Bool(root, "agentPadCodex", true);
         c.AgentPadCursor = Bool(root, "agentPadCursor", true);
+        c.AgentPadGrok = Bool(root, "agentPadGrok", true);
         c.RestorePads = Bool(root, "restorePads", true);
         c.PowerRing = Bool(root, "powerRing", true);
         c.PowerRingSlots = StrList(root, "powerRingSlots") ?? new(DefaultPowerRingSlots);
@@ -323,6 +325,7 @@ public sealed class Config
             ["agentPadPort"] = AgentPadPort,
             ["agentPadCodex"] = AgentPadCodex,
             ["agentPadCursor"] = AgentPadCursor,
+            ["agentPadGrok"] = AgentPadGrok,
             ["restorePads"] = RestorePads,
             ["powerRing"] = PowerRing,
             ["powerRingSlots"] = new JsonArray(PowerRingSlots.Select(s => (JsonNode)s!).ToArray()),

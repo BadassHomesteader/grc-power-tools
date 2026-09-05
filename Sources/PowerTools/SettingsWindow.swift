@@ -101,6 +101,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let clockZonesField = NSTextField(string: "")
     private let agentCodexCheck = NSButton(checkboxWithTitle: "Watch Codex — ChatGPT/Codex threads as rows (watch-only, click to focus)", target: nil, action: nil)
     private let agentCursorCheck = NSButton(checkboxWithTitle: "Watch Cursor — cloud agents + Agents Window sessions (watch-only)", target: nil, action: nil)
+    private let agentGrokCheck = NSButton(checkboxWithTitle: "Watch Grok Bot — its bots as rows (watch-only, click to focus)", target: nil, action: nil)
     private let hooksStatus = NSTextField(labelWithString: " ")
 
     // Power Ring: one popup per slot, tag = slot index (clockwise from top).
@@ -223,6 +224,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         agentCodexCheck.action = #selector(agentCodexToggled)
         agentCursorCheck.target = self
         agentCursorCheck.action = #selector(agentCursorToggled)
+        agentGrokCheck.target = self
+        agentGrokCheck.action = #selector(agentGrokToggled)
         for i in 0..<8 {
             let popup = NSPopUpButton(frame: .zero, pullsDown: false)
             for entry in PowerRingCatalog.all { popup.addItem(withTitle: entry.title) }
@@ -1194,7 +1197,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         hooksStatus.lineBreakMode = .byWordWrapping
         hooksStatus.preferredMaxLayoutWidth = 500
         return vstack([
-            section("Agent Pad", [agentPadCheck, note, agentCodexCheck, agentCursorCheck], width: 540),
+            section("Agent Pad", [agentPadCheck, note, agentCodexCheck, agentCursorCheck, agentGrokCheck], width: 540),
             section("Claude Code hooks", [hooksRow, hooksStatus], width: 540),
         ])
     }
@@ -1351,6 +1354,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         onConfigChange(config)
     }
 
+    @objc private func agentGrokToggled() {
+        config.agentPadGrok = (agentGrokCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
     @objc private func installHooksTapped() {
         do { hooksStatus.stringValue = try ClaudeHooksInstaller.install(port: config.agentPadPort) }
         catch { hooksStatus.stringValue = "Install failed — \(error.localizedDescription)" }
@@ -1490,6 +1499,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                 + (config.weatherPlaces.count == 1 ? "city" : "cities") + " set."
         agentCodexCheck.state = config.agentPadCodex ? .on : .off
         agentCursorCheck.state = config.agentPadCursor ? .on : .off
+        agentGrokCheck.state = config.agentPadGrok ? .on : .off
         refreshHooksStatus()
         powerRingCheck.state = config.powerRing ? .on : .off
         for (i, popup) in ringSlotPopups.enumerated() {

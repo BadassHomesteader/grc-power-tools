@@ -1950,6 +1950,18 @@ case "cursor-scan-test":
         print("store unreadable (locked?)")
     }
 
+case "grok-scan-test":
+    // Live verification: print the rows GrokBotWatcher derives from the REAL
+    // Grok Bot (Sand) store right now — names, states and counts only.
+    if let snaps = GrokBotWatcher.scan() {
+        for s in snaps {
+            print("\(s.id.prefix(44))  state=\(s.state.label)  changed=\(Int(-s.changed.timeIntervalSinceNow) / 60)m ago  name=\(s.name)  detail=\(s.detail)")
+        }
+        print("\(snaps.count) grok row(s)")
+    } else {
+        print("store unreadable (mid-write?)")
+    }
+
 case "usage-test":
     // Live verification: print the provider quota the Agent Pad header would
     // show right now, straight from the real CodexBar CLI. A read spawns a

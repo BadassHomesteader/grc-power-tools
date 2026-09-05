@@ -37,6 +37,7 @@ final class AppController {
             trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
             if !config.agentPadCodex { claudeRegistry.setExternal(kind: "codex", []) }
             if !config.agentPadCursor { claudeRegistry.setExternal(kind: "cursor", []) }
+            if !config.agentPadGrok { claudeRegistry.setExternal(kind: "grok", []) }
             applyNotchConfig()
             CaptureVisibility.set(config.showInCaptures)
         }
@@ -331,8 +332,7 @@ final class AppController {
             agentPad.onRefresh = { [weak self] in
                 guard let self else { return }
                 self.claudeRegistry.refreshDiscovered()
-                if self.config.agentPadCodex { CodexWatcher.refresh(into: self.claudeRegistry) }
-                if self.config.agentPadCursor { CursorWatcher.refresh(into: self.claudeRegistry) }
+                self.refreshWatchers()
             }
             // Closing the pad is a decision, not a glitch — honor it until the
             // user opens the pad again themselves.
@@ -986,6 +986,16 @@ final class AppController {
         return "\(s.msgs)\(plus) msgs · \(compactTokens(s.tokens))\(plus) tok"
     }
 
+    /// The watch-only fleets (Codex, Cursor, Grok Bot) re-derive their rows
+    /// from disk on request. Until now only the OPEN Agent Pad asked them to,
+    /// so with the pad closed the notch showed a stale or empty fleet.
+    private func refreshWatchers() {
+        if config.agentPadCodex { CodexWatcher.refresh(into: claudeRegistry) }
+        if config.agentPadCursor { CursorWatcher.refresh(into: claudeRegistry) }
+        if config.agentPadGrok { GrokBotWatcher.refresh(into: claudeRegistry) }
+    }
+    private var watcherTimer: Timer?
+
     private func startNotchStrip() {
         // Pads that were parked in the notch move to an ordinary anchor — the
         // strip is the only citizen of the housing now. What was in the notch
@@ -1088,6 +1098,7 @@ final class AppController {
             refresh: { [weak self] in
                 self?.claudeRegistry.pruneDead()
                 self?.claudeRegistry.refreshDiscovered()
+                self?.refreshWatchers()
             }))
 
         notchStrip.register(NotchStrip.Source(
@@ -1130,6 +1141,16 @@ final class AppController {
         }
         applyNotchConfig()
         notchStrip.start()
+        // The notch shows the fleet without the pad, so the watchers need a
+        // heartbeat of their own — 10s like the pad's tick, only while the
+        // notch's agents source is on.
+        watcherTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.config.notchStrip, self.config.notchAgents else { return }
+                self.refreshWatchers()
+            }
+        }
+        refreshWatchers()
     }
 
     /// Panels the notch hosts. Order here is the order in the module row.
@@ -1279,8 +1300,7 @@ final class AppController {
         padClosedByUser = false   // pad is up again — auto-reveal is back in play
         claudeRegistry.pruneDead()
         claudeRegistry.refreshDiscovered()  // catch silent sessions on every open
-        if config.agentPadCodex { CodexWatcher.refresh(into: claudeRegistry) }
-        if config.agentPadCursor { CursorWatcher.refresh(into: claudeRegistry) }
+        refreshWatchers()
         guard let screen else { return }
         agentPad.present(
             sessions: claudeRegistry.ordered, dark: config.appearance.isDark, screen: screen,
@@ -1296,7 +1316,7 @@ final class AppController {
             switch action {
             case .focus:
                 log("agentpad: row click → focus \(session.kind ?? "?") \(session.displayTitle)")
-                if session.isCursor { CursorWatcher.focus() } else { CodexWatcher.focus() }
+                if session.isGrok { GrokBotWatcher.focus() } else if session.isCursor { CursorWatcher.focus() } else { CodexWatcher.focus() }
                 overlay.showResult("→ \(session.displayTitle)")
             case .closeChat:
                 claudeRegistry.dismissSession(session.id)

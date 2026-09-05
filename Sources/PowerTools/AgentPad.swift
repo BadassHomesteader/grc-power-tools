@@ -116,6 +116,7 @@ final class AgentPad: NSObject {
         let bundle: String
         if s.isCodex { bundle = "com.openai.codex" }
         else if s.isCursor { bundle = "com.todesktop.230313mzl4w4u92" }
+        else if s.isGrok { bundle = GrokBotWatcher.bundleID }
         else if !s.hostBundleID.isEmpty { bundle = s.hostBundleID }
         else { bundle = "com.apple.Terminal" }
         if let hit = iconCache[bundle] { return hit }
@@ -729,6 +730,7 @@ final class AgentPadView: NSView {
     static func agentColor(_ session: ClaudeSession) -> NSColor {
         if session.isCodex { return NSColor(srgbRed: 0.35, green: 0.45, blue: 1, alpha: 1) }
         if session.isCursor { return NSColor(srgbRed: 0.65, green: 0.4, blue: 0.95, alpha: 1) }
+        if session.isGrok { return NSColor(srgbRed: 0.82, green: 0.84, blue: 0.9, alpha: 1) }   // Grok: near-white, xAI's palette
         return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)   // Claude terracotta
     }
 

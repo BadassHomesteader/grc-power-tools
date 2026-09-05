@@ -361,6 +361,8 @@ struct Config: Codable {
     var agentPadCodex: Bool = true
     /// Show Cursor sessions (cloud agents + Agents Window) as watch-only rows.
     var agentPadCursor: Bool = true
+    /// Show Grok Bot (Anysphere Sand) bots as watch-only rows.
+    var agentPadGrok: Bool = true
     /// Reopen pads that were open when the app last quit (updates included).
     var restorePads: Bool = true
 
@@ -493,7 +495,7 @@ struct Config: Codable {
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs, macroPadThreeFingerTap, macroPadSummonFingers
-        case agentPad, agentPadPort, agentPadCodex, agentPadCursor, restorePads
+        case agentPad, agentPadPort, agentPadCodex, agentPadCursor, agentPadGrok, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case showInCaptures
         case notchModules, notchClockZones, weatherPlaces, weatherPlace, weatherLat, weatherLon, weatherFahrenheit
@@ -571,6 +573,7 @@ struct Config: Codable {
         agentPadPort = field(.agentPadPort, 8377)
         agentPadCodex = field(.agentPadCodex, true)
         agentPadCursor = field(.agentPadCursor, true)
+        agentPadGrok = field(.agentPadGrok, true)
         restorePads = field(.restorePads, true)
         notchStrip = field(.notchStrip, true)
         notchAgents = field(.notchAgents, true)

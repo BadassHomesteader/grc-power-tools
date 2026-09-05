@@ -117,8 +117,9 @@ struct ClaudeSession: Codable {
     var kind: String? = nil
     var isCodex: Bool { kind == "codex" }
     var isCursor: Bool { kind == "cursor" }
+    var isGrok: Bool { kind == "grok" }
     /// No injection channel (Electron hosts): row = presence + state + focus.
-    var isWatchOnly: Bool { isCodex || isCursor }
+    var isWatchOnly: Bool { isCodex || isCursor || isGrok }
     /// Hosted by an IDE extension rather than a terminal.
     var isIDE: Bool {
         (entrypoint ?? "").contains("vscode") || Self.ideBundles.contains(hostBundleID)
@@ -126,7 +127,7 @@ struct ClaudeSession: Codable {
     static let ideBundles: Set<String> = [
         "com.google.antigravity-ide", "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92"]
     /// The row's agent-kind chip: which program is running this session.
-    var kindChip: String { isCodex ? "Codex" : isCursor ? "Cursor" : isIDE ? "IDE" : "CLI" }
+    var kindChip: String { isCodex ? "Codex" : isCursor ? "Cursor" : isGrok ? "Grok" : isIDE ? "IDE" : "CLI" }
     var isEnded: Bool { endedAt != nil }
 
     /// Where Claude Code keeps this session's transcript. The path is fully
