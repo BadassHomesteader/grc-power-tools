@@ -964,6 +964,54 @@ final class AppController {
     private var stripSessions: [ClaudeSession] {
         AgentPad.triageSorted(AgentPad.visible(claudeRegistry.ordered)).map(AgentPad.enriched)
     }
+    /// Only the LIVE rows earn a dot in the collapsed strip and a live card in
+    /// the list — the folded ones (idle-long, or an autonomous Grok bot merely
+    /// running) belong under the Recent divider, not as menu-bar lights.
+    private var stripLive: [ClaudeSession] { stripSessions.filter { !AgentPad.isRecent($0) } }
+    private var stripRecent: [ClaudeSession] { stripSessions.filter(AgentPad.isRecent) }
+
+    /// One card for a session, shared by the live list and the Recent section
+    /// so a row looks the same wherever it lands.
+    private func agentCard(for s: ClaudeSession) -> NotchStrip.Card {
+        var card = NotchStrip.Card(
+            title: s.label,
+            subtitle: Self.activityLine(for: s),
+            accent: AgentPadView.stateColor(s.state),
+            repo: s.projectName,
+            state: s.state.chip,
+            model: s.model,
+            branch: s.branch,
+            metrics: Self.metricsLine(for: s))
+        card.icon = AgentPad.agentIcon(for: s)
+        card.kind = s.kindChip
+        card.isRecent = AgentPad.isRecent(s)
+        card.elapsed = card.isRecent
+            ? Elapsed.format(Date().timeIntervalSince(s.stateChanged)) + " ago"
+            : Elapsed.format(Date().timeIntervalSince(s.startedAt ?? s.started))
+        if card.isRecent {
+            // A folded row has one control: ✕ clears it until it speaks again.
+            card.actionsAlways = true
+            card.actions = [("✕", nil, { [weak self] in self?.claudeRegistry.dismissSession(s.id) })]
+        } else if !s.isWatchOnly {
+            if s.state == .needsPermission {
+                card.actionsAlways = true
+                card.actions = [
+                    ("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1),
+                     { [weak self] in self?.handleAgentPadAction(s, .accept) }),
+                    ("✕", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1),
+                     { [weak self] in self?.handleAgentPadAction(s, .deny) }),
+                ]
+            } else {
+                card.actions = [
+                    ("✱", nil, { [weak self] in self?.popNotchRowMenu(for: s) }),
+                    ("✎", nil, { [weak self] in self?.handleAgentPadAction(s, .prompt) }),
+                    ("⇆", nil, { [weak self] in self?.handleAgentPadAction(s, .cycleMode) }),
+                    ("■", nil, { [weak self] in self?.handleAgentPadAction(s, .interrupt) }),
+                ]
+            }
+        }
+        return card
+    }
 
     /// Line 3 of a notch row: what a running session is doing right now, the
     /// ask or the error while it waits — and nothing at all when it is idle.
@@ -1012,7 +1060,8 @@ final class AppController {
         notchStrip.register(NotchStrip.Source(
             id: "agents", priority: 0, maxMarks: 5,
             marks: { [weak self] in
-                (self?.stripSessions ?? []).map { s in
+                // Only LIVE rows are dots — a folded row is not a menu-bar light.
+                (self?.stripLive ?? []).map { s in
                     NotchStrip.Mark(
                         color: AgentPadView.stateColor(s.state),
                         // The colour already says needs-you (terracotta / red);
@@ -1024,74 +1073,28 @@ final class AppController {
                 }
             },
             card: { [weak self] i in
-                guard let self, i < self.stripSessions.count else { return nil }
-                let s = self.stripSessions[i]
-                var card = NotchStrip.Card(
-                    title: s.label,
-                    subtitle: Self.activityLine(for: s),
-                    accent: AgentPadView.stateColor(s.state),
-                    repo: s.projectName,
-                    state: s.state.chip,
-                    model: s.model,
-                    branch: s.branch,
-                    metrics: Self.metricsLine(for: s))
-                card.icon = AgentPad.agentIcon(for: s)
-                card.kind = s.kindChip
-                // A session idle past the pad's threshold folds under Recent
-                // too, though its process is still alive — and like a finished
-                // one it reads "how long ago", not "how long running".
-                card.isRecent = AgentPad.isRecent(s)
-                card.elapsed = card.isRecent
-                    ? Elapsed.format(Date().timeIntervalSince(s.stateChanged)) + " ago"
-                    : Elapsed.format(Date().timeIntervalSince(s.startedAt ?? s.started))
-                // The whole reason Mid exists: answer the ask without opening
-                // anything. Only a permission gets buttons.
-                // The same controls the pad's rows carry, so the notch is not a
-                // read-only copy of it. Watch-only agents (Codex, Cursor) have
-                // no injection channel, so they get none — as in the pad.
-                if !s.isWatchOnly {
-                    if s.state == .needsPermission {
-                        card.actionsAlways = true
-                        card.actions = [
-                            ("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1),
-                             { [weak self] in self?.handleAgentPadAction(s, .accept) }),
-                            ("✕", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1),
-                             { [weak self] in self?.handleAgentPadAction(s, .deny) }),
-                        ]
-                    } else {
-                        card.actions = [
-                            ("✱", nil, { [weak self] in self?.popNotchRowMenu(for: s) }),
-                            ("✎", nil, { [weak self] in self?.handleAgentPadAction(s, .prompt) }),
-                            ("⇆", nil, { [weak self] in self?.handleAgentPadAction(s, .cycleMode) }),
-                            ("■", nil, { [weak self] in self?.handleAgentPadAction(s, .interrupt) }),
-                        ]
-                    }
-                }
-                // A row that has sat idle for hours has one control: ✕ clears
-                // it from the list (the pad's Close Chat), until it speaks again.
-                if card.isRecent {
-                    card.actionsAlways = true
-                    card.actions = [("✕", nil, { [weak self] in self?.claudeRegistry.dismissSession(s.id) })]
-                }
-                return card
+                guard let self, i < self.stripLive.count else { return nil }
+                return self.agentCard(for: self.stripLive[i])
             },
             // Row click = focus that session's terminal, the same thing the
             // pad's own row click does. The notch does not launch the pad.
             activate: { [weak self] i in
-                guard let self, i >= 0, i < self.stripSessions.count else { return }
-                self.handleAgentPadAction(self.stripSessions[i], .focus)
+                guard let self, i >= 0, i < self.stripLive.count else { return }
+                self.handleAgentPadAction(self.stripLive[i], .focus)
             },
             // The band header: how many rows want attention or are working.
             header: { [weak self] in
-                let live = self?.stripSessions ?? []
-                let active = live.filter {
+                let active = (self?.stripLive ?? []).filter {
                     $0.state == .busy || $0.state == .needsPermission || $0.state == .needsInput
                 }.count
                 return (title: "Agents", active: active)
             },
-            // Finished sessions, under the Recent divider: what just wrapped up.
+            // Under the Recent divider: the folded rows (idle-long, and Grok bots
+            // merely running) first, then finished sessions (tombstones).
             recent: { [weak self] in
-                (self?.claudeRegistry.recentEnded ?? []).map { s in
+                guard let self else { return [] }
+                let folded = self.stripRecent.map { self.agentCard(for: $0) }
+                let ended = self.claudeRegistry.recentEnded.map { s -> NotchStrip.Card in
                     var card = NotchStrip.Card(
                         title: s.label, subtitle: "", accent: NSColor(white: 0.55, alpha: 1),
                         repo: s.projectName, state: "", model: s.model, branch: s.branch,
@@ -1099,11 +1102,11 @@ final class AppController {
                     card.icon = AgentPad.agentIcon(for: s)
                     card.kind = s.kindChip
                     card.elapsed = s.endedAt.map { Elapsed.format(Date().timeIntervalSince($0)) + " ago" } ?? ""
-                    // ✕ forgets the tombstone (and keeps it out until the session speaks again).
                     card.actionsAlways = true
                     card.actions = [("✕", nil, { [weak self] in self?.claudeRegistry.dismissSession(s.id) })]
                     return card
                 }
+                return folded + ended
             },
             // The ↻ in the band: drop dead rows, catch sessions the hooks missed.
             refresh: { [weak self] in

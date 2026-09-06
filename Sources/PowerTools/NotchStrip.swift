@@ -201,9 +201,9 @@ final class NotchStrip {
     /// Finished rows under Recent are two lines, dimmed.
     static let recentRow: CGFloat = 52
     static let recentHeaderH: CGFloat = 18
-    static let maxRecentRows = 2
+    static let maxRecentRows = 5
     /// The list's content ceiling below the housing, the way `maxModuleContent`
-    /// caps a module: five live rows, the Recent divider, two finished rows.
+    /// caps a module: five live rows, the Recent divider, and the folded rows.
     static var maxListContent: CGFloat {
         CGFloat(maxListRows) * liveRow + recentHeaderH + CGFloat(maxRecentRows) * recentRow
     }
