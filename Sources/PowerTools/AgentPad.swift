@@ -165,9 +165,20 @@ final class AgentPad: NSObject {
     /// away the answer to "what was I just doing?" — they fold under a Recent
     /// header instead, capped so a week of chats can't push the pad off-screen.
     nonisolated static func isRecent(_ s: ClaudeSession) -> Bool {
-        s.state == .idle && s.stateChanged.timeIntervalSinceNow < -hideIdleAfter
+        // A Grok bot is autonomous — you don't drive it — so a merely-running or
+        // idle bot folds under Recent right away; it earns a live row only when
+        // it needs you (asks for input, has unread output, wants permission, or
+        // failed). This keeps the working bots from crowding out sessions that
+        // actually want the user.
+        if s.isGrok {
+            switch s.state {
+            case .busy, .idle: return true
+            case .needsInput, .unseen, .needsPermission, .error: return false
+            }
+        }
+        return s.state == .idle && s.stateChanged.timeIntervalSinceNow < -hideIdleAfter
     }
-    nonisolated private static let maxRecent = 3
+    nonisolated private static let maxRecent = 5   // room for the folded bots
 
     nonisolated static func visible(_ sessions: [ClaudeSession]) -> [ClaudeSession] {
         let live = sessions.filter { !isRecent($0) }
@@ -181,12 +192,16 @@ final class AgentPad: NSObject {
     /// its state is — the pad exists to surface whoever needs the user now.
     nonisolated static func triageSorted(_ sessions: [ClaudeSession]) -> [ClaudeSession] {
         func rank(_ s: ClaudeSession) -> Int {
+            // The whole Recent group sorts below everything live, so it stays
+            // one contiguous block under the header — a running-but-recent Grok
+            // bot must not jump up among the live rows.
+            if isRecent(s) { return 6 }
             switch s.state {
             case .needsPermission: return 0
             case .needsInput, .unseen: return 1
             case .error: return 2
             case .busy: return 3
-            case .idle: return isRecent(s) ? 5 : 4
+            case .idle: return 4
             }
         }
         return sessions.sorted {
