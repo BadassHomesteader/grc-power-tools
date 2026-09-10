@@ -181,14 +181,16 @@ final class NotchStrip {
     /// Ceiling on a module's content, the same discipline the list has: the
     /// notch expands, it does not become a window. The tab row is charged
     /// against it, so it grows with the row — 274pt stays free for the module.
-    static let maxModuleContent: CGFloat = 332
-    /// Launcher tiles and module tabs are sized to be read and hit at a glance
-    /// from the menu bar: 26pt / 22pt glyphs over 11pt / 10.5pt titles.
+    static let maxModuleContent: CGFloat = 354
+    /// Launcher tiles are sized to be read and hit at a glance from the menu
+    /// bar: 26pt glyphs over 11pt titles.
     static let pickerRow: CGFloat = 80
     /// While a module is open, its siblings stay one click away on a tab row
     /// under the housing. Without it a module was a dead end — there was no way
-    /// back to the row and no way out at all.
-    static let moduleTabRow: CGFloat = 58
+    /// back to the row and no way out at all. It IS the module row — same
+    /// height, same tile rects, same drawing — so opening a module never
+    /// shrinks or moves an icon; its ✕ rides in the band beside the camera.
+    static let moduleTabRow: CGFloat = pickerRow
 
     /// The body width of every expanded shape, in housings. Set by the agent
     /// list (MacNotch's "AI Coding" panel): a 2× body could not seat a row with
@@ -1028,12 +1030,18 @@ final class NotchStripView: NSView {
     /// on a screenshot: the framebuffer faithfully contains the pixels behind
     /// the camera that no human can see, so a screenshot check passes on
     /// precisely the bug it exists to catch.
-    /// A tab in the module bar. The last slot is the close button.
+    /// A tab in the module bar — laid out exactly like the module row's tiles,
+    /// so the icons hold still when a module opens. -1 is the close button.
     func tabRect(_ i: Int) -> NSRect {
-        let closeW: CGFloat = 34
-        let w = (contentW - closeW) / CGFloat(max(tabs.count, 1))
-        if i < 0 { return NSRect(x: contentDX + contentW - closeW, y: notchHeight, width: closeW, height: NotchStrip.moduleTabRow) }
+        if i < 0 { return closeRect }
+        let w = contentW / CGFloat(max(tabs.count, 1))
         return NSRect(x: contentDX + CGFloat(i) * w, y: notchHeight, width: w, height: NotchStrip.moduleTabRow)
+    }
+    /// The module's ✕, up in the band at the body's far right — out of the tab
+    /// row, which would otherwise have to give it a slot and narrow every tab.
+    var closeRect: NSRect {
+        let sz: CGFloat = 26
+        return NSRect(x: contentDX + contentW - 12 - sz, y: (notchHeight - sz) / 2, width: sz, height: sz)
     }
 
     /// The module row's tiles.
@@ -1068,10 +1076,11 @@ final class NotchStripView: NSView {
         let left = contentDX + 12
         return NSRect(x: left, y: 0, width: max(cutoutRect.minX - Self.bandGap - left, 0), height: notchHeight)
     }
-    /// Everything painted in the band while a list is open. Outside
+    /// Everything painted in the band while a list or a module is open. Outside
     /// `contentRects` on purpose (the band is where it lives), but the harness
     /// asserts none of it ever touches the housing.
     var bandRects: [NSRect] {
+        if moduleHeight > 0 { return [closeRect] }
         guard listMode, !cards.isEmpty else { return [] }
         return [headerRect, refreshRect, listGridRect].filter { $0.width > 0 }
     }
@@ -1281,32 +1290,14 @@ final class NotchStripView: NSView {
         NSColor.white.withAlphaComponent(0.07).setFill()
         NSRect(x: contentDX, y: notchHeight, width: contentW, height: NotchStrip.moduleTabRow).fill()
         for (i, t) in tabs.enumerated() {
-            let r = tabRect(i)
-            if t.active {
-                NSColor.white.withAlphaComponent(0.14).setFill()
-                NSBezierPath(roundedRect: r.insetBy(dx: 3, dy: 5), xRadius: 8, yRadius: 8).fill()
-            } else if hoveredTab == i {
-                NSColor.white.withAlphaComponent(0.08).setFill()
-                NSBezierPath(roundedRect: r.insetBy(dx: 3, dy: 5), xRadius: 8, yRadius: 8).fill()
-            }
-            // Icon over label, the same shape as the launcher tiles.
-            let g: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 22),
-                .foregroundColor: NSColor.white.withAlphaComponent(t.active ? 1 : 0.85)]
-            let gs = (t.glyph as NSString).size(withAttributes: g)
-            (t.glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.minY + 5), withAttributes: g)
-            // 10.5, not the launcher's 11: tabs share the row with ✕, and at 11
-            // "Agent Pad" and "Macro Pad" all but touched.
-            let ta: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 10.5, weight: .medium),
-                .foregroundColor: NSColor.white.withAlphaComponent(t.active ? 0.95 : 0.6)]
-            let ts = (t.title as NSString).size(withAttributes: ta)
-            (t.title as NSString).draw(at: NSPoint(x: r.midX - ts.width / 2, y: r.minY + 34), withAttributes: ta)
+            drawTile(glyph: t.glyph, title: t.title, in: tabRect(i),
+                     plate: t.active ? 0.14 : (hoveredTab == i ? 0.08 : 0),
+                     glyphAlpha: t.active ? 1 : 0.85, titleAlpha: t.active ? 0.95 : 0.6)
         }
         let close = tabRect(-1)
         if hoveredTab == -1 {
             NSColor.white.withAlphaComponent(0.12).setFill()
-            NSBezierPath(roundedRect: close.insetBy(dx: 6, dy: 4), xRadius: 6, yRadius: 6).fill()
+            NSBezierPath(roundedRect: close, xRadius: 6, yRadius: 6).fill()
         }
         let x = "✕" as NSString
         let xa: [NSAttributedString.Key: Any] = [
@@ -1318,21 +1309,30 @@ final class NotchStripView: NSView {
     /// The module row: glyph over title, one tile each.
     private func drawPicker() {
         for (i, m) in picker.enumerated() {
-            let r = tileRect(i)
-            if hoveredTile == i {
-                NSColor.white.withAlphaComponent(0.1).setFill()
-                NSBezierPath(roundedRect: r.insetBy(dx: 4, dy: 6), xRadius: 8, yRadius: 8).fill()
-            }
-            let g: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 26), .foregroundColor: NSColor.white]
-            let t: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                .foregroundColor: NSColor.white.withAlphaComponent(0.7)]
-            let gs = (m.glyph as NSString).size(withAttributes: g)
-            (m.glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.minY + 13), withAttributes: g)
-            let ts = (m.title as NSString).size(withAttributes: t)
-            (m.title as NSString).draw(at: NSPoint(x: r.midX - ts.width / 2, y: r.minY + 47), withAttributes: t)
+            drawTile(glyph: m.glyph, title: m.title, in: tileRect(i),
+                     plate: hoveredTile == i ? 0.1 : 0, glyphAlpha: 1, titleAlpha: 0.7)
         }
+    }
+
+    /// One module tile, glyph over title. The module row and the tab row both
+    /// draw through here, in identical rects, so the icons are the same size
+    /// whether or not a module is open — they drifted apart when each row kept
+    /// its own copy.
+    private func drawTile(glyph: String, title: String, in r: NSRect,
+                          plate: CGFloat, glyphAlpha: CGFloat, titleAlpha: CGFloat) {
+        if plate > 0 {
+            NSColor.white.withAlphaComponent(plate).setFill()
+            NSBezierPath(roundedRect: r.insetBy(dx: 4, dy: 6), xRadius: 8, yRadius: 8).fill()
+        }
+        let g: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 26), .foregroundColor: NSColor.white.withAlphaComponent(glyphAlpha)]
+        let t: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white.withAlphaComponent(titleAlpha)]
+        let gs = (glyph as NSString).size(withAttributes: g)
+        (glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.minY + 13), withAttributes: g)
+        let ts = (title as NSString).size(withAttributes: t)
+        (title as NSString).draw(at: NSPoint(x: r.midX - ts.width / 2, y: r.minY + 47), withAttributes: t)
     }
 
     /// A small pill — the row's dense metadata, same language as the pad's.

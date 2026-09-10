@@ -1784,6 +1784,17 @@ case "notchstrip-live-test":
             opened.removeAll()
             clickTab(1); pump(0.4)
             check(opened.contains("beta"), "13j: a tab switches module without leaving the notch")
+            // 13j2-3: the tab row IS the module row — same height, same tile
+            // width — so icons never shrink when a module opens; the ✕ rides
+            // in the band beside the camera, clear of the housing.
+            let tab0 = view.tabRect(0)
+            check(abs(tab0.height - NotchStrip.pickerRow) < 0.5
+                  && abs(tab0.width - view.contentW / CGFloat(strip.moduleCount)) < 0.5,
+                  "13j2: tabs are the module row's tiles (\(Int(tab0.width))×\(Int(tab0.height)))")
+            let closeBand = strip.bandRectsInScreen
+            check(closeBand.count == 1 && closeBand.allSatisfy {
+                      $0.minY >= field.notch.minY - 1 && !$0.insetBy(dx: -8, dy: 0).intersects(field.notch) },
+                  "13j3: the ✕ sits in the band beside the camera, clear of the housing")
             clickTab(-1); pump(0.4)
             check(abs(strip.frame.height - minFrame.height) < 1, "13k: ✕ on the tab row closes")
         } else {
