@@ -1450,11 +1450,12 @@ case "notchstrip-live-test":
             card: { _ in NotchStrip.Card(title: "82% used", subtitle: "resets in 2h", accent: .systemOrange) },
             activate: { clicked.append(("quota", $0)) }))
 
-        // 1: nothing to say ⇒ no pixels at all.
+        // 1: nothing to say and no modules ⇒ no pixels at all. (With modules the
+        // launcher keeps the notch up — 15d.)
         agentCount = 0
         strip.apply(master: true, enabled: ["agents", "quota"])
         pump()
-        check(!strip.isVisible, "1: zero marks ⇒ no window (no placeholder dot)")
+        check(!strip.isVisible, "1: zero marks, no modules ⇒ no window (no placeholder dot)")
 
         // 2: Min geometry.
         agentCount = 3
@@ -1868,8 +1869,12 @@ case "notchstrip-live-test":
             check(strip.mode == .picker, "15b: the in-list launcher opens the module row on hover")
             // 15c: a LIST tile (Agent Pad) shows the agents list on hover, unpinned.
             strip.collapse(); pump(0.3)
+            // Wired like the real tile: `open` (toggle the floating pad) is the
+            // fallback when there is no list to show.
+            var agentPadToggled = 0
             strip.registerModule(NotchStrip.Module(id: "agentpad", glyph: "◫", title: "Agent Pad", height: 0,
-                                                   make: { NSView() }, list: "agents"))
+                                                   make: { NSView() }, open: { agentPadToggled += 1 },
+                                                   list: "agents"))
             agentCount = 3
             strip.apply(master: true, enabled: ["agents"]); pump(0.3)
             strip.openPicker(); pump(0.3)
@@ -1879,6 +1884,66 @@ case "notchstrip-live-test":
                   "15c: hovering the Agent Pad tile shows the agents list in the notch")
             view.mouseExited(with: outEv); pump(0.4)
             check(strip.mode == .min, "15c2: a hover-opened list folds back on leave")
+
+            // 15d: nothing running. The launcher alone keeps the notch up — its
+            // module row is a menu, and a menu that vanishes whenever no agent
+            // is running is not one you can use.
+            agentCount = 0
+            recentCount = 0
+            strip.refresh(); pump(0.4)
+            check(strip.isVisible, "15d: no agents ⇒ the notch stays up for its modules")
+            check(strip.placedMarks.count == 1 && strip.placedMarks.first?.source == 1,
+                  "15d2: …as the four-square launcher alone (\(strip.placedMarks.count) mark(s))")
+            check(strip.contentRectsInScreen.allSatisfy { !$0.intersects(field.notch) },
+                  "15d3: …clear of the housing")
+            // 15e: the Agent Pad tile with nothing to list must not open an empty
+            // list — that folds the notch under the cursor mid-hover.
+            strip.openPicker(); pump(0.3)
+            moveTo(NSPoint(x: lt.midX, y: lt.midY)); pump(0.35)
+            check(strip.mode == .picker, "15e: hovering Agent Pad with nothing running keeps the module row")
+            // 15f: …a click opens the floating pad instead, as when the source is off.
+            strip.openModule(strip.moduleCount - 1); pump(0.3)
+            check(agentPadToggled == 1 && strip.mode == .min,
+                  "15f: clicking it then opens the floating pad (toggled \(agentPadToggled))")
+            // 15g: finished rows are something to list — Recent alone opens it.
+            recentCount = 2
+            strip.openPicker(); pump(0.3)
+            moveTo(NSPoint(x: lt.midX, y: lt.midY)); pump(0.35)
+            check({ if case .list(0) = strip.mode { return true } else { return false } }()
+                  && strip.frame.height > field.notch.height,
+                  "15g: no live agents, but Recent rows still open the list (h \(Int(strip.frame.height)))")
+            recentCount = 0
+            strip.collapse(); pump(0.3)
+            // 15h: the master switch still takes it all away, launcher included.
+            strip.apply(master: false, enabled: ["agents"]); pump(0.3)
+            check(!strip.isVisible, "15h: master off ⇒ no window, even with modules")
+            // 15i: master on but NO source switched on — the launcher alone must
+            // still sit on the trailing shoulder (group 0 is the leading one),
+            // still open the module row on a click, and its tiles still land.
+            strip.apply(master: true, enabled: []); pump(0.4)
+            let lone = strip.placedMarks
+            let gx = strip.frame.minX + (lone.first?.rect.minX ?? 0)
+            check(strip.isVisible && lone.count == 1 && gx > field.notch.maxX,
+                  "15i: no sources ⇒ the launcher alone, right of the housing (x \(Int(gx)) vs \(Int(field.notch.maxX)))")
+            if let (p2, v2) = strip.testSurface, let g = lone.first {
+                func tap(_ pt: NSPoint) {
+                    let ev = NSEvent.mouseEvent(with: .leftMouseDown, location: v2.convert(pt, to: nil),
+                                                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: p2.windowNumber, context: nil,
+                                                eventNumber: 0, clickCount: 1, pressure: 1)!
+                    v2.mouseDown(with: ev)
+                }
+                tap(NSPoint(x: g.rect.midX, y: g.rect.midY)); pump(0.4)
+                check(strip.mode == .picker, "15i2: …a click on it opens the module row")
+                let t0 = v2.tileRect(0)
+                tap(NSPoint(x: t0.midX, y: t0.midY)); pump(0.4)
+                check({ if case .module(0) = strip.mode { return true } else { return false } }(),
+                      "15i3: …and its tiles still open their module")
+                strip.collapse(); pump(0.3)
+            } else {
+                check(false, "15i2: no surface")
+            }
+            strip.apply(master: true, enabled: ["agents"]); pump(0.3)
         } else {
             check(false, "15a: no surface")
         }

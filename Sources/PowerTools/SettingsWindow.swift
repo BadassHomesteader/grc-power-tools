@@ -1204,9 +1204,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     private func notchTab() -> NSView {
         let note = NSTextField(wrappingLabelWithString:
-            "One surface lives in the notch, and features publish into it. It draws nothing "
-            + "when there is nothing to say, so a quiet machine shows an empty menu bar. "
-            + "Hover a dot for detail; click it to open the full pad.")
+            "One surface lives in the notch, and features publish into it. With no agents "
+            + "running it keeps just the four-square launcher beside the camera, so the "
+            + "modules stay one hover away. Hover a dot for detail; click it to pin the list.")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         note.preferredMaxLayoutWidth = 500

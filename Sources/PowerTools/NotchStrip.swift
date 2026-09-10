@@ -246,8 +246,10 @@ final class NotchStrip {
     func registerModule(_ module: Module) { modules.append(module) }
 
     /// The grid mark (four squares) rides at the end of the strip as its own pseudo-source, so it
-    /// gets the existing layout, hit-testing and cutout safety for free.
-    private var moduleMarkGroup: Int? { modules.isEmpty ? nil : activeSources.count }
+    /// gets the existing layout, hit-testing and cutout safety for free. Group 0 is the LEADING
+    /// shoulder, so with no source switched on an empty group holds that slot and the launcher
+    /// still sits trailing, where it is in every other state.
+    private var moduleMarkGroup: Int? { modules.isEmpty ? nil : max(activeSources.count, 1) }
 
     /// Master switch plus one flag per source id.
     func apply(master: Bool, enabled: Set<String>) {
@@ -293,6 +295,7 @@ final class NotchStrip {
     private func groups() -> [[Mark]] {
         var out = sourceGroups()
         if !modules.isEmpty {
+            if out.isEmpty { out.append([]) }   // hold the leading shoulder — see moduleMarkGroup
             out.append([Mark(color: NSColor(white: 0.75, alpha: 1), dim: true, tooltip: "Modules", grid: true)])
         }
         return out
@@ -315,12 +318,13 @@ final class NotchStrip {
 
     func refresh() {
         let live = groups()
-        // No empty state, deliberately: zero marks means zero pixels. That is
-        // what makes "on by default" safe — a quiet machine shows nothing at
-        // all rather than a placeholder dot sitting in the menu bar forever.
-        // The grid mark alone is not a reason to occupy the menu bar: an app with
-        // nothing to say still shows nothing.
-        guard let screen = notchScreen, sourceGroups().contains(where: { !$0.isEmpty }) else {
+        // The four-square launcher alone keeps the strip up: the module row
+        // (Settings, the pads, Weather…) is a menu, and it has to stay reachable
+        // when no agent is running — hiding it then took the menu away exactly
+        // when the machine was quiet. Only the master switch, or a notch with no
+        // modules, draws nothing; there is still no placeholder status dot.
+        let hasMarks = sourceGroups().contains { !$0.isEmpty }
+        guard let screen = notchScreen, hasMarks || (masterOn && !modules.isEmpty) else {
             teardown()
             return
         }
@@ -328,8 +332,10 @@ final class NotchStrip {
         let firstShow = panel == nil
         build(on: screen)
         if firstShow { onLog?("notch: strip up — \(live.map(\.count)) mark(s) per source") }
-        // A Mid whose source or mark has gone away falls back to Min.
-        if case let .list(si) = mode, si >= activeSources.count || live[si].isEmpty { mode = .min }
+        // A Mid whose source has gone away falls back to Min. A list whose live
+        // marks have all gone stays while it still has Recent rows — a list with
+        // no rows at all folds below, once the cards are built.
+        if case let .list(si) = mode, si >= activeSources.count { mode = .min }
         if case let .module(i) = mode, i >= modules.count { mode = .min }
         var cards: [Card] = []
         var listMode = false
@@ -526,7 +532,7 @@ final class NotchStrip {
     /// for, and a status surface that launches windows when touched is not a
     /// status surface.
     private func click(_ hit: Placed?) {
-        guard let hit, hit.source <= activeSources.count else { return }
+        guard let hit, hit.source <= activeSources.count || hit.source == moduleMarkGroup else { return }
         switch mode {
         case .min:
             if hit.source == moduleMarkGroup { openPicker(); return }
@@ -611,10 +617,17 @@ final class NotchStrip {
     /// it so it stays. Default pinned so the test hooks and click paths keep
     /// their old behavior; the hover callers pass `pinned: false`.
     func openPicker(pinned pin: Bool = true) { mode = .picker; pinned = pin; refresh() }
-    /// The source index a list tile points at, if that source is switched on.
+    /// The source index a list tile points at, if that source is switched on
+    /// AND has a row to show. An empty list folds the notch the moment it opens
+    /// — under the cursor, from a tile still being hovered — so with nothing
+    /// running the tile behaves like an action tile: hover does nothing, a
+    /// click opens the floating pad.
     private func listSource(of module: Module) -> Int? {
-        guard let sid = module.list else { return nil }
-        return activeSources.firstIndex { $0.id == sid }
+        guard let sid = module.list,
+              let si = activeSources.firstIndex(where: { $0.id == sid }) else { return nil }
+        let source = activeSources[si]
+        guard !source.marks().isEmpty || !(source.recent?() ?? []).isEmpty else { return nil }
+        return si
     }
 
     /// Show a source's list from a tile — the same shape a dot hover opens,
