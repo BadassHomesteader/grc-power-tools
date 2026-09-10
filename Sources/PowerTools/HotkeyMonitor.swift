@@ -31,7 +31,8 @@ final class HotkeyMonitor {
         case grid                         // draw-a-grid window placement
         case windowPalette                // Moom-style snap palette
         case advancedPaste                // paste-as palette
-        case clipboardHistory             // recent-copies palette (Win+V)
+        case clipboardHistory             // recent-copies drawer (Win+V)
+        case clipboardDrawerKey(Int)      // Esc/↵/↑↓/1–9 while the drawer is out; -1 = any other key (close)
         case quickCapture(connectionId: String)  // send a line to a configured connection
         case findMouse                    // spotlight the cursor
         case colorPicker                  // hold + K — screen eyedropper, copy hex
@@ -88,6 +89,9 @@ final class HotkeyMonitor {
     /// True while the annotation whiteboard is up (same discipline) — plain Esc
     /// must reach it even when its text tool's field editor is first responder.
     var whiteboardVisible = false
+    /// True while the clipboard drawer is out (same discipline). It never takes
+    /// key, so its keys — Esc, ↵, ↑/↓, 1–9 — are routed from here instead.
+    var clipboardDrawerVisible = false
     /// Buttons in the pad's current profile — digits ≥ this pass through.
     var macroPadButtonCount = 0
     /// Three-finger-tap summon: feature flag + "a summoned pad is up" mirror
@@ -203,6 +207,11 @@ final class HotkeyMonitor {
     private static let kVK_ForwardDelete: Int64 = 117
     private static let kVK_Backspace: Int64 = 51
     private static let kVK_LeftBracket: Int64 = 33   // [ — for ⌘[ (Finder Back)
+    /// What the clipboard drawer answers to: Esc, ↵ (and keypad Enter), ↑/↓, 1–9.
+    private static let drawerKeyCodes: Set<Int64> = [
+        kVK_Escape, kVK_Return, 76, kVK_UpArrow, kVK_DownArrow,
+        18, 19, 20, 21, 23, 22, 26, 28, 25,
+    ]
 
     init(hotkey: Config.Hotkey) {
         self.hotkey = hotkey
@@ -317,6 +326,26 @@ final class HotkeyMonitor {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+
+        // While the clipboard drawer is out, its keys come through here. The
+        // drawer never activates Power Tools (activating raised the app's other
+        // windows over your work), so the app you are in keeps focus and these
+        // keys would otherwise land there. Esc, ↵, ↑/↓ and 1–9 drive the drawer
+        // and are swallowed; any other key — ⌘-combos included — closes it the
+        // way a menu closes and passes on, so typing on never picks a clip.
+        // First in line, so ↵ beats Finder's ⏎-opens and the remaps below.
+        if clipboardDrawerVisible, !held, type == .keyDown {
+            let bare = flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).isEmpty
+            if bare, Self.drawerKeyCodes.contains(keyCode) {
+                swallowedKeyUps.insert(keyCode)
+                let arrow = keyCode == Self.kVK_UpArrow || keyCode == Self.kVK_DownArrow
+                if arrow || event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                    dispatch(.clipboardDrawerKey(Int(keyCode)))
+                }
+                return nil
+            }
+            dispatch(.clipboardDrawerKey(-1))
+        }
 
         // ⌘Tab / ⇧⌘Tab → Alt-Tab-style window switcher (when enabled). This
         // suppresses the macOS app switcher. ⌃/⌥ combos pass through untouched.

@@ -187,6 +187,8 @@ final class AppController {
                 self.openQuickCapture(connectionId: connId)
             case .clipboardHistory:
                 self.openClipboardHistory()
+            case .clipboardDrawerKey(let code):
+                self.clipboardPalette.handleKey(code)
             case .cycleWindow(let back):
                 self.windowSwitcher.cycle(back: back)
             case .cycleEnd:
@@ -266,6 +268,10 @@ final class AppController {
         }
         whiteboard.onVisibility = { [weak self] visible in
             self?.hotkey?.whiteboardVisible = visible
+        }
+        // The clipboard drawer never takes key, so the tap routes its keys.
+        clipboardPalette.onVisibility = { [weak self] visible in
+            self?.hotkey?.clipboardDrawerVisible = visible
         }
         macroPad.onSummonChanged = { [weak self] summoned in
             self?.hotkey?.macroPadSummoned = summoned
@@ -1645,17 +1651,24 @@ final class AppController {
         }
     }
 
-    /// hold + H: clipboard history palette. Capture the target app NOW (before the
-    /// palette steals focus); the picked clip pastes there and stays on the
-    /// clipboard (Win+V semantics).
+    /// hold + H: clipboard history drawer. The drawer never takes focus, so the
+    /// app you are in stays frontmost; the picked clip pastes there and stays on
+    /// the clipboard (Win+V semantics).
     private func openClipboardHistory() {
         interruptDictation()
         overlay.hide()
+        // hold + H again while the drawer is out slides it away and hands focus back.
+        if clipboardPalette.isVisible {
+            clipboardPalette.cancel()
+            return
+        }
         guard config.clipboardHistory else {
             overlay.showError("Clipboard history is off — enable it in Settings ▸ General")
             return
         }
-        let clips = store.recentClips(9)
+        // The drawer is screen-tall and scrolls, so it carries far more than the
+        // old nine-row palette; images are thumbnailed once as it opens.
+        let clips = store.recentClips(50)
         guard !clips.isEmpty else {
             overlay.showError("No clipboard history yet — copy something first")
             return
