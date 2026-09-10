@@ -1272,7 +1272,8 @@ case "notchstrip-preview":
     // so the eye can check what the harness asserts.
     let out = args.count >= 2 ? args[1] : "notchstrip-preview.png"
     let shape = args.contains("list") ? "list"
-        : (args.contains("card") ? "card" : (args.contains("picker") ? "picker" : "min"))
+        : (args.contains("card") ? "card" : (args.contains("picker") ? "picker"
+        : (args.contains("tabs") ? "tabs" : "min")))
     let rich = args.contains("rich")
     let guides = args.contains("guides")
     let hoverRow = args.first(where: { $0.hasPrefix("hover=") }).flatMap { Int($0.dropFirst(6)) }
@@ -1337,12 +1338,18 @@ case "notchstrip-preview":
         case "list":
             v.listHeader = header
             v.configure(groups: [marks], cards: cards, listMode: true, field: field)
-        case "picker":
-            // The module row as the app registers it, pads and Settings included.
+        case "picker", "tabs":
+            // The module row as the app registers it, pads and Settings included;
+            // "tabs" draws the same set as the tab row over an open module (Weather).
             let tiles: [(glyph: String, title: String)] = [
                 ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("▤", "Calendar"), ("☀", "Weather"),
                 ("✦", "Ask"), ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⚙", "Settings")]
-            v.configure(groups: [marks], cards: [], listMode: false, field: field, picker: tiles)
+            if shape == "tabs" {
+                v.configure(groups: [marks], cards: [], listMode: false, field: field, moduleHeight: 60,
+                            tabs: tiles.map { (glyph: $0.glyph, title: $0.title, active: $0.title == "Weather") })
+            } else {
+                v.configure(groups: [marks], cards: [], listMode: false, field: field, picker: tiles)
+            }
         case "card":
             var one = cards[0]
             one.actions = [("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1), {}),

@@ -179,13 +179,16 @@ final class NotchStrip {
     }
 
     /// Ceiling on a module's content, the same discipline the list has: the
-    /// notch expands, it does not become a window.
-    static let maxModuleContent: CGFloat = 320
-    static let pickerRow: CGFloat = 64
+    /// notch expands, it does not become a window. The tab row is charged
+    /// against it, so it grows with the row — 274pt stays free for the module.
+    static let maxModuleContent: CGFloat = 332
+    /// Launcher tiles and module tabs are sized to be read and hit at a glance
+    /// from the menu bar: 26pt / 22pt glyphs over 11pt / 10.5pt titles.
+    static let pickerRow: CGFloat = 80
     /// While a module is open, its siblings stay one click away on a tab row
     /// under the housing. Without it a module was a dead end — there was no way
     /// back to the row and no way out at all.
-    static let moduleTabRow: CGFloat = 46
+    static let moduleTabRow: CGFloat = 58
 
     /// The body width of every expanded shape, in housings. Set by the agent
     /// list (MacNotch's "AI Coding" panel): a 2× body could not seat a row with
@@ -1288,15 +1291,17 @@ final class NotchStripView: NSView {
             }
             // Icon over label, the same shape as the launcher tiles.
             let g: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 17),
+                .font: NSFont.systemFont(ofSize: 22),
                 .foregroundColor: NSColor.white.withAlphaComponent(t.active ? 1 : 0.85)]
             let gs = (t.glyph as NSString).size(withAttributes: g)
-            (t.glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.minY + 6), withAttributes: g)
+            (t.glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.minY + 5), withAttributes: g)
+            // 10.5, not the launcher's 11: tabs share the row with ✕, and at 11
+            // "Agent Pad" and "Macro Pad" all but touched.
             let ta: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 8.5, weight: .medium),
+                .font: NSFont.systemFont(ofSize: 10.5, weight: .medium),
                 .foregroundColor: NSColor.white.withAlphaComponent(t.active ? 0.95 : 0.6)]
             let ts = (t.title as NSString).size(withAttributes: ta)
-            (t.title as NSString).draw(at: NSPoint(x: r.midX - ts.width / 2, y: r.minY + 29), withAttributes: ta)
+            (t.title as NSString).draw(at: NSPoint(x: r.midX - ts.width / 2, y: r.minY + 34), withAttributes: ta)
         }
         let close = tabRect(-1)
         if hoveredTab == -1 {
@@ -1305,7 +1310,7 @@ final class NotchStripView: NSView {
         }
         let x = "✕" as NSString
         let xa: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.white.withAlphaComponent(0.7)]
+            .font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.white.withAlphaComponent(0.7)]
         let xs = x.size(withAttributes: xa)
         x.draw(at: NSPoint(x: close.midX - xs.width / 2, y: close.midY - xs.height / 2), withAttributes: xa)
     }
@@ -1319,14 +1324,14 @@ final class NotchStripView: NSView {
                 NSBezierPath(roundedRect: r.insetBy(dx: 4, dy: 6), xRadius: 8, yRadius: 8).fill()
             }
             let g: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 20), .foregroundColor: NSColor.white]
+                .font: NSFont.systemFont(ofSize: 26), .foregroundColor: NSColor.white]
             let t: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
                 .foregroundColor: NSColor.white.withAlphaComponent(0.7)]
             let gs = (m.glyph as NSString).size(withAttributes: g)
-            (m.glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.minY + 12), withAttributes: g)
+            (m.glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.minY + 13), withAttributes: g)
             let ts = (m.title as NSString).size(withAttributes: t)
-            (m.title as NSString).draw(at: NSPoint(x: r.midX - ts.width / 2, y: r.minY + 40), withAttributes: t)
+            (m.title as NSString).draw(at: NSPoint(x: r.midX - ts.width / 2, y: r.minY + 47), withAttributes: t)
         }
     }
 
