@@ -68,9 +68,9 @@ enum Doctor {
 
         let screen = CGPreflightScreenCaptureAccess()
         checks.append(Check(
-            name: "Screen Recording (OCR)",
+            name: "Screen Recording (capture)",
             ok: screen,
-            detail: screen ? "granted" : "needed for screenshot→text (⌥⌘T) — System Settings ▸ Privacy & Security ▸ Screen Recording"
+            detail: screen ? "granted" : "needed for OCR, screenshots and screen recording (hold + T/R/S/G/F) — System Settings ▸ Privacy & Security ▸ Screen Recording"
         ))
 
         // Informational: no trackpad / no private framework just means the

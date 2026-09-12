@@ -28,6 +28,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let windowPaletteCheck = NSButton(checkboxWithTitle: "Snap palette (hold hotkey + W)", target: nil, action: nil)
     private let clipboardHistoryCheck = NSButton(checkboxWithTitle: "Clipboard history — hold hotkey + H to paste a recent copy or image", target: nil, action: nil)
     private let whiteboardCheck = NSButton(checkboxWithTitle: "Whiteboard — hold hotkey + E to draw on the last screenshot", target: nil, action: nil)
+    private let screenRecordingCheck = NSButton(checkboxWithTitle: "Screen recording — hold hotkey + F to record an area of the screen, again to stop", target: nil, action: nil)
+    private let recordingMicCheck = NSButton(checkboxWithTitle: "Record the microphone too (narrated demos)", target: nil, action: nil)
     private let lastWindowCheck = NSButton(checkboxWithTitle: "⌘⇥ works like Windows Alt-Tab — last window first, per window not app", target: nil, action: nil)
     private let grabMoveCheck = NSButton(checkboxWithTitle: "Grab & Move — hold the modifier and drag anywhere on a window to move it", target: nil, action: nil)
     private let grabModsPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -78,9 +80,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let captureTokenField = NSSecureTextField()
     private let captureBodyField = NSTextField()
     // Leader letters offered for connections — excludes ones already used by other
-    // tools (A T S G C X V P M W H D B) and non-letters (3, arrows, ⏎, ⇥). An
+    // tools (A T S G C X V P M W H D B K F) and non-letters (3, arrows, ⏎, ⇥). An
     // existing saved B still works (grandfathered in HotkeyMonitor).
-    private static let connLeaderLetters = ["N","E","F","I","J","L","O","Q","R","U","Y","Z"]
+    private static let connLeaderLetters = ["N","E","I","J","L","O","Q","R","U","Y","Z"]
 
     // Macro Pad: enable toggle + the Outlook folder-button editor.
     private let macroPadCheck = NSButton(checkboxWithTitle: "Macro Pad — floating per-app buttons (hold hotkey + B, or menu bar ▸ Macro Pad)", target: nil, action: nil)
@@ -240,6 +242,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         clipboardHistoryCheck.action = #selector(clipboardHistoryToggled)
         whiteboardCheck.target = self
         whiteboardCheck.action = #selector(whiteboardToggled)
+        screenRecordingCheck.target = self
+        screenRecordingCheck.action = #selector(screenRecordingToggled)
+        recordingMicCheck.target = self
+        recordingMicCheck.action = #selector(recordingMicToggled)
         lastWindowCheck.target = self
         lastWindowCheck.action = #selector(lastWindowToggled)
         grabMoveCheck.target = self
@@ -414,7 +420,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         return vstack([
             section("How to use it", [helpLabel], width: 590),
-            section("General", [clipboardHistoryCheck, whiteboardCheck, launchLoginCheck, restorePadsCheck,
+            section("General", [clipboardHistoryCheck, whiteboardCheck, screenRecordingCheck, recordingMicCheck,
+                                launchLoginCheck, restorePadsCheck,
                                 captureCheck, captureNote, buttons, version], width: 590),
         ])
     }
@@ -1466,6 +1473,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         windowPaletteCheck.state = config.windowPalette ? .on : .off
         clipboardHistoryCheck.state = config.clipboardHistory ? .on : .off
         whiteboardCheck.state = config.whiteboard ? .on : .off
+        screenRecordingCheck.state = config.screenRecording ? .on : .off
+        recordingMicCheck.state = config.recordingMic ? .on : .off
         lastWindowCheck.state = config.lastWindowSwitch ? .on : .off
         grabMoveCheck.state = config.grabAndMove ? .on : .off
         grabModsPopup.selectItem(withTitle: config.grabMoveModifiers.displayName)
@@ -1536,6 +1545,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  R   read text off the screen aloud — hold + R again to stop
         •  S   copy a screenshot
         •  G   screenshot → Google Lens
+        •  F   record the screen — drag the area (⏎ = whole screen); hold + F again or click the ● badge to stop
         •  K   color picker — sample a pixel, copy HEX · RGB · HSL · HSV · CMYK
         •  C / X / V   copy · cut · paste files (Finder)
         •  P   Advanced Paste — plain, or AI: summarize / rewrite / translate
@@ -1747,6 +1757,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func whiteboardToggled() {
         config.whiteboard = (whiteboardCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func screenRecordingToggled() {
+        config.screenRecording = (screenRecordingCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func recordingMicToggled() {
+        config.recordingMic = (recordingMicCheck.state == .on)
         config.save()
         onConfigChange(config)
     }

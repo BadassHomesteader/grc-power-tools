@@ -50,6 +50,9 @@ final class HotkeyMonitor {
         case macroPadSummonClose          // leader-held Esc while a summoned pad is up — dismiss it
         case agentPad                     // hold + J — toggle the Claude Code session pad
         case cheatSheet                   // hold + Q — toggle the hotkey cheat sheet
+        case screenRecord                 // hold + F — start a screen recording, or stop the running one
+        case screenRecordClose            // Esc while the area picker is up — cancel the pick
+        case screenRecordWhole            // leader-held ⏎ while the area picker is up — record the whole display
         case cheatSheetClose              // Esc while the sheet is up — close it
         case powerRing                    // hold + right-click — radial menu at the cursor
         case powerRingClose               // Esc while the ring is up — close it
@@ -89,6 +92,9 @@ final class HotkeyMonitor {
     /// True while the annotation whiteboard is up (same discipline) — plain Esc
     /// must reach it even when its text tool's field editor is first responder.
     var whiteboardVisible = false
+    /// The hold + F area picker is up: ⏎ = whole display, Esc cancels, arrows
+    /// and the 3/W chords are inert — the leader is still held when it opens.
+    var regionPickerVisible = false
     /// True while the clipboard drawer is out (same discipline). It never takes
     /// key, so its keys — Esc, ↵, ↑/↓, 1–9 — are routed from here instead.
     var clipboardDrawerVisible = false
@@ -196,6 +202,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_3: Int64 = 20
     private static let kVK_ANSI_Q: Int64 = 12
     private static let kVK_ANSI_E: Int64 = 14
+    private static let kVK_ANSI_F: Int64 = 3
     private static let kVK_Tab: Int64 = 48
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
@@ -445,7 +452,7 @@ final class HotkeyMonitor {
         // elsewhere, so it can never sit there eating Esc. Leader-held Esc
         // keeps its cancel meaning — they close there too (leader block below).
         let padEsc = macroPadSummoned && !macroPadSearchEditing   // Esc in the search box clears the box
-        if cheatSheetVisible || powerRingVisible || whiteboardVisible || padEsc,
+        if cheatSheetVisible || powerRingVisible || whiteboardVisible || padEsc || regionPickerVisible,
            !held, type == .keyDown, keyCode == Self.kVK_Escape,
            flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).isEmpty {
             swallowedKeyUps.insert(keyCode)
@@ -454,6 +461,7 @@ final class HotkeyMonitor {
                 if powerRingVisible { dispatch(.powerRingClose) }
                 if whiteboardVisible { dispatch(.whiteboardClose) }
                 if padEsc { dispatch(.macroPadSummonClose) }
+                if regionPickerVisible { dispatch(.screenRecordClose) }
             }
             return nil
         }
@@ -532,6 +540,7 @@ final class HotkeyMonitor {
                 if powerRingVisible { dispatch(.powerRingClose) }
                 if whiteboardVisible { dispatch(.whiteboardClose) }
                 if macroPadSummoned { dispatch(.macroPadSummonClose) }
+                if regionPickerVisible { dispatch(.screenRecordClose) }
                 dispatch(.cancel)
                 return nil // swallow so it doesn't close the user's dialogs
             case Self.kVK_ANSI_T:
@@ -647,7 +656,25 @@ final class HotkeyMonitor {
                 swallowedKeyUps.insert(keyCode)
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.whiteboard) }
                 return nil
+            case Self.kVK_ANSI_F:
+                // Screen recording — same rules as B/J/Q/E: a user-assigned
+                // Quick Capture connection on F wins, auto-repeat must not
+                // re-toggle (a held F would start-and-stop). The picker opens
+                // while the leader is still down, so the tap mirrors it
+                // (regionPickerVisible): ⏎ = whole display, Esc cancels,
+                // arrows/3/W are inert; once the leader lifts, the picker's
+                // own keyDown takes over. Release just ends the session.
+                if let connId = connectionLeader(for: keyCode) {
+                    log("hotkey: connection leader armed (\(connId))")
+                    pending = .quickCapture(connId); swallowedKeyUps.insert(keyCode)
+                    return nil
+                }
+                windowMode = true
+                swallowedKeyUps.insert(keyCode)
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.screenRecord) }
+                return nil
             case Self.kVK_ANSI_3:
+                if regionPickerVisible { swallowedKeyUps.insert(keyCode); return nil }  // picker owns the keys
                 // Grid draw mode. Enter windowMode so release ends the session (no
                 // dictation); the grid overlay itself takes over via the mouse.
                 windowMode = true
@@ -655,6 +682,7 @@ final class HotkeyMonitor {
                 dispatch(.grid)
                 return nil
             case Self.kVK_ANSI_W:
+                if regionPickerVisible { swallowedKeyUps.insert(keyCode); return nil }  // picker owns the keys
                 // Snap palette. Like the grid: release just ends the session; the
                 // palette (a keyable panel) takes over from here.
                 windowMode = true
@@ -662,6 +690,16 @@ final class HotkeyMonitor {
                 dispatch(.windowPalette)
                 return nil
             case Self.kVK_LeftArrow, Self.kVK_RightArrow, Self.kVK_UpArrow, Self.kVK_DownArrow, Self.kVK_Return:
+                if regionPickerVisible {
+                    // The area picker is up: ⏎ records the whole display, arrows
+                    // do nothing — never a window move aimed at our own overlay.
+                    windowMode = true
+                    swallowedKeyUps.insert(keyCode)
+                    if keyCode == Self.kVK_Return, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                        dispatch(.screenRecordWhole)
+                    }
+                    return nil
+                }
                 // Window moves fire immediately and can repeat while held (tap ←←
                 // to shrink). Release then just ends the session (no dictation).
                 let move: WindowManager.Move

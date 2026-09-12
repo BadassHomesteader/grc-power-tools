@@ -65,6 +65,7 @@ final class HotkeyCheatSheetView: NSView {
                 ("T", "screen text → clipboard"),
                 ("S", "screenshot"),
                 ("E", "annotate screenshot"),
+                ("F", "record screen · F again stops"),
                 ("G", "screenshot → search"),
                 ("R", "read screen aloud"),
                 ("K", "color picker (hex)"),

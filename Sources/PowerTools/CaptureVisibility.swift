@@ -41,7 +41,7 @@ enum CaptureVisibility {
 
     private static func apply() {
         let type: NSWindow.SharingType = showInCaptures ? .readOnly : .none
-        for w in NSApp.windows where isOverlay(w) && w.sharingType != type {
+        for w in NSApp.windows where isOverlay(w) && !(w is RecordingBadgePanel) && w.sharingType != type {
             w.sharingType = type
         }
     }

@@ -11,6 +11,7 @@ enum PowerRingCatalog {
         .init(id: "screenshot", glyph: "✂", title: "Screenshot"),
         .init(id: "search", glyph: "⌕", title: "Shot → Search"),
         .init(id: "whiteboard", glyph: "✐", title: "Annotate"),
+        .init(id: "record", glyph: "●", title: "Record Screen"),
         .init(id: "clipboard", glyph: "☰", title: "Clipboard"),
         .init(id: "pasteAs", glyph: "⎘", title: "Paste As"),
         .init(id: "readAloud", glyph: "▷", title: "Read Aloud"),

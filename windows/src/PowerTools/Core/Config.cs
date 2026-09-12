@@ -110,6 +110,9 @@ public sealed class Config
     public List<string> PowerRingSlots = new(DefaultPowerRingSlots);
     /// Mac-only (annotation whiteboard on hold + E); preserved for schema parity.
     public bool Whiteboard = true;
+    /// Mac-only (screen recording on hold + F); preserved for schema parity.
+    public bool ScreenRecording = true;
+    public bool RecordingMic = false;
     public Dictionary<string, string> Pronunciations = new();
 
     // ---- enum raw-value maps (must match the Swift rawValues verbatim) ----
@@ -239,6 +242,8 @@ public sealed class Config
         c.PowerRing = Bool(root, "powerRing", true);
         c.PowerRingSlots = StrList(root, "powerRingSlots") ?? new(DefaultPowerRingSlots);
         c.Whiteboard = Bool(root, "whiteboard", true);
+        c.ScreenRecording = Bool(root, "screenRecording", true);
+        c.RecordingMic = Bool(root, "recordingMic", false);
         c.Pronunciations = StrMap(root, "pronunciations");
 
         if (c.MigrateLegacyCapture()) c.Save();
@@ -330,6 +335,8 @@ public sealed class Config
             ["powerRing"] = PowerRing,
             ["powerRingSlots"] = new JsonArray(PowerRingSlots.Select(s => (JsonNode)s!).ToArray()),
             ["whiteboard"] = Whiteboard,
+            ["screenRecording"] = ScreenRecording,
+            ["recordingMic"] = RecordingMic,
             ["pronunciations"] = new JsonObject(Pronunciations.Select(kv =>
                 new KeyValuePair<string, JsonNode?>(kv.Key, kv.Value))),
         };

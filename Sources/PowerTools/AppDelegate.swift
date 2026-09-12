@@ -9,6 +9,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = Store()
     private var settings: SettingsWindowController?
 
+    func applicationWillTerminate(_ notification: Notification) {
+        controller?.shutdown()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Regular app: Dock icon + standard menus, so it's findable and quittable
         // like any app. The menu-bar status item stays for at-a-glance state.

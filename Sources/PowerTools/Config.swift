@@ -414,6 +414,11 @@ struct Config: Codable {
     /// Annotation whiteboard: hold hotkey + E → draw on the clipboard image
     /// (or a fresh region grab when the clipboard has no image).
     var whiteboard: Bool = true
+    /// Screen recording: hold hotkey + F → drag the area, hold + F again stops.
+    var screenRecording: Bool = true
+    /// Record the microphone into the movie too (narrated demos). Off by
+    /// default — a recording that silently carries your voice is a surprise.
+    var recordingMic: Bool = false
 
     var hotkey: Hotkey = .optionShift
     var polish: PolishMode = .apple
@@ -500,7 +505,7 @@ struct Config: Codable {
         case showInCaptures
         case notchModules, notchClockZones, weatherPlaces, weatherPlace, weatherLat, weatherLon, weatherFahrenheit
         case powerRing, powerRingSlots
-        case whiteboard
+        case whiteboard, screenRecording, recordingMic
         case pronunciations
     }
 
@@ -603,6 +608,8 @@ struct Config: Codable {
         powerRing = field(.powerRing, true)
         powerRingSlots = field(.powerRingSlots, PowerRingCatalog.defaultSlots)
         whiteboard = field(.whiteboard, true)
+        screenRecording = field(.screenRecording, true)
+        recordingMic = field(.recordingMic, false)
         pronunciations = field(.pronunciations, [:])
     }
 

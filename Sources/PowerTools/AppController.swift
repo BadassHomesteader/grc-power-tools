@@ -64,6 +64,7 @@ final class AppController {
     private let cheatSheet = HotkeyCheatSheet()
     private let powerRing = PowerRing()
     private let whiteboard = Whiteboard()
+    private let recorder = ScreenRecorder()
     private let agentPad = AgentPad()
     private let notchStrip = NotchStrip()
     /// NSMenu does not retain item targets; without this the handler is gone
@@ -136,6 +137,23 @@ final class AppController {
             }
         }
 
+        recorder.onSaved = { [weak self] url, seconds in
+            guard let self else { return }
+            // Same contract as hold + S: the result is on the clipboard. A file
+            // URL, so ⌘V attaches the movie in Slack, Mail or Teams and pastes
+            // a copy in the Finder.
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.writeObjects([url as NSURL])
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            self.overlay.showSuccess("Recording saved · \(ScreenRecorder.clock(seconds)) · \(url.deletingLastPathComponent().lastPathComponent)")
+        }
+        recorder.onFailed = { [weak self] message in self?.overlay.showError(message) }
+        recorder.onRecovered = { [weak self] url in
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            self?.overlay.showSuccess("Recovered last session's recording · \(url.deletingLastPathComponent().lastPathComponent)")
+        }
+
         let monitor = HotkeyMonitor(hotkey: config.hotkey)
         monitor.lastWindowSwitch = config.lastWindowSwitch
         monitor.setConnectionLeaders(Self.leaderMap(config.connections))
@@ -172,7 +190,7 @@ final class AppController {
                 if self.windowPalette.isVisible { self.windowPalette.leaderKey(move) }
                 else { self.handleWindow(move) }
             case .windowEnd:
-                self.overlay.hide()
+                self.overlay.hideUnlessToast()
                 self.maybeSnapAssist()
             case .grid:
                 // "3" is the grid chord — but with the palette open it's the
@@ -236,6 +254,13 @@ final class AppController {
                 self.openWhiteboard()
             case .whiteboardClose:
                 self.whiteboard.handleEscape()
+            case .screenRecord:
+                self.interruptDictation()
+                self.toggleScreenRecording()
+            case .screenRecordClose:
+                self.recorder.stop()   // during a pick this just closes the picker
+            case .screenRecordWhole:
+                self.recorder.pickWholeDisplay()
             }
         }
         guard monitor.start() else {
@@ -253,6 +278,7 @@ final class AppController {
         monitor.powerRingEnabled = config.powerRing
         monitor.macroPadSummonEnabled = config.macroPad && config.macroPadThreeFingerTap
         monitor.finderFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
+        recorder.recoverOrphan()   // a recorder the last instance left running
         // The tap only intercepts leader-digits while the pad is shown, and
         // only for digits that map to a real button of the current profile.
         macroPad.onStateChanged = { [weak self] visible, buttonCount in
@@ -268,6 +294,9 @@ final class AppController {
         }
         whiteboard.onVisibility = { [weak self] visible in
             self?.hotkey?.whiteboardVisible = visible
+        }
+        recorder.onPickerVisibility = { [weak self] visible in
+            self?.hotkey?.regionPickerVisible = visible
         }
         // The clipboard drawer never takes key, so the tap routes its keys.
         clipboardPalette.onVisibility = { [weak self] visible in
@@ -719,6 +748,24 @@ final class AppController {
         }
     }
 
+    /// hold + F: record part of the screen (or all of it) as a movie; hold + F
+    /// again — or a click on the ● badge — stops. Independent of the dictation
+    /// state machine on purpose: dictating over a running recording is the
+    /// narrated-demo use case, not a conflict.
+    func toggleScreenRecording() {
+        overlay.hide()
+        if recorder.isActive { recorder.stop(); return }
+        guard config.screenRecording else {
+            overlay.showError("Screen recording is off — enable it in Settings ▸ General")
+            return
+        }
+        guard state == .idle, ensureScreenRecording() else { return }
+        recorder.begin(mic: config.recordingMic, dark: config.appearance.isDark)
+    }
+
+    /// App quit: finalize a running recording instead of orphaning it.
+    func shutdown() { recorder.shutdown() }
+
     /// hold + E: annotate. A clipboard image (e.g. the hold + S shot just taken)
     /// opens straight into the whiteboard; an empty clipboard falls back to a
     /// fresh region grab, so hold + E alone = shoot-then-annotate.
@@ -933,6 +980,7 @@ final class AppController {
         case "macroPad": return { [weak self] in self?.toggleMacroPad() }
         case "agentPad": return { [weak self] in self?.toggleAgentPad() }
         case "cheatSheet": return { [weak self] in self?.toggleCheatSheet() }
+        case "record": return { [weak self] in self?.toggleScreenRecording() }
         default: return nil
         }
     }

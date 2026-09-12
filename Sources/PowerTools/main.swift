@@ -1111,6 +1111,89 @@ case "macropad-columns-test":
         finish()
     }
 
+case "recording-badge-preview":
+    // Offscreen render of the ● 0:12 screen-recording badge (hold + F).
+    let out = args.count >= 2 ? args[1] : "recording-badge-preview.png"
+    let dark = !args.contains("light")
+    MainActor.assumeIsolated {
+        let v = RecordingBadgeView(dark: dark)
+        v.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        v.saving = args.contains("saving")
+        v.elapsed = 754
+        v.frame = NSRect(origin: .zero, size: RecordingBadgeView.size)
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
+case "regionpicker-preview":
+    // Offscreen render of the hold + F area picker (with a sample selection
+    // unless "empty").
+    let out = args.count >= 2 ? args[1] : "regionpicker-preview.png"
+    let dark = !args.contains("light")
+    MainActor.assumeIsolated {
+        let v = RegionPickView(dark: dark)
+        v.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        v.frame = NSRect(x: 0, y: 0, width: 900, height: 560)
+        if !args.contains("empty") { v.previewSelect(NSPoint(x: 180, y: 120), NSPoint(x: 700, y: 420)) }
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
+case "record-test":
+    // Headless check of the recorder's process path (no picker): record a
+    // fixed area for N seconds, stop the way hold + F does, validate the movie.
+    //   record-test x,y,w,h [seconds] [mic]     (Cocoa coords on the main screen)
+    guard args.count >= 2 else { print("usage: record-test x,y,w,h [seconds] [mic]"); exit(2) }
+    let nums = args[1].split(separator: ",").compactMap { Double($0) }
+    guard nums.count == 4 else { print("bad rect — want x,y,w,h"); exit(2) }
+    let seconds = args.count >= 3 ? (Double(args[2]) ?? 3) : 3
+    let mic = args.contains("mic")
+    _ = NSApplication.shared
+    MainActor.assumeIsolated {
+        let rec = ScreenRecorder()
+        var outcome: String?
+        rec.onSaved = { url, secs in
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
+            outcome = "saved \(url.path) bytes=\(bytes) seconds=\(Int(secs))"
+        }
+        rec.onFailed = { outcome = "failed: \($0)" }
+        guard let screen = NSScreen.main else { print("no screen"); exit(1) }
+        rec.start(region: NSRect(x: nums[0], y: nums[1], width: nums[2], height: nums[3]),
+                  screen: screen, mic: mic, dark: true)
+        let badge = rec.badgeFrame.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))×\(Int($0.height))" } ?? "none"
+        print("phase=\(rec.phase) badge=\(badge) badgeHiddenFromCapture=\(rec.badgeExcludedFromCapture)")
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        rec.stop()
+        let deadline = Date().addingTimeInterval(15)
+        while outcome == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+        print(outcome ?? "timeout: recorder never reported")
+        exit(outcome?.hasPrefix("saved") == true ? 0 : 1)
+    }
+
+case "record-recover-test":
+    // Headless check of the orphan reaper: runs recoverOrphan() against the
+    // recording-in-progress.json in the app support folder and reports.
+    _ = NSApplication.shared
+    MainActor.assumeIsolated {
+        let rec = ScreenRecorder()
+        var outcome: String?
+        rec.onRecovered = { url in
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
+            outcome = "recovered \(url.path) bytes=\(bytes)"
+        }
+        rec.recoverOrphan()
+        let deadline = Date().addingTimeInterval(12)
+        while outcome == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+        print(outcome ?? "nothing recovered")
+        exit(outcome == nil ? 1 : 0)
+    }
+
 case "cheatsheet-preview":
     // Offscreen render of the hold+Q hotkey cheat sheet.
     let out = args.count >= 2 ? args[1] : "cheatsheet-preview.png"

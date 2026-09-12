@@ -132,6 +132,7 @@ final class OverlayPanel {
     private static let hintsText = "A ai · T text · R read · S shot · E draw · G lens · K color · H clips\nC X V files · P paste · D doc · W ← → ↑ ↓ windows"
 
     private enum Mode { case waveform, text, window }
+    private var current: Mode = .waveform
 
     // Palette derived from the theme.
     private var fg: NSColor { scheme.isDark ? NSColor.white.withAlphaComponent(0.95) : NSColor.black.withAlphaComponent(0.9) }
@@ -258,6 +259,7 @@ final class OverlayPanel {
     }
 
     private func setMode(_ mode: Mode) {
+        current = mode
         restoreDefaultChrome()   // clear any prior green success chrome
         iconView.isHidden = (mode == .window)
         waveform.isHidden = (mode != .waveform)
@@ -408,6 +410,15 @@ final class OverlayPanel {
     func hide() {
         hideTimer?.invalidate()
         panel.orderOut(nil)
+    }
+
+    /// Leader release: drop the hold-time pill (waveform, window diagram) but
+    /// leave a text toast to its own timer. A "Recording saved" that lands in
+    /// the ~200ms between tapping F and lifting the modifiers must not be cut
+    /// to a flicker — the recorder finalizes that fast.
+    func hideUnlessToast() {
+        if current == .text, panel.isVisible { return }
+        hide()
     }
 
     private func hideAfter(_ seconds: TimeInterval) {
