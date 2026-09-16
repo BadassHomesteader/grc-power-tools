@@ -25,7 +25,7 @@ Power Tools puts a suite of power-user utilities behind a single hotkey. **Hold 
 <td width="50%" valign="top"><img src="docs/snap-assist.png" alt="Snap Assist"><br><b>Snap Assist</b> — right after a snap, pick another window to fill the empty half (like Windows).</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/advanced-paste.png" alt="Advanced Paste"><br><b>Advanced Paste</b> — hold + P for plain text, summarize, rewrite, bullets, markdown, or translate.</td>
+<td width="50%" valign="top"><img src="docs/advanced-paste.png" alt="Advanced Paste"><br><b>Advanced Paste</b> — hold + P for plain text, case changes, contacts one per line, summarize, rewrite, bullets, markdown, or translate.</td>
 <td width="50%" valign="top"><img src="docs/settings.png" alt="Settings"><br><b>Settings</b> — choose your hotkey, light/dark theme, snap sizes, grid, and AI-chat mode.</td>
 </tr>
 </table>
@@ -149,7 +149,7 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 - **hold + 3** → **grid draw mode**: drag across an on-screen grid to place the window (Moom-style). Grid dimensions are configurable.
 
 **Clipboard & cursor**
-- **hold + P** → **Advanced Paste**: a palette to paste the clipboard as plain text or transform it — summarize, rewrite, bullets, markdown, or translate (AI transforms use your configured cloud model).
+- **hold + P** → **Advanced Paste**: a palette to paste the clipboard as plain text or transform it — clean text, single line, case changes, numbers only, **contacts one per line** (an Outlook/Gmail recipient line like `Doug Lepping <dlepping@x.com>; Willie Meredith <wmeredith@x.com>` pastes as name, address, blank line, per person), then summarize, rewrite, bullets, markdown, or translate (AI transforms use your configured cloud model).
 - **hold + H** → **Clipboard history** (the Windows Win+V gap): a drawer slides in from the right edge with your recent copies — text AND images (screenshots included), with thumbnails; scroll for older ones. Digits, arrows or a click pick one (Esc, hold + H again, or a click anywhere else slides it away), it pastes into the app you came from and becomes the current clipboard. Recording is local (SQLite; last 200 text clips + 25 images, images capped at 5MB each), and anything marked concealed/transient by password managers is never recorded. Toggle in Settings ▸ General.
 - **hold + D** → **New Document** (the Windows "New ▸" gap): a small menu of document types — Word, Excel, Text, RTF, Markdown — creates the chosen blank file in the *current Finder folder* and selects it for renaming. Needs a one-time Automation permission for Finder (to read which folder is open); the Office files are valid minimal OOXML.
 - **hold + K** → **Color Picker** (the PowerToys Color Picker gap): the system magnifier loupe appears — hover any pixel anywhere on screen and click. A little palette then shows that color in every common format — **HEX · RGB · HSL · HSV · CMYK**, plus bare hex, raw values, and 0–1 floats — pick one (digit, ↑↓+↵, or click) and it's copied to your clipboard. Works across Retina/HDR displays; Esc cancels. No screen-recording grant needed — it's the macOS native sampler.

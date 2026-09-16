@@ -33,15 +33,17 @@ final class AdvancedPaste {
                   localTransform: { $0.uppercased() }),
         Transform(digit: 8, title: "Numbers only", subtitle: "strip $ , % — paste as values", ai: false, instruction: nil,
                   localTransform: { TextOps.numbersOnly($0) }),
-        Transform(digit: 9, title: "Summarize", subtitle: "AI · the key points", ai: true,
+        Transform(digit: 9, title: "Contacts, one per line", subtitle: "Name <email>; … → name, email, blank line", ai: false, instruction: nil,
+                  localTransform: { TextOps.contactList($0) }),
+        Transform(digit: 10, title: "Summarize", subtitle: "AI · the key points", ai: true,
                   instruction: "Summarize the following text concisely. Output only the summary."),
-        Transform(digit: 10, title: "Rewrite", subtitle: "AI · fix grammar, tighten", ai: true,
+        Transform(digit: 11, title: "Rewrite", subtitle: "AI · fix grammar, tighten", ai: true,
                   instruction: "Rewrite the following to fix grammar and make it clear and concise, keeping the meaning and tone. Output only the rewrite."),
-        Transform(digit: 11, title: "Bullet points", subtitle: "AI · as a list", ai: true,
+        Transform(digit: 12, title: "Bullet points", subtitle: "AI · as a list", ai: true,
                   instruction: "Rewrite the following as a concise bulleted list using '- '. Output only the list."),
-        Transform(digit: 12, title: "Markdown", subtitle: "AI · clean markdown", ai: true,
+        Transform(digit: 13, title: "Markdown", subtitle: "AI · clean markdown", ai: true,
                   instruction: "Reformat the following as clean, well-structured Markdown. Output only the Markdown."),
-        Transform(digit: 13, title: "Translate → English", subtitle: "AI", ai: true,
+        Transform(digit: 14, title: "Translate → English", subtitle: "AI", ai: true,
                   instruction: "Translate the following into natural English. If it's already English, correct it lightly. Output only the translation."),
     ]
 
@@ -140,6 +142,57 @@ enum TextOps {
             }
         }
         return result
+    }
+
+    /// An Outlook/Gmail recipient line — `Doug Lepping <dlepping@x.com>; Willie
+    /// Meredith <wmeredith@x.com>` — becomes one contact per block:
+    ///
+    ///     Doug Lepping
+    ///     dlepping@x.com
+    ///
+    ///     Willie Meredith
+    ///     wmeredith@x.com
+    ///
+    /// Entries split on `;` (Outlook) and newlines, or on `,` (Gmail) when the
+    /// text has no `;` — never inside quotes or angle brackets, so
+    /// `"Lepping, Doug" <…>` stays one contact. Quotes around the name and the
+    /// angle brackets around the address are dropped; a bare address with no
+    /// name emits just the address. Text with no contacts in it passes through
+    /// unchanged.
+    static func contactList(_ s: String) -> String {
+        let commaSplits = !s.contains(";")
+        var entries: [String] = []
+        var current = ""
+        var inQuotes = false
+        var inAngle = false
+        for ch in s {
+            if ch == "\"" { inQuotes.toggle(); current.append(ch); continue }
+            if !inQuotes, ch == "<" { inAngle = true }
+            if !inQuotes, ch == ">" { inAngle = false }
+            let splits = !inQuotes && !inAngle && (ch == ";" || ch.isNewline || (commaSplits && ch == ","))
+            if splits { entries.append(current); current = "" } else { current.append(ch) }
+        }
+        entries.append(current)
+
+        var sawEmail = false
+        let blocks: [String] = entries.compactMap { raw in
+            let entry = raw.trimmingCharacters(in: .whitespaces)
+            guard !entry.isEmpty else { return nil }
+            var name = entry
+            var email = ""
+            if let open = entry.lastIndex(of: "<"), let close = entry[open...].firstIndex(of: ">") {
+                email = String(entry[entry.index(after: open)..<close]).trimmingCharacters(in: .whitespaces)
+                name = String(entry[..<open])
+            } else if entry.contains("@"), !entry.contains(" ") {
+                email = entry   // bare address, no display name
+                name = ""
+            }
+            name = name.trimmingCharacters(in: CharacterSet(charactersIn: "\"'").union(.whitespaces))
+            if email.isEmpty { return name }
+            sawEmail = true
+            return name.isEmpty ? email : name + "\n" + email
+        }
+        return sawEmail ? blocks.joined(separator: "\n\n") : s
     }
 }
 
