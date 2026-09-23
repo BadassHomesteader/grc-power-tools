@@ -180,17 +180,30 @@ final class NotchStrip {
 
     /// Ceiling on a module's content, the same discipline the list has: the
     /// notch expands, it does not become a window. The tab row is charged
-    /// against it, so it grows with the row — 274pt stays free for the module.
+    /// against it, so it grows with the row — with the icon-only 46pt tab row,
+    /// 308pt stays free for the module.
     static let maxModuleContent: CGFloat = 354
     /// Launcher tiles are sized to be read and hit at a glance from the menu
     /// bar: 26pt glyphs over 11pt titles.
     static let pickerRow: CGFloat = 80
+    /// …and the launcher wraps rather than letting those titles collide. Across
+    /// a 660pt body, thirteen tiles leave 50pt each while "Macro Pad" measures
+    /// 57pt at 11pt medium — the labels overlapped, and shrinking the type was
+    /// already ruled out at ten. Seven per row keeps them legible with room to
+    /// grow; under eight modules nothing changes and the row stays single.
+    static let maxTilesPerRow = 7
     /// While a module is open, its siblings stay one click away on a tab row
     /// under the housing. Without it a module was a dead end — there was no way
-    /// back to the row and no way out at all. It IS the module row — same
-    /// height, same tile rects, same drawing — so opening a module never
-    /// shrinks or moves an icon; its ✕ rides in the band beside the camera.
-    static let moduleTabRow: CGFloat = pickerRow
+    /// back to the row and no way out at all.
+    ///
+    /// It draws the launcher's tiles at the launcher's GLYPH SIZE — 26pt, same
+    /// column width, same drawing call — but without the titles, because by the
+    /// time a module is open the row is a switcher between icons already read
+    /// rather than a list to be read again. Dropping the titles is what keeps
+    /// it one row at thirteen modules, and hands 34pt back to the module. The
+    /// icons must never shrink here: that was the complaint this row's layout
+    /// was rebuilt to answer. Its ✕ rides in the band beside the camera.
+    static let moduleTabRow: CGFloat = 46
 
     /// The body width of every expanded shape, in housings. Set by the agent
     /// list (MacNotch's "AI Coding" panel): a 2× body could not seat a row with
@@ -967,7 +980,10 @@ final class NotchStripView: NSView {
         if moduleHeight > 0 {
             return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.moduleTabRow + moduleHeight)
         }
-        if !picker.isEmpty { return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.pickerRow) }
+        if !picker.isEmpty {
+            return NSSize(width: midFrameWidth,
+                          height: notchHeight + NotchStrip.pickerRow * CGFloat(pickerRows))
+        }
         if listMode, !cards.isEmpty { return NSSize(width: listFrameWidth, height: listHeight) }
         if card != nil { return NSSize(width: midFrameWidth, height: midHeight) }
         // Min gets the same flare each side as the expanded panel, so both
@@ -1044,10 +1060,29 @@ final class NotchStripView: NSView {
         return NSRect(x: contentDX + contentW - 12 - sz, y: (notchHeight - sz) / 2, width: sz, height: sz)
     }
 
-    /// The module row's tiles.
+    /// How many rows the launcher needs, and how many tiles sit on each. The
+    /// tiles divide evenly (7+6, not 7+7+... ) so no row looks abandoned.
+    var pickerRows: Int {
+        max(1, Int((Double(picker.count) / Double(NotchStrip.maxTilesPerRow)).rounded(.up)))
+    }
+    var pickerPerRow: Int {
+        max(1, Int((Double(picker.count) / Double(pickerRows)).rounded(.up)))
+    }
+
+    /// The module row's tiles, wrapping once there are more than a row can
+    /// hold. Everything downstream — hover, hit-testing, the cutout-safety
+    /// rects — asks this for a rect by index, so wrapping rides along for free.
     func tileRect(_ i: Int) -> NSRect {
-        let w = contentW / CGFloat(max(picker.count, 1))
-        return NSRect(x: contentDX + CGFloat(i) * w, y: notchHeight, width: w, height: NotchStrip.pickerRow)
+        let per = pickerPerRow
+        let w = contentW / CGFloat(per)
+        let row = i / per
+        // A short last row centres under the one above it instead of hanging
+        // off the left edge with a hole where the missing tiles would be.
+        let inRow = max(1, min(per, picker.count - row * per))
+        let inset = (contentW - CGFloat(inRow) * w) / 2
+        return NSRect(x: contentDX + inset + CGFloat(i % per) * w,
+                      y: notchHeight + CGFloat(row) * NotchStrip.pickerRow,
+                      width: w, height: NotchStrip.pickerRow)
     }
 
     /// The camera housing in our coordinates: the one region of the band that
@@ -1290,7 +1325,7 @@ final class NotchStripView: NSView {
         NSColor.white.withAlphaComponent(0.07).setFill()
         NSRect(x: contentDX, y: notchHeight, width: contentW, height: NotchStrip.moduleTabRow).fill()
         for (i, t) in tabs.enumerated() {
-            drawTile(glyph: t.glyph, title: t.title, in: tabRect(i),
+            drawTile(glyph: t.glyph, title: nil, in: tabRect(i),
                      plate: t.active ? 0.14 : (hoveredTab == i ? 0.08 : 0),
                      glyphAlpha: t.active ? 1 : 0.85, titleAlpha: t.active ? 0.95 : 0.6)
         }
@@ -1318,7 +1353,7 @@ final class NotchStripView: NSView {
     /// draw through here, in identical rects, so the icons are the same size
     /// whether or not a module is open — they drifted apart when each row kept
     /// its own copy.
-    private func drawTile(glyph: String, title: String, in r: NSRect,
+    private func drawTile(glyph: String, title: String?, in r: NSRect,
                           plate: CGFloat, glyphAlpha: CGFloat, titleAlpha: CGFloat) {
         if plate > 0 {
             NSColor.white.withAlphaComponent(plate).setFill()
@@ -1330,6 +1365,13 @@ final class NotchStripView: NSView {
             .font: NSFont.systemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.white.withAlphaComponent(titleAlpha)]
         let gs = (glyph as NSString).size(withAttributes: g)
+        guard let title else {
+            // No title: the glyph takes the whole tile and centres in it, at
+            // exactly the size it has in the launcher.
+            (glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.midY - gs.height / 2),
+                                     withAttributes: g)
+            return
+        }
         (glyph as NSString).draw(at: NSPoint(x: r.midX - gs.width / 2, y: r.minY + 13), withAttributes: g)
         let ts = (title as NSString).size(withAttributes: t)
         (title as NSString).draw(at: NSPoint(x: r.midX - ts.width / 2, y: r.minY + 47), withAttributes: t)

@@ -1919,6 +1919,31 @@ case "notchstrip-live-test":
         check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
               "13d: module row sits below the housing")
 
+        // 13n: the launcher wraps once one row would crowd its titles. Checked
+        // on a detached view so it cannot disturb the strip's module count,
+        // which every later index-based check depends on.
+        do {
+            let v = NotchStripView()
+            v.configure(groups: [[]], cards: [], listMode: false, field: field,
+                        picker: (0..<13).map { (glyph: "◆", title: "Module \($0)") })
+            v.frame = NSRect(origin: .zero, size: v.fittingSize)
+            check(v.pickerRows == 2 && v.pickerPerRow == 7,
+                  "13n: 13 tiles wrap to \(v.pickerRows) rows of \(v.pickerPerRow)")
+            check(abs(v.tileRect(0).minY - v.tileRect(6).minY) < 0.5
+                  && v.tileRect(7).minY >= v.tileRect(0).minY + NotchStrip.pickerRow - 0.5,
+                  "13n2: tile 7 starts the second row")
+            check(v.tileRect(12).maxY <= v.fittingSize.height + 0.5,
+                  "13n3: the panel is tall enough for both rows (\(Int(v.fittingSize.height))pt)")
+            // The whole point: a tile wide enough for the title it carries.
+            // "Macro Pad" is 57pt at 11pt medium; one row of 13 gave it 50.
+            check(v.tileRect(0).width > 80,
+                  "13n4: a wrapped tile is \(Int(v.tileRect(0).width))pt wide — room for its title")
+            let single = NotchStripView()
+            single.configure(groups: [[]], cards: [], listMode: false, field: field,
+                             picker: (0..<7).map { (glyph: "◆", title: "M\($0)") })
+            check(single.pickerRows == 1, "13n5: seven or fewer still sit on one row")
+        }
+
         strip.openModule(0); pump(0.4)
         check(opened.contains("alpha"), "13e: opening a module builds its view")
         check(abs(strip.frame.height - (field.notch.height + NotchStrip.moduleTabRow + 200)) < 1,
@@ -1952,9 +1977,10 @@ case "notchstrip-live-test":
             // width — so icons never shrink when a module opens; the ✕ rides
             // in the band beside the camera, clear of the housing.
             let tab0 = view.tabRect(0)
-            check(abs(tab0.height - NotchStrip.pickerRow) < 0.5
+            check(abs(tab0.height - NotchStrip.moduleTabRow) < 0.5
                   && abs(tab0.width - view.contentW / CGFloat(strip.moduleCount)) < 0.5,
-                  "13j2: tabs are the module row's tiles (\(Int(tab0.width))×\(Int(tab0.height)))")
+                  "13j2: tabs keep the launcher's columns in the icon-only row "
+                  + "(\(Int(tab0.width))×\(Int(tab0.height)))")
             let closeBand = strip.bandRectsInScreen
             check(closeBand.count == 1 && closeBand.allSatisfy {
                       $0.minY >= field.notch.minY - 1 && !$0.insetBy(dx: -8, dy: 0).intersects(field.notch) },
