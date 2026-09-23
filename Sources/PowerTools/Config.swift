@@ -402,6 +402,11 @@ struct Config: Codable {
          "system", "disk", "chat"],                                                    // pre-Camera
     ]
     var notchModules: [String] = Config.defaultNotchModules
+    /// The Shelf: a floating tray you drag files, text and images onto to park
+    /// them, then drag back out. Session-only — contents clear on quit.
+    var shelf: Bool = true
+    /// Most items the shelf holds before the oldest drops off.
+    var shelfMaxItems: Int = 40
     /// The camera the notch mirror shows, by AVCaptureDevice.uniqueID. Empty
     /// means the system default — which is what most Macs have exactly one of.
     var notchCameraDeviceID: String = ""
@@ -521,6 +526,7 @@ struct Config: Codable {
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, agentPadGrok, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case showInCaptures
+        case shelf, shelfMaxItems
         case notchModules, notchClockZones, notchCameraDeviceID, notchCameraMirror
         case weatherPlaces, weatherPlace, weatherLat, weatherLon, weatherFahrenheit
         case powerRing, powerRingSlots
@@ -613,6 +619,8 @@ struct Config: Codable {
         if Config.supersededNotchModules.contains(notchModules) {
             notchModules = Config.defaultNotchModules
         }
+        shelf = field(.shelf, true)
+        shelfMaxItems = min(200, max(5, field(.shelfMaxItems, 40)))
         notchCameraDeviceID = field(.notchCameraDeviceID, "")
         notchCameraMirror = field(.notchCameraMirror, true)
         notchClockZones = field(.notchClockZones, ["America/New_York", "Europe/London", "Asia/Tokyo"])

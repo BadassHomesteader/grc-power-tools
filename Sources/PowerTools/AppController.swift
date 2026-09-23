@@ -60,6 +60,9 @@ final class AppController {
     private let readAloud = ReadAloud()
     private let grabAndMove = GrabAndMove()
     private let macroPad = MacroPad()
+    /// Session-only by design: quitting empties the shelf (see Shelf.swift).
+    let shelfStore = ShelfStore()
+    lazy var shelf = ShelfPad(store: shelfStore)
     private let trackpadTap = TrackpadTapDetector()
     private let cheatSheet = HotkeyCheatSheet()
     private let powerRing = PowerRing()
@@ -254,6 +257,10 @@ final class AppController {
                 self.openWhiteboard()
             case .whiteboardClose:
                 self.whiteboard.handleEscape()
+            case .shelf:
+                self.toggleShelf()
+            case .shelfClose:
+                self.shelf.dismiss()
             case .screenRecord:
                 self.interruptDictation()
                 self.toggleScreenRecording()
@@ -297,6 +304,13 @@ final class AppController {
         }
         recorder.onPickerVisibility = { [weak self] visible in
             self?.hotkey?.regionPickerVisible = visible
+        }
+        // The shelf is persistent, so this feeds the LEADER-HELD Esc only.
+        shelf.onVisibility = { [weak self] visible in
+            self?.hotkey?.shelfVisible = visible
+        }
+        shelfStore.onReject = { [weak self] message in
+            self?.overlay.showError(message)
         }
         // The clipboard drawer never takes key, so the tap routes its keys.
         clipboardPalette.onVisibility = { [weak self] visible in
@@ -389,6 +403,11 @@ final class AppController {
             }
             if config.agentPad, PadPlacement.load("agent")?.open == true, !agentPad.isVisible {
                 toggleAgentPad()
+            }
+            // The shelf comes back where it was parked — but EMPTY. What it
+            // held was session-only, and the empty state says so.
+            if config.shelf, PadPlacement.load(ShelfPad.placementKey)?.open == true, !shelf.isVisible {
+                toggleShelf()
             }
         }
         log("controller: ready (hotkey \(config.hotkey.displayName), polish \(config.polish.rawValue))")
@@ -891,6 +910,22 @@ final class AppController {
     /// hold + B (or menu bar): toggle the floating per-app macro pad. The pad
     /// is a persistent non-activating panel — clicking its buttons leaves the
     /// frontmost app focused, so the macro keystrokes land there.
+    /// hold + Y: the shelf. A persistent tray, so this is a plain toggle —
+    /// no summon, no fire-once.
+    func toggleShelf() {
+        interruptDictation()
+        guard config.shelf else {
+            overlay.showError("The shelf is off — switch it on in Settings ▸ Shelf")
+            return
+        }
+        if shelf.isVisible { shelf.dismiss(); return }
+        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+            ?? NSScreen.main
+        guard let screen else { return }
+        shelf.store.cap = config.shelfMaxItems
+        shelf.present(dark: config.appearance.isDark, screen: screen)
+    }
+
     func toggleMacroPad() {
         interruptDictation()
         if macroPad.isVisible { macroPad.dismiss(); return }
@@ -1300,6 +1335,13 @@ final class AppController {
             id: "macropad", glyph: "⊞", title: "Macro Pad", height: 0,
             make: { NSView() },
             open: { [weak self] in self?.toggleMacroPad() }))
+        // The shelf is a floating pad with its own dock, like the two above —
+        // an ACTION tile that toggles it, not a panel the notch can host: the
+        // notch folds on hover-out and would drop a drag mid-flight.
+        notchStrip.registerModule(NotchStrip.Module(
+            id: "shelf", glyph: "⊟", title: "Shelf", height: 0,
+            make: { NSView() },
+            open: { [weak self] in self?.toggleShelf() }))
         // Settings rides LAST and is not gated — a notch that is on screen at
         // all should always offer a way into its own settings. An action tile,
         // not a hosted module: it opens the real 860pt window and folds the

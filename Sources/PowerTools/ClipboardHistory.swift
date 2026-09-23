@@ -224,7 +224,8 @@ final class ClipboardPaletteView: NSView {
         NSSize(width: Self.width, height: min(Self.headerH + contentHeight + Self.footerH, 900))
     }
 
-    private static func thumbnail(_ data: Data, maxPixels: Int) -> NSImage? {
+    /// Shared with the Shelf — one CGImageSource thumbnail path, not two.
+    static func thumbnail(_ data: Data, maxPixels: Int) -> NSImage? {
         guard let src = CGImageSourceCreateWithData(data as CFData, nil),
               let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [
                   kCGImageSourceCreateThumbnailFromImageAlways: true,

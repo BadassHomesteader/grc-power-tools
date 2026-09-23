@@ -107,6 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let agentMenuItem = NSMenuItem(title: "Toggle Agent Pad", action: #selector(toggleAgentPad), keyEquivalent: "j")
         agentMenuItem.target = self
         appMenu.addItem(agentMenuItem)
+        let shelfMenuItem = NSMenuItem(title: "Toggle Shelf", action: #selector(toggleShelf), keyEquivalent: "y")
+        shelfMenuItem.target = self
+        appMenu.addItem(shelfMenuItem)
         let hooksMenuItem = NSMenuItem(title: "Install Claude Code Hooks…", action: #selector(installClaudeHooks), keyEquivalent: "")
         hooksMenuItem.target = self
         appMenu.addItem(hooksMenuItem)
@@ -214,6 +217,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openChat() {
         controller?.openChat()
+    }
+
+    @objc private func toggleShelf() {
+        controller?.toggleShelf()
     }
 
     @objc private func toggleMacroPad() {

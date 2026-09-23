@@ -93,6 +93,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     // Agent Pad
     private let agentPadCheck = NSButton(checkboxWithTitle: "Agent Pad — floating agent-session panel (hold hotkey + J, or menu bar)", target: nil, action: nil)
+    private let shelfCheck = NSButton(checkboxWithTitle: "Shelf — a tray to park files, text and images on (hold hotkey + Y, or menu bar)", target: nil, action: nil)
+    private let shelfMaxPopup = NSPopUpButton()
     private let captureCheck = NSButton(checkboxWithTitle: "Show Power Tools in screenshots & recordings", target: nil, action: nil)
     private let notchStripCheck = NSButton(checkboxWithTitle: "Notch strip — a live glance in the camera housing", target: nil, action: nil)
     private let notchAgentsCheck = NSButton(checkboxWithTitle: "Agent sessions — one dot each, and a banner when one needs an answer", target: nil, action: nil)
@@ -222,6 +224,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             box.target = self
             box.action = sel
         }
+        shelfCheck.target = self
+        shelfCheck.action = #selector(shelfToggled)
+        shelfMaxPopup.addItems(withTitles: ["10 items", "20 items", "40 items", "80 items", "200 items"])
+        shelfMaxPopup.target = self
+        shelfMaxPopup.action = #selector(shelfMaxChanged)
         agentCodexCheck.target = self
         agentCodexCheck.action = #selector(agentCodexToggled)
         agentCursorCheck.target = self
@@ -279,6 +286,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             ("Keys", "keyboard", keysTab),
             ("Macro Pad", "square.grid.2x2", macroPadTab),
             ("Agent Pad", "terminal", agentPadTab),
+            ("Shelf", "tray.and.arrow.down", shelfTab),
             ("Notch", "menubar.rectangle", notchTab),
             ("Connections", "link", connectionsTab),
             ("Permissions", "checkmark.shield", permissionsTab),
@@ -1188,6 +1196,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         ])
     }
 
+    private func shelfTab() -> NSView {
+        let note = NSTextField(wrappingLabelWithString:
+            "Drag files, text or images onto the shelf to park them, then drag them back out "
+            + "into another app, another Space, or a folder you had not opened yet. Drag it by "
+            + "its header to dock it against any edge or corner. Dragging an item OUT always "
+            + "copies — a shelved file is never moved out of its folder — and the row stays "
+            + "until you remove it. The shelf is emptied when Power Tools quits; only its "
+            + "position is remembered.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.preferredMaxLayoutWidth = 500
+        let maxLabel = NSTextField(labelWithString: "Hold at most")
+        maxLabel.font = .systemFont(ofSize: 12)
+        let maxRow = NSStackView(views: [maxLabel, shelfMaxPopup])
+        maxRow.spacing = 8
+        return vstack([
+            section("Shelf", [shelfCheck, note, maxRow], width: 540),
+        ])
+    }
+
     private func agentPadTab() -> NSView {
         let note = NSTextField(labelWithString: "Every live agent session as a row — working / idle / needs you. Click a row to focus it; ✓ ✕ answer Claude Code permission prompts; – collapses to a strip of status lights. Claude Code state arrives via hooks — install them once per machine.")
         note.font = .systemFont(ofSize: 11)
@@ -1338,6 +1366,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         hooksStatus.stringValue = ClaudeHooksInstaller.isInstalled()
             ? "Hooks installed ✓ — sessions report live on port \(config.agentPadPort)."
             : "Hooks not installed — Claude Code sessions won't appear on the pad until they are."
+    }
+
+    @objc private func shelfToggled() {
+        config.shelf = (shelfCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func shelfMaxChanged() {
+        let sizes = [10, 20, 40, 80, 200]
+        config.shelfMaxItems = sizes[min(max(shelfMaxPopup.indexOfSelectedItem, 0), sizes.count - 1)]
+        config.save()
+        onConfigChange(config)
     }
 
     @objc private func agentPadToggled() {
@@ -1498,6 +1539,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroSummonCheck.state = config.macroPadThreeFingerTap ? .on : .off
         macroSummonFingers.selectItem(at: max(0, min(1, config.macroPadSummonFingers - 3)))
         agentPadCheck.state = config.agentPad ? .on : .off
+        shelfCheck.state = config.shelf ? .on : .off
+        shelfMaxPopup.selectItem(at: [10, 20, 40, 80, 200].firstIndex(of: config.shelfMaxItems) ?? 2)
         captureCheck.state = config.showInCaptures ? .on : .off
         notchStripCheck.state = config.notchStrip ? .on : .off
         notchAgentsCheck.state = config.notchAgents ? .on : .off

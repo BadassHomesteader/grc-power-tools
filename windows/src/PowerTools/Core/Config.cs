@@ -106,6 +106,10 @@ public sealed class Config
     public bool AgentPadCursor = true;
     public bool AgentPadGrok = true;
     public bool RestorePads = true;
+    // Shelf: Mac-only behaviour today, but the schema is shared, so the keys are
+    // declared, parsed and written back here rather than being dropped on save.
+    public bool Shelf = true;
+    public int ShelfMaxItems = 40;
     public bool PowerRing = true;
     public List<string> PowerRingSlots = new(DefaultPowerRingSlots);
     /// Mac-only (annotation whiteboard on hold + E); preserved for schema parity.
@@ -239,6 +243,8 @@ public sealed class Config
         c.AgentPadCursor = Bool(root, "agentPadCursor", true);
         c.AgentPadGrok = Bool(root, "agentPadGrok", true);
         c.RestorePads = Bool(root, "restorePads", true);
+        c.Shelf = Bool(root, "shelf", true);
+        c.ShelfMaxItems = Int(root, "shelfMaxItems", 40);
         c.PowerRing = Bool(root, "powerRing", true);
         c.PowerRingSlots = StrList(root, "powerRingSlots") ?? new(DefaultPowerRingSlots);
         c.Whiteboard = Bool(root, "whiteboard", true);
@@ -332,6 +338,8 @@ public sealed class Config
             ["agentPadCursor"] = AgentPadCursor,
             ["agentPadGrok"] = AgentPadGrok,
             ["restorePads"] = RestorePads,
+            ["shelf"] = Shelf,
+            ["shelfMaxItems"] = ShelfMaxItems,
             ["powerRing"] = PowerRing,
             ["powerRingSlots"] = new JsonArray(PowerRingSlots.Select(s => (JsonNode)s!).ToArray()),
             ["whiteboard"] = Whiteboard,

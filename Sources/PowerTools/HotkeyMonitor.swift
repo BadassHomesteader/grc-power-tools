@@ -57,7 +57,10 @@ final class HotkeyMonitor {
         case powerRing                    // hold + right-click — radial menu at the cursor
         case powerRingClose               // Esc while the ring is up — close it
         case whiteboard                   // hold + E — annotate the last screenshot
-        case whiteboardClose              // Esc while the whiteboard is up — cancel text entry / close
+        case whiteboardClose
+    /// hold + Y — the file/text/image shelf.
+    case shelf
+    case shelfClose              // Esc while the whiteboard is up — cancel text entry / close
     }
 
     var handler: ((Callback) -> Void)?
@@ -95,6 +98,8 @@ final class HotkeyMonitor {
     /// The hold + F area picker is up: ⏎ = whole display, Esc cancels, arrows
     /// and the 3/W chords are inert — the leader is still held when it opens.
     var regionPickerVisible = false
+    /// Mirrored for the LEADER-HELD Esc only — see the note at that branch.
+    var shelfVisible = false
     /// True while the clipboard drawer is out (same discipline). It never takes
     /// key, so its keys — Esc, ↵, ↑/↓, 1–9 — are routed from here instead.
     var clipboardDrawerVisible = false
@@ -203,6 +208,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_Q: Int64 = 12
     private static let kVK_ANSI_E: Int64 = 14
     private static let kVK_ANSI_F: Int64 = 3
+    private static let kVK_ANSI_Y: Int64 = 16
     private static let kVK_Tab: Int64 = 48
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
@@ -541,6 +547,12 @@ final class HotkeyMonitor {
                 if whiteboardVisible { dispatch(.whiteboardClose) }
                 if macroPadSummoned { dispatch(.macroPadSummonClose) }
                 if regionPickerVisible { dispatch(.screenRecordClose) }
+                // The shelf is mirrored HERE ONLY, never in the plain-Esc
+                // branch: it is a persistent surface the user parks and leaves
+                // open, so swallowing bare Esc would eat it in every app for
+                // hours. (The summoned Macro Pad qualifies down there because
+                // it is fire-once; a parked shelf is the opposite.)
+                if shelfVisible { dispatch(.shelfClose) }
                 dispatch(.cancel)
                 return nil // swallow so it doesn't close the user's dialogs
             case Self.kVK_ANSI_T:

@@ -1336,6 +1336,159 @@ case "shot-hud-test":
         exit(fails == 0 ? 0 : 1)
     }
 
+case "shelf-preview":
+    // Offscreen render of the shelf: dark by default, "light" for the light
+    // theme, "empty" for the empty state, "dropping" for the drop highlight.
+    let out = args.count >= 2 ? args[1] : "shelf-preview.png"
+    MainActor.assumeIsolated {
+        _ = NSApplication.shared           // NSWorkspace.icon(forFile:) wants one
+        let v = ShelfView(dark: !args.contains("light"))
+        v.frame = NSRect(x: 0, y: 0, width: ShelfPad.width, height: ShelfPad.height)
+        var items: [ShelfItem] = []
+        if !args.contains("empty") {
+            let img = NSImage(size: NSSize(width: 1200, height: 800))
+            img.lockFocus()
+            NSColor(srgbRed: 0.2, green: 0.5, blue: 0.9, alpha: 1).setFill()
+            NSRect(x: 0, y: 0, width: 1200, height: 800).fill()
+            img.unlockFocus()
+            let png = img.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) }?
+                .representation(using: .png, properties: [:]) ?? Data()
+            items = [
+                ShelfItem(kind: .file(URL(fileURLWithPath: "/System/Applications/Notes.app"))),
+                ShelfItem(kind: .image(png)),
+                ShelfItem(kind: .text("Meter exchange notes — premise 4471, needs a return visit Thursday")),
+                ShelfItem(kind: .file(URL(fileURLWithPath: "/etc/hosts"))),
+                ShelfItem(kind: .text("https://powertools.geeksare.cool")),
+            ]
+        }
+        v.previewItems(items, dropping: args.contains("dropping"))
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out) — shelf \(Int(v.bounds.width))x\(Int(v.bounds.height))")
+        }
+    }
+
+case "shelf-dragout-test":
+    // The other half of the drag. An AppKit drag session runs a modal loop
+    // driven by the real mouse and cannot be simulated, but what it CARRIES is
+    // just a pasteboard writer per row — so build each kind's writer, write it,
+    // and read it back. Catches "wrote the wrong type" without a session.
+    MainActor.assumeIsolated {
+        var fails = 0
+        func check(_ name: String, _ ok: Bool) {
+            print("\(ok ? "PASS" : "FAIL") — \(name)")
+            if !ok { fails += 1 }
+        }
+        let pb = NSPasteboard(name: NSPasteboard.Name("com.grc.whisper.shelf.dragout"))
+        let url = URL(fileURLWithPath: "/etc/hosts")
+
+        pb.clearContents()
+        pb.writeObjects([url as NSURL])
+        let back = (pb.readObjects(forClasses: [NSURL.self],
+                                   options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        check("a file row carries a real file URL (\(back.first?.path ?? "none"))",
+              back.first?.standardizedFileURL == url.standardizedFileURL)
+        // This is what lets a file row land in Finder at all.
+        check("…as public.file-url", pb.types?.contains(.fileURL) == true)
+
+        pb.clearContents()
+        let textItem = NSPasteboardItem()
+        textItem.setString("shelved", forType: .string)
+        pb.writeObjects([textItem])
+        check("a text row carries .string", pb.string(forType: .string) == "shelved")
+
+        let img = NSImage(size: NSSize(width: 4, height: 4))
+        img.lockFocus(); NSColor.red.setFill(); NSRect(x: 0, y: 0, width: 4, height: 4).fill(); img.unlockFocus()
+        let png = img.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) }?
+            .representation(using: .png, properties: [:]) ?? Data()
+        pb.clearContents()
+        let imgItem = NSPasteboardItem()
+        imgItem.setData(png, forType: .png)
+        pb.writeObjects([imgItem])
+        check("an image row carries byte-identical PNG", pb.data(forType: .png) == png)
+
+        print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
+        exit(fails == 0 ? 0 : 1)
+    }
+
+case "shelf-drop-test":
+    // The whole drop path, with no drag session and no window: because
+    // performDragOperation is a one-liner over ShelfStore.ingest, a real
+    // private pasteboard exercises exactly what a Finder drag would deliver.
+    MainActor.assumeIsolated {
+        var fails = 0
+        func check(_ name: String, _ ok: Bool) {
+            print("\(ok ? "PASS" : "FAIL") — \(name)")
+            if !ok { fails += 1 }
+        }
+        let pb = NSPasteboard(name: NSPasteboard.Name("com.grc.whisper.shelf.test"))
+        let store = ShelfStore(cap: 4)
+        let tmp = FileManager.default.temporaryDirectory
+        let urls = (1...3).map { tmp.appendingPathComponent("shelf-test-\($0).txt") }
+        for (i, u) in urls.enumerated() { try? "file \(i)".write(to: u, atomically: true, encoding: .utf8) }
+        defer { for u in urls { try? FileManager.default.removeItem(at: u) } }
+
+        // THE bug this test exists for: string(forType:)/data(forType:) read
+        // only the first pasteboard item, so a three-file drag lands one.
+        pb.clearContents()
+        pb.writeObjects(urls.map { $0 as NSURL })
+        check("three files from one drag land three rows — got \(store.ingest(pb))", store.items.count == 3)
+
+        pb.clearContents(); pb.setString("shelved text", forType: .string)
+        _ = store.ingest(pb)
+        check("text lands", store.items.first.map { if case .text = $0.kind { return true } else { return false } } ?? false)
+
+        // An image arriving as TIFF must be stored as PNG, so re-dragging it is
+        // format-stable.
+        let img = NSImage(size: NSSize(width: 8, height: 8))
+        img.lockFocus(); NSColor.systemTeal.setFill(); NSRect(x: 0, y: 0, width: 8, height: 8).fill(); img.unlockFocus()
+        pb.clearContents()
+        if let tiff = img.tiffRepresentation { pb.setData(tiff, forType: .tiff) }
+        _ = store.ingest(pb)
+        var isPNG = false
+        if case .image(let data)? = store.items.first?.kind {
+            isPNG = data.starts(with: [0x89, 0x50, 0x4E, 0x47])
+        }
+        check("a TIFF drop is normalised to PNG", isPNG)
+
+        // The cap has a sane floor — asking for 4 gets 5, not 4.
+        check("cap is clamped to its floor (\(store.cap))", store.cap == 5)
+        check("five things on the shelf — got \(store.items.count)", store.items.count == 5)
+
+        // Re-dropping the same file is not a second copy; it comes back to top.
+        let before = store.items.count
+        pb.clearContents(); pb.writeObjects([urls[0] as NSURL])
+        let addedAgain = store.ingest(pb)
+        check("re-dropping an existing file adds nothing — got \(addedAgain)", addedAgain == 0)
+        check("…and moves it to the top", store.items.first?.fileURL?.lastPathComponent == urls[0].lastPathComponent)
+        check("…leaving the count alone", store.items.count == before)
+
+        // One past the cap: the oldest falls off rather than the shelf growing.
+        let oldest = store.items.last?.dedupeKey
+        pb.clearContents(); pb.setString("one too many", forType: .string)
+        _ = store.ingest(pb)
+        check("one past the cap still holds \(store.cap) — got \(store.items.count)",
+              store.items.count == store.cap)
+        check("…and it is the OLDEST that went", !store.items.contains { $0.dedupeKey == oldest })
+
+        store.clear()
+        check("clear empties it", store.items.isEmpty)
+
+        // Oversize text is refused with a reason rather than silently dropped.
+        var rejected: String?
+        store.onReject = { rejected = $0 }
+        pb.clearContents()
+        pb.setString(String(repeating: "x", count: ShelfStore.maxChars + 1), forType: .string)
+        _ = store.ingest(pb)
+        check("oversize text is refused, with a reason (\(rejected ?? "none"))",
+              store.items.isEmpty && rejected != nil)
+
+        print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
+        exit(fails == 0 ? 0 : 1)
+    }
+
 case "camera-test":
     // The feed cannot be proved by a screenshot — the picture is a CALayer fed
     // by the capture graph, and a region grab would need its own permission and
