@@ -1796,7 +1796,8 @@ case "notchstrip-preview":
             // "tabs" draws the same set as the tab row over an open module (Weather).
             let tiles: [(glyph: String, title: String)] = [
                 ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("▤", "Calendar"), ("☀", "Weather"),
-                ("❖", "System"), ("☰", "Disk"), ("◉", "Camera"), ("✦", "Ask"), ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⚙", "Settings")]
+                ("◉", "Camera"), ("❖", "System"), ("☰", "Disk"), ("✦", "Ask"),
+                ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⊟", "Shelf"), ("⚙", "Settings")]
             if shape == "tabs" {
                 v.configure(groups: [marks], cards: [], listMode: false, field: field, moduleHeight: 60,
                             tabs: tiles.map { (glyph: $0.glyph, title: $0.title, active: $0.title == "Weather") })
