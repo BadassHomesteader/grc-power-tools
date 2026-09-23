@@ -1301,6 +1301,53 @@ case "notchcalendar-preview":
         }
     }
 
+case "notchdisk-preview":
+    // Offscreen render of the Disk module with PLANTED volumes, so the PNG is
+    // deterministic and diffable: an internal SSD mid-transfer, a roomy
+    // external, and a nearly-full stick to exercise the red tint and the ⏏.
+    let out = args.count >= 2 ? args[1] : "notchdisk-preview.png"
+    MainActor.assumeIsolated {
+        var snap = DiskReader.Snapshot()
+        snap.devices = [DiskReader.Device(bsd: "disk0", name: "APPLE SSD AP1024Z", isInternal: true,
+                                          readBps: 412_000_000, writeBps: 18_000_000,
+                                          totalRead: 5_435_733_581_824, totalWritten: 388_248_322_048)]
+        snap.volumes = [
+            DiskReader.Volume(name: "Macintosh HD", format: "APFS",
+                              total: 994_662_584_320, used: 743_900_000_000, free: 250_762_584_320,
+                              ejectable: false, isInternal: true,
+                              url: URL(fileURLWithPath: "/"), device: "disk0"),
+            DiskReader.Volume(name: "Field Archive", format: "ExFAT",
+                              total: 2_000_000_000_000, used: 820_000_000_000, free: 1_180_000_000_000,
+                              ejectable: true, isInternal: false,
+                              url: URL(fileURLWithPath: "/Volumes/Field Archive"), device: "disk4"),
+            DiskReader.Volume(name: "KYAW Transfer", format: "MS-DOS (FAT32)",
+                              total: 32_000_000_000, used: 30_700_000_000, free: 1_300_000_000,
+                              ejectable: true, isInternal: false,
+                              url: URL(fileURLWithPath: "/Volumes/KYAW Transfer"), device: "disk5"),
+        ]
+        snap.warming = false
+        // "live" renders the same view against the REAL disks instead — the
+        // reader needs two counter samples before throughput exists, so pump
+        // the run loop between pulls rather than drawing a warming dash.
+        if args.contains("live") {
+            _ = DiskReader.shared.snapshot
+            RunLoop.main.run(until: Date().addingTimeInterval(2.5))
+            _ = DiskReader.shared.snapshot
+            RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        } else {
+            DiskReader.shared.seed(snap)
+        }
+        let host = NotchPreviewPlate(frame: NSRect(x: 0, y: 0, width: 660, height: 214))
+        let v = DiskModuleView(frame: host.bounds)
+        host.addSubview(v)
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out) — disk 660x214")
+        }
+    }
+
 case "notchweather-preview":
     // Offscreen render of the MacNotch-style weather module with a planted
     // reading (no network), on the housing black, at the notch's body width.
@@ -1426,7 +1473,7 @@ case "notchstrip-preview":
             // "tabs" draws the same set as the tab row over an open module (Weather).
             let tiles: [(glyph: String, title: String)] = [
                 ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("▤", "Calendar"), ("☀", "Weather"),
-                ("✦", "Ask"), ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⚙", "Settings")]
+                ("☰", "Disk"), ("✦", "Ask"), ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⚙", "Settings")]
             if shape == "tabs" {
                 v.configure(groups: [marks], cards: [], listMode: false, field: field, moduleHeight: 60,
                             tabs: tiles.map { (glyph: $0.glyph, title: $0.title, active: $0.title == "Weather") })

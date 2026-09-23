@@ -1249,6 +1249,9 @@ final class AppController {
                 WeatherModuleView(places: self?.config.weatherPlaces ?? [],
                                   fahrenheit: self?.config.weatherFahrenheit ?? true)
             }),
+            ("disk", .init(id: "disk", glyph: "☰", title: "Disk", height: 214) {
+                DiskModuleView(frame: .zero)
+            }),
             ("chat", .init(id: "chat", glyph: "✦", title: "Ask", height: 200, make: { [weak self] in
                 ChatModuleView(model: self?.config.claudeModel ?? "claude-haiku-4-5",
                                openFull: { [weak self] text in self?.openChat(with: text) })

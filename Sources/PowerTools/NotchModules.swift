@@ -794,3 +794,134 @@ final class ChatModuleView: NotchModuleView, NotchKeyboardModule {
         openFull(answer)
     }
 }
+
+// MARK: - Disk
+
+/// Volumes and how hard the disk is working, in the notch's black.
+///
+/// Throughput sits on the DEVICE line, not the volume rows, because that is
+/// where the numbers actually come from: every APFS volume in a container
+/// shares one set of counters (see DiskReader). Volumes carry capacity only.
+final class DiskModuleView: NotchModuleView {
+    private var ejectRects: [(url: URL, rect: NSRect)] = []
+    /// A failed eject explains itself on the row for a few seconds — a toast
+    /// would land over the notch, which is where the user is already looking.
+    private var ejectError: (path: String, message: String, until: Date)?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        tick(every: 2)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func tint(_ frac: Double) -> NSColor {
+        frac >= 0.90 ? NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
+      : frac >= 0.75 ? NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+      : NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        ejectRects = []
+        let left: CGFloat = 16
+        let right = bounds.width - 16
+        let snap = DiskReader.shared.snapshot
+
+        ("Disk" as NSString).draw(at: NSPoint(x: left, y: 10), withAttributes: NotchTheme.title())
+
+        // Summary counts each DEVICE once: two volumes in one APFS container
+        // both report the container's size, so summing volumes would double it.
+        var seen = Set<String>()
+        var total: Int64 = 0, free: Int64 = 0
+        for v in snap.volumes where !seen.contains(v.device.isEmpty ? v.name : v.device) {
+            seen.insert(v.device.isEmpty ? v.name : v.device)
+            total += v.total; free += v.free
+        }
+        if total > 0 {
+            let sum = "\(DiskReader.bytes(total)) · \(DiskReader.bytes(free)) free" as NSString
+            sum.draw(at: NSPoint(x: right - sum.size(withAttributes: NotchTheme.small(10)).width, y: 12),
+                     withAttributes: NotchTheme.small(10))
+        }
+
+        var y: CGFloat = 38
+        for d in snap.devices.prefix(2) {
+            guard y < bounds.height - 70 else { break }
+            (d.name as NSString).draw(at: NSPoint(x: left, y: y), withAttributes: NotchTheme.title(12))
+            let where_ = "\(d.isInternal ? "Internal" : "External") · \(d.bsd)" as NSString
+            where_.draw(at: NSPoint(x: left + (d.name as NSString).size(withAttributes: NotchTheme.title(12)).width + 8,
+                                    y: y + 2), withAttributes: NotchTheme.small(10))
+            // Read / write as two columns of the house numbers-row grammar.
+            let cols = [("◂", "Read", DiskReader.rate(d.readBps)), ("▸", "Write", DiskReader.rate(d.writeBps))]
+            for (i, c) in cols.enumerated() {
+                let x = right - 200 + CGFloat(i) * 100
+                (c.0 as NSString).draw(at: NSPoint(x: x, y: y + 4),
+                                       withAttributes: [.font: NSFont.systemFont(ofSize: 13),
+                                                        .foregroundColor: NotchTheme.dim])
+                (c.1 as NSString).draw(at: NSPoint(x: x + 18, y: y - 3), withAttributes: NotchTheme.small(9))
+                (c.2 as NSString).draw(at: NSPoint(x: x + 18, y: y + 9), withAttributes: NotchTheme.title(12))
+            }
+            y += 30
+            let boot = "Since boot · \(DiskReader.bytes(Int64(bitPattern: d.totalRead))) read"
+                     + " · \(DiskReader.bytes(Int64(bitPattern: d.totalWritten))) written" as NSString
+            boot.draw(at: NSPoint(x: left, y: y), withAttributes: NotchTheme.small(9))
+            y += 22
+        }
+
+        guard !snap.volumes.isEmpty else {
+            ("No volumes." as NSString).draw(at: NSPoint(x: left, y: y), withAttributes: NotchTheme.small(11))
+            return
+        }
+        NotchTheme.faint.setFill()
+        NSRect(x: left, y: y, width: right - left, height: 1).fill()
+        y += 12
+
+        for (i, v) in snap.volumes.enumerated() {
+            guard y < bounds.height - 34 else {
+                ("+\(snap.volumes.count - i) more" as NSString)
+                    .draw(at: NSPoint(x: left, y: y), withAttributes: NotchTheme.small(9))
+                return
+            }
+            (v.name as NSString).draw(at: NSPoint(x: left, y: y), withAttributes: NotchTheme.title(12))
+            let nameW = (v.name as NSString).size(withAttributes: NotchTheme.title(12)).width
+            var note = v.format
+            if let e = ejectError, e.path == v.url.path, e.until > Date() { note = e.message }
+            (note as NSString).draw(at: NSPoint(x: left + nameW + 8, y: y + 2), withAttributes: NotchTheme.small(10))
+
+            var capRight = right
+            if v.ejectable {
+                let r = NSRect(x: right - 16, y: y - 2, width: 16, height: 18)
+                ("⏏" as NSString).draw(at: NSPoint(x: r.minX, y: r.minY + 1),
+                                       withAttributes: [.font: NSFont.systemFont(ofSize: 13),
+                                                        .foregroundColor: NotchTheme.fg.withAlphaComponent(0.8)])
+                ejectRects.append((v.url, r))
+                capRight = r.minX - 10
+            }
+            let cap = "\(DiskReader.bytes(v.used)) of \(DiskReader.bytes(v.total))" as NSString
+            cap.draw(at: NSPoint(x: capRight - cap.size(withAttributes: NotchTheme.title(11)).width, y: y + 1),
+                     withAttributes: NotchTheme.title(11))
+
+            let frac = v.total > 0 ? Double(v.used) / Double(v.total) : 0
+            let track = NSRect(x: left, y: y + 20, width: right - left, height: 5)
+            NotchTheme.faint.setFill()
+            NSBezierPath(roundedRect: track, xRadius: 2.5, yRadius: 2.5).fill()
+            tint(frac).setFill()
+            NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY,
+                                             width: max(track.width * CGFloat(frac), 3), height: track.height),
+                         xRadius: 2.5, yRadius: 2.5).fill()
+            ("\(DiskReader.bytes(v.free)) free" as NSString)
+                .draw(at: NSPoint(x: left, y: y + 28), withAttributes: NotchTheme.small(9))
+            y += 50
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        guard let hit = ejectRects.first(where: { $0.rect.insetBy(dx: -6, dy: -4).contains(p) }),
+              let vol = DiskReader.shared.snapshot.volumes.first(where: { $0.url == hit.url }) else { return }
+        do {
+            try DiskReader.shared.eject(vol)
+        } catch {
+            ejectError = (vol.url.path, error.localizedDescription, Date().addingTimeInterval(3))
+        }
+        needsDisplay = true
+    }
+}

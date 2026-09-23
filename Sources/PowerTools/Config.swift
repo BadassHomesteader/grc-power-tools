@@ -389,7 +389,15 @@ struct Config: Codable {
     /// Notch modules — panels the notch hosts, as opposed to sources that
     /// publish into it. Each can be switched off; the ⋯ mark disappears when
     /// none are on.
-    var notchModules: [String] = ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"]
+    static let defaultNotchModules = ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "disk", "chat"]
+    /// Defaults shipped before today's. A saved list equal to one of these
+    /// predates a module rather than expressing a choice, so it is upgraded on
+    /// load (see `init(from:)`) — every module shipped appends one entry here.
+    static let supersededNotchModules: [[String]] = [
+        ["usage", "hotkeys", "snap", "clock", "weather", "chat"],              // pre-Calendar
+        ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"],  // pre-Disk
+    ]
+    var notchModules: [String] = Config.defaultNotchModules
     /// World clock zones, IANA identifiers.
     var notchClockZones: [String] = ["America/New_York", "Europe/London", "Asia/Tokyo"]
     /// Weather: places typed in Settings, each geocoded once to a lat/lon so
@@ -586,13 +594,13 @@ struct Config: Codable {
         notchQuotaAt = field(.notchQuotaAt, 60)
         notchStripMigrated = field(.notchStripMigrated, false)
         showInCaptures = field(.showInCaptures, true)
-        notchModules = field(.notchModules, ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"])
+        notchModules = field(.notchModules, Config.defaultNotchModules)
         // `save()` writes the whole config, so every existing config.json carries
-        // the OLD default list verbatim and would hide any module added later.
-        // A list that still equals that old default is not a choice — it takes
-        // the new default; a list the user actually edited is left alone.
-        if notchModules == ["usage", "hotkeys", "snap", "clock", "weather", "chat"] {
-            notchModules = ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"]
+        // the default list of ITS day verbatim and would hide any module added
+        // later. A list that still equals one of those is not a choice — it
+        // takes the new default; a list the user actually edited is left alone.
+        if Config.supersededNotchModules.contains(notchModules) {
+            notchModules = Config.defaultNotchModules
         }
         notchClockZones = field(.notchClockZones, ["America/New_York", "Europe/London", "Asia/Tokyo"])
         weatherPlaces = field(.weatherPlaces, [])

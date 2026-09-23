@@ -1224,8 +1224,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         quotaNote.preferredMaxLayoutWidth = 500
         let modNote = NSTextField(wrappingLabelWithString:
             "Hover the four-square mark at the end of the strip to open the module row: "
-            + "Usage, Hotkeys, Snap, Clock, Weather, Ask — and a ⚙ Settings tile that "
-            + "opens this window.")
+            + "Usage, Hotkeys, Snap, Clock, Calendar, Weather, Disk and Ask, plus Agent Pad "
+            + "and Macro Pad tiles and a ⚙ Settings tile that opens this window. "
+            + "Switching a module off is an edit to notchModules in config.json, and takes "
+            + "effect the next time the app launches.")
         modNote.font = .systemFont(ofSize: 11)
         modNote.textColor = .secondaryLabelColor
         modNote.preferredMaxLayoutWidth = 500
