@@ -2209,29 +2209,34 @@ case "notchstrip-live-test":
         check(strip.contentRectsInScreen.allSatisfy { $0.maxY <= field.notch.minY + 1 },
               "13d: module row sits below the housing")
 
-        // 13n: the launcher wraps once one row would crowd its titles. Checked
-        // on a detached view so it cannot disturb the strip's module count,
-        // which every later index-based check depends on.
+        // 13n: the launcher is ONE row of icons, laid out exactly like the tab
+        // row — same height, same columns — so opening a module never moves or
+        // resizes the tile you clicked from. Checked on a detached view so it
+        // cannot disturb the strip's module count, which every later
+        // index-based check depends on.
         do {
             let v = NotchStripView()
             v.configure(groups: [[]], cards: [], listMode: false, field: field,
-                        picker: (0..<13).map { (glyph: "◆", title: "Module \($0)") })
+                        picker: (0..<14).map { (glyph: "◆", title: "Module \($0)") })
             v.frame = NSRect(origin: .zero, size: v.fittingSize)
-            check(v.pickerRows == 2 && v.pickerPerRow == 7,
-                  "13n: 13 tiles wrap to \(v.pickerRows) rows of \(v.pickerPerRow)")
-            check(abs(v.tileRect(0).minY - v.tileRect(6).minY) < 0.5
-                  && v.tileRect(7).minY >= v.tileRect(0).minY + NotchStrip.pickerRow - 0.5,
-                  "13n2: tile 7 starts the second row")
-            check(v.tileRect(12).maxY <= v.fittingSize.height + 0.5,
-                  "13n3: the panel is tall enough for both rows (\(Int(v.fittingSize.height))pt)")
-            // The whole point: a tile wide enough for the title it carries.
-            // "Macro Pad" is 57pt at 11pt medium; one row of 13 gave it 50.
-            check(v.tileRect(0).width > 80,
-                  "13n4: a wrapped tile is \(Int(v.tileRect(0).width))pt wide — room for its title")
-            let single = NotchStripView()
-            single.configure(groups: [[]], cards: [], listMode: false, field: field,
-                             picker: (0..<7).map { (glyph: "◆", title: "M\($0)") })
-            check(single.pickerRows == 1, "13n5: seven or fewer still sit on one row")
+            let first = v.tileRect(0), last = v.tileRect(13)
+            check(abs(first.minY - last.minY) < 0.5,
+                  "13n: all 14 tiles sit on ONE row (y \(Int(first.minY)) vs \(Int(last.minY)))")
+            check(abs(first.height - NotchStrip.moduleTabRow) < 0.5,
+                  "13n2: a launcher tile is the tab row's height (\(Int(first.height))pt)")
+            check(abs(v.fittingSize.height - (field.notch.height + NotchStrip.pickerRow)) < 0.5,
+                  "13n3: the panel is exactly housing + one row (\(Int(v.fittingSize.height))pt)")
+            check(last.maxX <= v.fittingSize.width + 0.5,
+                  "13n4: the last tile stays inside the body (\(Int(last.maxX)) of \(Int(v.fittingSize.width)))")
+            // The launcher and the tab row must stay identical — they have
+            // drifted apart twice now.
+            let tabbed = NotchStripView()
+            tabbed.configure(groups: [[]], cards: [], listMode: false, field: field, moduleHeight: 60,
+                             tabs: (0..<14).map { (glyph: "◆", title: "Module \($0)", active: $0 == 0) })
+            tabbed.frame = NSRect(origin: .zero, size: tabbed.fittingSize)
+            check(abs(tabbed.tabRect(0).width - first.width) < 0.5
+                  && abs(tabbed.tabRect(0).height - first.height) < 0.5,
+                  "13n5: launcher tile and tab are the same rect (\(Int(first.width))×\(Int(first.height)))")
         }
 
         strip.openModule(0); pump(0.4)

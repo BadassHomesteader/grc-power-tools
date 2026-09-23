@@ -189,26 +189,23 @@ final class NotchStrip {
     /// against it, so it grows with the row — with the icon-only 46pt tab row,
     /// 308pt stays free for the module.
     static let maxModuleContent: CGFloat = 354
-    /// Launcher tiles are sized to be read and hit at a glance from the menu
-    /// bar: 26pt glyphs over 11pt titles.
-    static let pickerRow: CGFloat = 80
-    /// …and the launcher wraps rather than letting those titles collide. Across
-    /// a 660pt body, thirteen tiles leave 50pt each while "Macro Pad" measures
-    /// 57pt at 11pt medium — the labels overlapped, and shrinking the type was
-    /// already ruled out at ten. Seven per row keeps them legible with room to
-    /// grow; under eight modules nothing changes and the row stays single.
-    static let maxTilesPerRow = 7
+    /// The launcher row: every module on ONE row, icons only, at exactly the
+    /// size and height the tab row uses (see `moduleTabRow`, which this is).
+    /// Titles were what forced a wrap — fourteen labelled tiles could not share
+    /// 660pt without colliding — and two rows read worse than the icons do. The
+    /// names still live in Settings ▸ Notch and the ⌘Q cheat sheet.
+    static let pickerRow: CGFloat = moduleTabRow
     /// While a module is open, its siblings stay one click away on a tab row
     /// under the housing. Without it a module was a dead end — there was no way
     /// back to the row and no way out at all.
     ///
-    /// It draws the launcher's tiles at the launcher's GLYPH SIZE — 26pt, same
-    /// column width, same drawing call — but without the titles, because by the
-    /// time a module is open the row is a switcher between icons already read
-    /// rather than a list to be read again. Dropping the titles is what keeps
-    /// it one row at thirteen modules, and hands 34pt back to the module. The
-    /// icons must never shrink here: that was the complaint this row's layout
-    /// was rebuilt to answer. Its ✕ rides in the band beside the camera.
+    /// The launcher and this row are now ONE thing again: same height, same
+    /// column width, same 26pt glyph, same drawing call, no titles in either.
+    /// Opening a module therefore changes nothing about the row you clicked
+    /// from — no resize, no reflow, no icon moving under the cursor — which is
+    /// the property the row keeps getting rebuilt to preserve. The ✕ rides in
+    /// the band beside the camera rather than taking a slot. Keep them equal:
+    /// they have drifted twice.
     static let moduleTabRow: CGFloat = 46
 
     /// The body width of every expanded shape, in housings. Set by the agent
@@ -988,10 +985,7 @@ final class NotchStripView: NSView {
         if moduleHeight > 0 {
             return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.moduleTabRow + moduleHeight)
         }
-        if !picker.isEmpty {
-            return NSSize(width: midFrameWidth,
-                          height: notchHeight + NotchStrip.pickerRow * CGFloat(pickerRows))
-        }
+        if !picker.isEmpty { return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.pickerRow) }
         if listMode, !cards.isEmpty { return NSSize(width: listFrameWidth, height: listHeight) }
         if card != nil { return NSSize(width: midFrameWidth, height: midHeight) }
         // Min gets the same flare each side as the expanded panel, so both
@@ -1068,28 +1062,11 @@ final class NotchStripView: NSView {
         return NSRect(x: contentDX + contentW - 12 - sz, y: (notchHeight - sz) / 2, width: sz, height: sz)
     }
 
-    /// How many rows the launcher needs, and how many tiles sit on each. The
-    /// tiles divide evenly (7+6, not 7+7+... ) so no row looks abandoned.
-    var pickerRows: Int {
-        max(1, Int((Double(picker.count) / Double(NotchStrip.maxTilesPerRow)).rounded(.up)))
-    }
-    var pickerPerRow: Int {
-        max(1, Int((Double(picker.count) / Double(pickerRows)).rounded(.up)))
-    }
-
-    /// The module row's tiles, wrapping once there are more than a row can
-    /// hold. Everything downstream — hover, hit-testing, the cutout-safety
-    /// rects — asks this for a rect by index, so wrapping rides along for free.
+    /// The launcher is a single row of every module, laid out exactly as
+    /// `tabRect` lays out the tab row — same call would do for both.
     func tileRect(_ i: Int) -> NSRect {
-        let per = pickerPerRow
-        let w = contentW / CGFloat(per)
-        let row = i / per
-        // A short last row centres under the one above it instead of hanging
-        // off the left edge with a hole where the missing tiles would be.
-        let inRow = max(1, min(per, picker.count - row * per))
-        let inset = (contentW - CGFloat(inRow) * w) / 2
-        return NSRect(x: contentDX + inset + CGFloat(i % per) * w,
-                      y: notchHeight + CGFloat(row) * NotchStrip.pickerRow,
+        let w = contentW / CGFloat(max(picker.count, 1))
+        return NSRect(x: contentDX + CGFloat(i) * w, y: notchHeight,
                       width: w, height: NotchStrip.pickerRow)
     }
 
@@ -1349,10 +1326,11 @@ final class NotchStripView: NSView {
         x.draw(at: NSPoint(x: close.midX - xs.width / 2, y: close.midY - xs.height / 2), withAttributes: xa)
     }
 
-    /// The module row: glyph over title, one tile each.
+    /// The module row: one glyph per module, no titles — the same tile the tab
+    /// row draws, so nothing changes size when a module opens.
     private func drawPicker() {
         for (i, m) in picker.enumerated() {
-            drawTile(glyph: m.glyph, title: m.title, in: tileRect(i),
+            drawTile(glyph: m.glyph, title: nil, in: tileRect(i),
                      plate: hoveredTile == i ? 0.1 : 0, glyphAlpha: 1, titleAlpha: 0.7)
         }
     }

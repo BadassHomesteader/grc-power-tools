@@ -1251,7 +1251,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         quotaNote.textColor = .secondaryLabelColor
         quotaNote.preferredMaxLayoutWidth = 500
         let modNote = NSTextField(wrappingLabelWithString:
-            "Hover the four-square mark at the end of the strip to open the module row: "
+            "Hover the four-square mark at the end of the strip to open the module row — one icon per module, left to right: "
             + "Usage, Hotkeys, Snap, Clock, Calendar, Weather, System, Disk, Camera and Ask, plus Agent Pad "
             + "and Macro Pad tiles and a ⚙ Settings tile that opens this window. "
             + "Switching a module off is an edit to notchModules in config.json, and takes "
