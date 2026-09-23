@@ -33,12 +33,15 @@ fi
 echo "==> build the app bundle"
 scripts/bundle.sh    # assembles dist/Power Tools.app (local-signed; we re-sign below)
 
-echo "==> hardened-runtime entitlements (microphone)"
+echo "==> hardened-runtime entitlements (microphone, camera)"
 cat > "$ENT" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
     <key>com.apple.security.device.audio-input</key><true/>
+    <!-- The notch camera mirror. Hardened runtime blocks the camera without
+         this, and the failure only appears in a notarized build. -->
+    <key>com.apple.security.device.camera</key><true/>
 </dict></plist>
 PLIST
 

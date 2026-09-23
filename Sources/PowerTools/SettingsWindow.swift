@@ -1224,10 +1224,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         quotaNote.preferredMaxLayoutWidth = 500
         let modNote = NSTextField(wrappingLabelWithString:
             "Hover the four-square mark at the end of the strip to open the module row: "
-            + "Usage, Hotkeys, Snap, Clock, Calendar, Weather, System, Disk and Ask, plus Agent Pad "
+            + "Usage, Hotkeys, Snap, Clock, Calendar, Weather, System, Disk, Camera and Ask, plus Agent Pad "
             + "and Macro Pad tiles and a ⚙ Settings tile that opens this window. "
             + "Switching a module off is an edit to notchModules in config.json, and takes "
-            + "effect the next time the app launches.")
+            + "effect the next time the app launches. Camera opens on a CLICK, never a hover — "
+            + "hovering it would switch the camera on — and it runs only while its panel is open.")
         modNote.font = .systemFont(ofSize: 11)
         modNote.textColor = .secondaryLabelColor
         modNote.preferredMaxLayoutWidth = 500

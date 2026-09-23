@@ -1261,6 +1261,16 @@ final class AppController {
                 WeatherModuleView(places: self?.config.weatherPlaces ?? [],
                                   fahrenheit: self?.config.weatherFahrenheit ?? true)
             }),
+            ("camera", .init(id: "camera", glyph: "◉", title: "Camera", height: 274, make: { [weak self] in
+                CameraModuleView(deviceID: self?.config.notchCameraDeviceID ?? "",
+                                 mirrored: self?.config.notchCameraMirror ?? true,
+                                 remember: { [weak self] id, mirror in
+                                     guard let self else { return }
+                                     self.config.notchCameraDeviceID = id
+                                     self.config.notchCameraMirror = mirror
+                                     self.config.save()
+                                 })
+            }, clickOnly: true)),
             ("system", .init(id: "system", glyph: "❖", title: "System", height: 246) {
                 SystemModuleView(frame: .zero)
             }),

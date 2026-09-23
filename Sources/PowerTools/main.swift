@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import AVFoundation
 
 // Power Tools — fully-local voice dictation for macOS 26+.
 // No arguments: run the menu-bar app. Subcommands below are for testing/administration.
@@ -1335,6 +1336,102 @@ case "shot-hud-test":
         exit(fails == 0 ? 0 : 1)
     }
 
+case "camera-test":
+    // The feed cannot be proved by a screenshot — the picture is a CALayer fed
+    // by the capture graph, and a region grab would need its own permission and
+    // the user's screen. So prove the two things that matter without either:
+    // (1) the hardware really delivers frames to THIS app, and (2) the session
+    // is tied to the view's window lifetime, which is what makes the green LED
+    // track the module being open. The camera does light for about a second.
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        var fails = 0
+        func check(_ name: String, _ ok: Bool) {
+            print("\(ok ? "PASS" : "FAIL") — \(name)")
+            if !ok { fails += 1 }
+        }
+        let devices = CameraSurfaceView.devices()
+        print("cameras: \(devices.map(\.localizedName).joined(separator: ", "))")
+        check("at least one camera is discoverable", !devices.isEmpty)
+        check("camera access is authorized (status \(CameraSurfaceView.authorization.rawValue))",
+              CameraSurfaceView.authorization == .authorized)
+
+        // (1) frames, via a data output — no window, no preview layer.
+        final class Probe: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+            var size: CGSize?
+            func captureOutput(_ o: AVCaptureOutput, didOutput sb: CMSampleBuffer,
+                               from c: AVCaptureConnection) {
+                guard size == nil, let fmt = CMSampleBufferGetFormatDescription(sb) else { return }
+                let d = CMVideoFormatDescriptionGetDimensions(fmt)
+                size = CGSize(width: Int(d.width), height: Int(d.height))
+            }
+        }
+        if let device = devices.first, let input = try? AVCaptureDeviceInput(device: device) {
+            let session = AVCaptureSession()
+            let out = AVCaptureVideoDataOutput()
+            let probe = Probe()
+            out.setSampleBufferDelegate(probe, queue: DispatchQueue(label: "camera-test"))
+            session.beginConfiguration()
+            session.sessionPreset = .medium
+            if session.canAddInput(input) { session.addInput(input) }
+            if session.canAddOutput(out) { session.addOutput(out) }
+            session.commitConfiguration()
+            session.startRunning()
+            let deadline = Date().addingTimeInterval(6)
+            while probe.size == nil, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+            session.stopRunning()
+            let got = probe.size
+            check("the camera delivered a real frame \(got.map { "(\(Int($0.width))×\(Int($0.height)))" } ?? "— none")",
+                  got != nil)
+        } else {
+            check("could build an input from the first camera", false)
+        }
+
+        // (2) lifetime: the session follows the view's window, which is what
+        // ties the LED to the module being open. The window is parked far
+        // offscreen so nothing flashes in front of the user.
+        let win = NSWindow(contentRect: NSRect(x: -12000, y: -12000, width: 660, height: 274),
+                           styleMask: [.borderless], backing: .buffered, defer: false)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 660, height: 274))
+        win.contentView = host
+        let mod = CameraModuleView(deviceID: "", mirrored: true, remember: { _, _ in })
+        mod.frame = host.bounds
+        check("not capturing before it is on screen", !mod.isCapturing)
+        host.addSubview(mod)
+        win.orderBack(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        check("capturing once the module is in a window", mod.isCapturing)
+        mod.removeFromSuperview()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        check("stops the moment the module leaves the window (LED goes out)", !mod.isCapturing)
+        win.orderOut(nil)
+
+        print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
+        exit(fails == 0 ? 0 : 1)
+    }
+
+case "notchcamera-preview":
+    // Renders the module's CHROME and its failure states — not the feed, which
+    // exists only on glass. Pass live|denied|nodevice|asking.
+    let out = args.count >= 2 ? args[1] : "notchcamera-preview.png"
+    MainActor.assumeIsolated {
+        let state: CameraModuleView.State = args.contains("denied") ? .denied
+            : args.contains("nodevice") ? .noDevice
+            : args.contains("asking") ? .asking : .live
+        let host = NotchPreviewPlate(frame: NSRect(x: 0, y: 0, width: 660, height: 274))
+        let v = CameraModuleView(deviceID: "", mirrored: true, remember: { _, _ in })
+        v.frame = host.bounds
+        host.addSubview(v)
+        v.previewState(state, deviceName: "MacBook Pro Camera", deviceCount: 2)
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out) — camera 660x274")
+        }
+    }
+
 case "notchsystem-preview":
     // Offscreen render of the System module. Seeded by default so the PNG is
     // deterministic; "live" samples the real machine instead — which needs two
@@ -1546,7 +1643,7 @@ case "notchstrip-preview":
             // "tabs" draws the same set as the tab row over an open module (Weather).
             let tiles: [(glyph: String, title: String)] = [
                 ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("▤", "Calendar"), ("☀", "Weather"),
-                ("❖", "System"), ("☰", "Disk"), ("✦", "Ask"), ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⚙", "Settings")]
+                ("❖", "System"), ("☰", "Disk"), ("◉", "Camera"), ("✦", "Ask"), ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⚙", "Settings")]
             if shape == "tabs" {
                 v.configure(groups: [marks], cards: [], listMode: false, field: field, moduleHeight: 60,
                             tabs: tiles.map { (glyph: $0.glyph, title: $0.title, active: $0.title == "Weather") })
@@ -2045,6 +2142,46 @@ case "notchstrip-live-test":
         check(settingsOpened == 1, "13m1: the Settings tile fires its action — got \(settingsOpened)")
         check(strip.mode == .min, "13m2: …and folds the notch away rather than hosting")
         check(abs(strip.frame.height - minFrame.height) < 1, "13m3: back at Min height after opening Settings")
+
+        // 13o: a clickOnly module must not open on HOVER. This is the camera
+        // mirror's contract and the most important assertion about it: opening
+        // the module powers the camera and lights the hardware LED, so a cursor
+        // crossing the launcher on its way somewhere else must never do it.
+        // Once opened by a click it stays PINNED, so a stray exit cannot kill
+        // the picture while you are looking at yourself in it.
+        var cameraBuilt = 0
+        strip.registerModule(NotchStrip.Module(id: "camera", glyph: "◉", title: "Camera", height: 120,
+                                               make: { cameraBuilt += 1; return NSView() },
+                                               clickOnly: true))
+        strip.openPicker(); pump(0.3)
+        let camIdx = strip.moduleCount - 1
+        if let (panel, view) = strip.testSurface {
+            func event(_ type: NSEvent.EventType, at p: NSPoint) -> NSEvent {
+                NSEvent.mouseEvent(with: type, location: view.convert(p, to: nil),
+                                   modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                   windowNumber: panel.windowNumber, context: nil,
+                                   eventNumber: 0, clickCount: type == .leftMouseDown ? 1 : 0,
+                                   pressure: type == .leftMouseDown ? 1 : 0)!
+            }
+            let tile = view.tileRect(camIdx)
+            // Rest the cursor on it for longer than the 0.15s hover settle.
+            view.mouseMoved(with: event(.mouseMoved, at: NSPoint(x: tile.midX, y: tile.midY))); pump(0.6)
+            check(cameraBuilt == 0, "13o: hovering the camera tile does NOT build it (the LED stays off)")
+            check(strip.mode == .picker, "13o2: …and the row stays open under the cursor")
+
+            view.mouseDown(with: event(.leftMouseDown, at: NSPoint(x: tile.midX, y: tile.midY))); pump(0.4)
+            check(cameraBuilt == 1, "13o3: a click DOES open it — built \(cameraBuilt)")
+            var hosted = false
+            if case .module(camIdx) = strip.mode { hosted = true }
+            check(hosted, "13o3b: …hosted, not fired as an action")
+            view.mouseExited(with: event(.mouseMoved, at: NSPoint(x: -50, y: -50))); pump(0.5)
+            var stillHosted = false
+            if case .module(camIdx) = strip.mode { stillHosted = true }
+            check(stillHosted, "13o4: pinned — leaving does not tear the camera down mid-look")
+        } else {
+            check(false, "13o: no surface to hover the camera tile on")
+        }
+        strip.collapse(); pump(0.3)
 
         // 14: clicking OFF the notch collapses it, the way a menu closes — the
         // ✕ is a way out, not the only one. The monitors themselves need a

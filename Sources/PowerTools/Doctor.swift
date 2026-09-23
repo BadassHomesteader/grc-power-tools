@@ -35,6 +35,19 @@ enum Doctor {
             detail: "status: \(micStatus.label)" + (micStatus == .notDetermined ? " (will prompt on first use)" : "")
         ))
 
+        // Unlike Screen Recording, a camera grant takes effect immediately —
+        // say so, rather than copying the "quit & reopen" line next door.
+        let camStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        checks.append(Check(
+            name: "Camera",
+            ok: camStatus == .authorized,
+            detail: "status: \(camStatus.label)"
+                + (camStatus == .notDetermined ? " (the notch Camera module asks the first time you open it)" : "")
+                + (camStatus == .denied
+                   ? " — System Settings ▸ Privacy & Security ▸ Camera; no relaunch needed"
+                   : "")
+        ))
+
         // AXIsProcessTrusted() can report a STALE "granted" after a rebuild while the
         // event tap still can't be created — so test the real thing: try to make a
         // tap that can alter events (same requirement the hotkey needs).

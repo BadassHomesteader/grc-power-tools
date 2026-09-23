@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 BUNDLE_ID="com.grc.whisper"
 APP_NAME="Power Tools"
 OLD_APP_NAME="GRC Whisper"
-VERSION="1.75.0"
+VERSION="1.76.0"
 DIST="dist"
 APP="$DIST/$APP_NAME.app"
 
@@ -66,6 +66,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Power Tools records while you hold the dictation hotkey and transcribes entirely on this Mac.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Power Tools shows a live mirror of your camera in the notch so you can check yourself before a call. Nothing is recorded and nothing leaves this Mac.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Power Tools asks Finder which folder is open so hold + D can create a new document there.</string>
     <key>NSHumanReadableCopyright</key><string>Local-only dictation. No network. No cloud.</string>

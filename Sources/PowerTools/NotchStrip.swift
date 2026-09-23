@@ -176,6 +176,12 @@ final class NotchStrip {
         /// the agents right there in the notch. When the source is switched
         /// off, the tile falls back to `open` (toggling the floating pad).
         var list: String? = nil
+        /// Opening this module has a SIDE EFFECT the user must consent to — the
+        /// camera mirror lights the hardware LED for as long as it is open. A
+        /// cursor sweeping the launcher must never do that, so the tile takes a
+        /// deliberate click, the way an action tile does, and stays PINNED once
+        /// open so a stray exit cannot kill the picture mid-look.
+        var clickOnly: Bool = false
     }
 
     /// Ceiling on a module's content, the same discipline the list has: the
@@ -716,6 +722,8 @@ final class NotchStrip {
         // Action tiles (Settings opens an 860pt window and folds the notch
         // away) need a deliberate CLICK — a hover must never launch them.
         guard modules[i].open == nil else { cancelHover(); return }
+        // …and so does anything that would switch on hardware by being looked at.
+        guard !modules[i].clickOnly else { cancelHover(); return }
         if case .module(i) = mode { cancelHover(); return }
         armHover(0.15) { [weak self] in
             guard let self else { return }
@@ -723,7 +731,7 @@ final class NotchStrip {
             case .picker, .module:
                 // A keyboard module (Ask) stays open so you can type/dictate into
                 // it; the rest are transient and fold back when you hover away.
-                self.openModule(i, pinned: self.modules[i].wantsKeyboard)
+                self.openModule(i, pinned: self.modules[i].wantsKeyboard || self.modules[i].clickOnly)
             default: break
             }
         }

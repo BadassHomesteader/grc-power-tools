@@ -390,7 +390,7 @@ struct Config: Codable {
     /// publish into it. Each can be switched off; the ⋯ mark disappears when
     /// none are on.
     static let defaultNotchModules = ["usage", "hotkeys", "snap", "clock", "calendar", "weather",
-                                      "system", "disk", "chat"]
+                                      "system", "disk", "camera", "chat"]
     /// Defaults shipped before today's. A saved list equal to one of these
     /// predates a module rather than expressing a choice, so it is upgraded on
     /// load (see `init(from:)`) — every module shipped appends one entry here.
@@ -398,8 +398,16 @@ struct Config: Codable {
         ["usage", "hotkeys", "snap", "clock", "weather", "chat"],              // pre-Calendar
         ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"],          // pre-Disk
         ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "disk", "chat"],  // pre-System
+        ["usage", "hotkeys", "snap", "clock", "calendar", "weather",
+         "system", "disk", "chat"],                                                    // pre-Camera
     ]
     var notchModules: [String] = Config.defaultNotchModules
+    /// The camera the notch mirror shows, by AVCaptureDevice.uniqueID. Empty
+    /// means the system default — which is what most Macs have exactly one of.
+    var notchCameraDeviceID: String = ""
+    /// A mirror shows you what a mirror shows you. Off gives the view the far
+    /// end of the call actually sees.
+    var notchCameraMirror: Bool = true
     /// World clock zones, IANA identifiers.
     var notchClockZones: [String] = ["America/New_York", "Europe/London", "Asia/Tokyo"]
     /// Weather: places typed in Settings, each geocoded once to a lat/lon so
@@ -513,7 +521,8 @@ struct Config: Codable {
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, agentPadGrok, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case showInCaptures
-        case notchModules, notchClockZones, weatherPlaces, weatherPlace, weatherLat, weatherLon, weatherFahrenheit
+        case notchModules, notchClockZones, notchCameraDeviceID, notchCameraMirror
+        case weatherPlaces, weatherPlace, weatherLat, weatherLon, weatherFahrenheit
         case powerRing, powerRingSlots
         case whiteboard, screenRecording, recordingMic
         case pronunciations
@@ -604,6 +613,8 @@ struct Config: Codable {
         if Config.supersededNotchModules.contains(notchModules) {
             notchModules = Config.defaultNotchModules
         }
+        notchCameraDeviceID = field(.notchCameraDeviceID, "")
+        notchCameraMirror = field(.notchCameraMirror, true)
         notchClockZones = field(.notchClockZones, ["America/New_York", "Europe/London", "Asia/Tokyo"])
         weatherPlaces = field(.weatherPlaces, [])
         weatherPlace = field(.weatherPlace, "")
