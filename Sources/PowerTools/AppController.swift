@@ -676,7 +676,7 @@ final class AppController {
         state = .processing
         onStateChange?(.processing)
         Task {
-            let png = await ScreenCapture.grabRegionPNG()
+            let png = await grabRegion()
             await MainActor.run {
                 defer { self.finishCycle() }
                 guard let png else { return } // cancelled
@@ -705,7 +705,7 @@ final class AppController {
         state = .processing
         onStateChange?(.processing)
         Task {
-            let png = await ScreenCapture.grabRegionPNG()
+            let png = await grabRegion()
             await MainActor.run {
                 defer { self.finishCycle() }
                 guard let png else { return } // cancelled
@@ -723,13 +723,25 @@ final class AppController {
     /// hold + S: copy a screen region as an image. hold + G: same, then open
     /// Google Lens for you to paste (⌘V) — we don't upload the image ourselves,
     /// so it only leaves your Mac when you choose to paste it into Google.
+    /// Every screen grab we start ourselves goes through here, because OUR OWN
+    /// HUD must never be in the user's screenshot: the pill sits at .statusBar
+    /// level over everything, and `screencapture` photographs it like any other
+    /// window unless it is gone before the selector comes up. (Config's
+    /// `showInCaptures` is about OTHER people's recordings of this Mac — it has
+    /// no say over a shot the user asked this app to take.) The system's
+    /// crosshair is the feedback during the drag; the pill has nothing to add
+    /// until the image is back.
+    private func grabRegion() async -> Data? {
+        await MainActor.run { self.overlay.hide() }
+        return await ScreenCapture.grabRegionPNG()
+    }
+
     func captureScreenshot(search: Bool) {
         guard state == .idle, ensureScreenRecording() else { return }
         state = .processing
         onStateChange?(.processing)
-        overlay.showProcessing()
         Task {
-            guard let png = await ScreenCapture.grabRegionPNG() else {
+            guard let png = await grabRegion() else {
                 await MainActor.run { self.finishCycle() }
                 return
             }
@@ -784,7 +796,7 @@ final class AppController {
         state = .processing
         onStateChange?(.processing)
         Task {
-            let png = await ScreenCapture.grabRegionPNG()
+            let png = await grabRegion()
             await MainActor.run {
                 self.finishCycle()
                 guard let png else { return } // selection cancelled

@@ -1301,6 +1301,40 @@ case "notchcalendar-preview":
         }
     }
 
+case "shot-hud-test":
+    // hold+S used to photograph our own pill: captureScreenshot raised it and
+    // `screencapture -i` then sat there for the whole drag with the HUD on
+    // screen. Every self-initiated grab now goes through grabRegion(), which
+    // hides the overlay first. This asserts that hide actually takes the window
+    // off screen — checked against THIS process's windows only, so the user's
+    // running copy of the app can't answer for it. No screencapture is spawned:
+    // the point is the window's presence, and a real grab would seize the
+    // screen with a crosshair.
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let overlay = OverlayPanel()
+        var fails = 0
+        func check(_ name: String, _ ok: Bool) {
+            print("\(ok ? "PASS" : "FAIL") — \(name)")
+            if !ok { fails += 1 }
+        }
+        func ownWindowsOnScreen() -> Int {
+            let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+            return info.filter { ($0[kCGWindowOwnerPID as String] as? pid_t) == getpid() }.count
+        }
+        check("no HUD before the toast", ownWindowsOnScreen() == 0)
+        overlay.showResult("Screenshot copied to clipboard")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        check("the pill IS a real on-screen window (so a grab would photograph it)",
+              ownWindowsOnScreen() >= 1)
+        overlay.hide()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        check("hide() — what grabRegion() calls — takes it off screen", ownWindowsOnScreen() == 0)
+        print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
+        exit(fails == 0 ? 0 : 1)
+    }
+
 case "notchdisk-preview":
     // Offscreen render of the Disk module with PLANTED volumes, so the PNG is
     // deterministic and diffable: an internal SSD mid-transfer, a roomy
