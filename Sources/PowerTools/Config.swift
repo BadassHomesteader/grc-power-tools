@@ -389,13 +389,15 @@ struct Config: Codable {
     /// Notch modules — panels the notch hosts, as opposed to sources that
     /// publish into it. Each can be switched off; the ⋯ mark disappears when
     /// none are on.
-    static let defaultNotchModules = ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "disk", "chat"]
+    static let defaultNotchModules = ["usage", "hotkeys", "snap", "clock", "calendar", "weather",
+                                      "system", "disk", "chat"]
     /// Defaults shipped before today's. A saved list equal to one of these
     /// predates a module rather than expressing a choice, so it is upgraded on
     /// load (see `init(from:)`) — every module shipped appends one entry here.
     static let supersededNotchModules: [[String]] = [
         ["usage", "hotkeys", "snap", "clock", "weather", "chat"],              // pre-Calendar
-        ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"],  // pre-Disk
+        ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "chat"],          // pre-Disk
+        ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "disk", "chat"],  // pre-System
     ]
     var notchModules: [String] = Config.defaultNotchModules
     /// World clock zones, IANA identifiers.

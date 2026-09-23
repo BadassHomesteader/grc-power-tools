@@ -19,6 +19,25 @@ enum NotchTheme {
     static func small(_ size: CGFloat = 9) -> [NSAttributedString.Key: Any] {
         [.font: NSFont.systemFont(ofSize: size), .foregroundColor: dim]
     }
+    /// The bar palette, shared by every module that fills a track: green until
+    /// it is worth noticing, amber at three quarters, red near the end. Usage
+    /// set these; Disk and System follow so one glance means one thing.
+    static let ok = NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)
+    static let warn = NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+    static let bad = NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
+    static func gauge(_ frac: Double) -> NSColor { frac >= 0.90 ? bad : frac >= 0.75 ? warn : ok }
+
+    /// A filled track. `frac` nil means "not measured" and leaves it empty.
+    static func bar(_ frac: Double?, in track: NSRect) {
+        faint.setFill()
+        NSBezierPath(roundedRect: track, xRadius: track.height / 2, yRadius: track.height / 2).fill()
+        guard let frac, frac > 0 else { return }
+        gauge(frac).setFill()
+        NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY,
+                                         width: max(track.width * CGFloat(min(frac, 1)), 3),
+                                         height: track.height),
+                     xRadius: track.height / 2, yRadius: track.height / 2).fill()
+    }
 }
 
 /// Shared base: flipped, dark, and repainting on a timer when asked.
@@ -814,12 +833,6 @@ final class DiskModuleView: NotchModuleView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    private func tint(_ frac: Double) -> NSColor {
-        frac >= 0.90 ? NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1)
-      : frac >= 0.75 ? NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
-      : NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1)
-    }
-
     override func draw(_ dirtyRect: NSRect) {
         ejectRects = []
         let left: CGFloat = 16
@@ -900,13 +913,7 @@ final class DiskModuleView: NotchModuleView {
                      withAttributes: NotchTheme.title(11))
 
             let frac = v.total > 0 ? Double(v.used) / Double(v.total) : 0
-            let track = NSRect(x: left, y: y + 20, width: right - left, height: 5)
-            NotchTheme.faint.setFill()
-            NSBezierPath(roundedRect: track, xRadius: 2.5, yRadius: 2.5).fill()
-            tint(frac).setFill()
-            NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY,
-                                             width: max(track.width * CGFloat(frac), 3), height: track.height),
-                         xRadius: 2.5, yRadius: 2.5).fill()
+            NotchTheme.bar(frac, in: NSRect(x: left, y: y + 20, width: right - left, height: 5))
             ("\(DiskReader.bytes(v.free)) free" as NSString)
                 .draw(at: NSPoint(x: left, y: y + 28), withAttributes: NotchTheme.small(9))
             y += 50
@@ -923,5 +930,131 @@ final class DiskModuleView: NotchModuleView {
             ejectError = (vol.url.path, error.localizedDescription, Date().addingTimeInterval(3))
         }
         needsDisplay = true
+    }
+}
+
+
+// MARK: - System
+
+/// What the machine is doing: three gauges, the numbers that explain them, and
+/// the power picture. Every reading comes from SystemStatsReader, and anything
+/// it could not measure draws an em dash rather than a plausible zero.
+final class SystemModuleView: NotchModuleView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        // 2s, not 1s: a per-second CPU figure jitters too fast to read and
+        // doubles the sampling for nothing. Activity Monitor's own default.
+        tick(every: 2)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Label above, value below, in a column — the numbers-row grammar the
+    /// Weather panel established.
+    private func cell(_ label: String, _ value: String, _ detail: String?, x: CGFloat, y: CGFloat,
+                      tint: NSColor? = nil) {
+        (label as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: NotchTheme.small(10))
+        var attrs = NotchTheme.title(13)
+        if let tint { attrs[.foregroundColor] = tint }
+        (value as NSString).draw(at: NSPoint(x: x, y: y + 15), withAttributes: attrs)
+        if let detail {
+            (detail as NSString).draw(at: NSPoint(x: x, y: y + 32), withAttributes: NotchTheme.small(9))
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let left: CGFloat = 16
+        let right = bounds.width - 16
+        let s = SystemStatsReader.shared.snapshot
+
+        ("System" as NSString).draw(at: NSPoint(x: left, y: 10), withAttributes: NotchTheme.title())
+        var spec: [String] = []
+        if let chip = s.chip { spec.append(chip) }
+        if s.pCores > 0, s.eCores > 0 { spec.append("\(s.pCores)P + \(s.eCores)E") }
+        if let g = s.gpuCores { spec.append("\(g)-core GPU") }
+        if s.memTotal > 0 { spec.append(SystemStatsReader.gib(s.memTotal)) }
+        let specLine = spec.joined(separator: " · ") as NSString
+        specLine.draw(at: NSPoint(x: right - specLine.size(withAttributes: NotchTheme.small(10)).width, y: 12),
+                      withAttributes: NotchTheme.small(10))
+
+        // Three gauges: the question is always "how hard is it working".
+        let colW = (right - left) / 3
+        let memFrac = (s.memUsed.map { Double($0) } ?? 0) / Double(max(s.memTotal, 1))
+        let gauges: [(String, String, Double?, String)] = [
+            ("CPU", SystemStatsReader.percent(s.cpuBusy), s.cpuBusy.map { $0 / 100 },
+             s.cpuP == nil && s.cpuE == nil ? "\(s.logicalCores) cores"
+                : "P \(SystemStatsReader.percent(s.cpuP)) · E \(SystemStatsReader.percent(s.cpuE))"),
+            ("GPU", SystemStatsReader.percent(s.gpuBusy), s.gpuBusy.map { $0 / 100 },
+             s.gpuCores.map { "\($0) cores" } ?? "—"),
+            ("Memory", s.memUsed == nil ? "—" : "\(Int((memFrac * 100).rounded()))%",
+             s.memUsed == nil ? nil : memFrac,
+             "\(SystemStatsReader.gib(s.memUsed)) of \(SystemStatsReader.gib(s.memTotal))"
+             + (s.memCompressed.map { " · \(SystemStatsReader.gib($0)) compressed" } ?? "")),
+        ]
+        for (i, g) in gauges.enumerated() {
+            let x = left + CGFloat(i) * colW
+            (g.0 as NSString).draw(at: NSPoint(x: x, y: 36), withAttributes: NotchTheme.small(10))
+            (g.1 as NSString).draw(at: NSPoint(x: x, y: 48),
+                                   withAttributes: [.font: NSFont.systemFont(ofSize: 28, weight: .semibold),
+                                                    .foregroundColor: NotchTheme.fg])
+            NotchTheme.bar(g.2, in: NSRect(x: x, y: 86, width: colW - 24, height: 5))
+            (g.3 as NSString).draw(at: NSPoint(x: x, y: 96), withAttributes: NotchTheme.small(10))
+        }
+
+        NotchTheme.faint.setFill()
+        NSRect(x: left, y: 120, width: right - left, height: 1).fill()
+
+        let swap = (s.swapTotal ?? 0) == 0 ? "None" : SystemStatsReader.gib(s.swapUsed)
+        let pressure = SystemStatsReader.pressureText(s.pressure)
+        let numbers: [(String, String, NSColor?)] = [
+            ("Load", s.load1.map { String(format: "%.2f", $0) } ?? "—", nil),
+            ("Processes", s.processes.map(String.init) ?? "—", nil),
+            ("Uptime", SystemStatsReader.uptimeText(s.uptime), nil),
+            ("Pressure", pressure,
+             s.pressure == 4 ? NotchTheme.bad : s.pressure == 2 ? NotchTheme.warn : nil),
+            ("Swap", swap, nil),
+        ]
+        let numW = (right - left) / CGFloat(numbers.count)
+        for (i, n) in numbers.enumerated() {
+            let x = left + CGFloat(i) * numW
+            if i > 0 {
+                NotchTheme.faint.setFill()
+                NSRect(x: x - 10, y: 134, width: 1, height: 32).fill()
+            }
+            cell(n.0, n.1, nil, x: x, y: 132, tint: n.2)
+        }
+
+        NotchTheme.faint.setFill()
+        NSRect(x: left, y: 176, width: right - left, height: 1).fill()
+
+        // Power. A desktop has no battery, so every cell here can be a dash.
+        let charge = s.batteryPercent.map { "\($0)%" } ?? "—"
+        let chargeDetail: String
+        if let mins = s.minutesRemaining, mins > 0 {
+            chargeDetail = "\(mins / 60 > 0 ? "\(mins / 60)h " : "")\(mins % 60)m "
+                + (s.onAC == true ? "to full" : "left")
+        } else {
+            chargeDetail = s.onAC == true ? (s.charging == true ? "charging" : "on power") : "on battery"
+        }
+        let health = s.healthPercent.map { String(format: "%.0f%%", $0) } ?? "—"
+        let healthDetail = s.cycles.map { c in
+            s.designCycles.map { "\(c) of \($0) cycles" } ?? "\(c) cycles"
+        }
+        let watts = s.watts.map { String(format: "%.1f W", $0) } ?? "—"
+        let temp = s.batteryTempC.map { String(format: "%.0f °C", $0) } ?? "—"
+        let power: [(String, String, String?)] = [
+            ("Battery", charge, chargeDetail),
+            ("Battery health", health, healthDetail),
+            ("System power", watts, s.watts == nil ? nil : "whole machine"),
+            ("Battery temp", temp, "fans, die temp: not readable"),
+        ]
+        let pw = (right - left) / CGFloat(power.count)
+        for (i, c) in power.enumerated() {
+            let x = left + CGFloat(i) * pw
+            if i > 0 {
+                NotchTheme.faint.setFill()
+                NSRect(x: x - 10, y: 190, width: 1, height: 44).fill()
+            }
+            cell(c.0, c.1, c.2, x: x, y: 188)
+        }
     }
 }

@@ -1261,6 +1261,9 @@ final class AppController {
                 WeatherModuleView(places: self?.config.weatherPlaces ?? [],
                                   fahrenheit: self?.config.weatherFahrenheit ?? true)
             }),
+            ("system", .init(id: "system", glyph: "❖", title: "System", height: 246) {
+                SystemModuleView(frame: .zero)
+            }),
             ("disk", .init(id: "disk", glyph: "☰", title: "Disk", height: 214) {
                 DiskModuleView(frame: .zero)
             }),

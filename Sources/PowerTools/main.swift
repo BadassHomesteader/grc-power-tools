@@ -1335,6 +1335,45 @@ case "shot-hud-test":
         exit(fails == 0 ? 0 : 1)
     }
 
+case "notchsystem-preview":
+    // Offscreen render of the System module. Seeded by default so the PNG is
+    // deterministic; "live" samples the real machine instead — which needs two
+    // CPU readings, since busy % is a delta, so the run loop is pumped between
+    // pulls rather than drawing the warming dash.
+    let out = args.count >= 2 ? args[1] : "notchsystem-preview.png"
+    MainActor.assumeIsolated {
+        if args.contains("live") {
+            _ = SystemStatsReader.shared.snapshot
+            RunLoop.main.run(until: Date().addingTimeInterval(2.5))
+            _ = SystemStatsReader.shared.snapshot
+            RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        } else {
+            var s = SystemStatsReader.Snapshot()
+            s.chip = "Apple M4 Pro"
+            s.pCores = 8; s.eCores = 4; s.logicalCores = 12; s.gpuCores = 16
+            s.memTotal = 51_539_607_552
+            s.cpuBusy = 34.2; s.cpuP = 44.3; s.cpuE = 8.7
+            s.gpuBusy = 22
+            s.memUsed = 36_670_000_000; s.memWired = 2_960_000_000; s.memCompressed = 10_970_000_000
+            s.pressure = 1; s.swapUsed = 0; s.swapTotal = 0
+            s.load1 = 2.41; s.processes = 943; s.uptime = 127.5 * 3600
+            s.batteryPercent = 33; s.charging = false; s.onAC = false; s.minutesRemaining = 114
+            s.healthPercent = 89.9; s.cycles = 386; s.designCycles = 1000
+            s.batteryTempC = 30.0; s.watts = 7.92
+            s.warming = false
+            SystemStatsReader.shared.seed(s)
+        }
+        let host = NotchPreviewPlate(frame: NSRect(x: 0, y: 0, width: 660, height: 246))
+        let v = SystemModuleView(frame: host.bounds)
+        host.addSubview(v)
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out) — system 660x246")
+        }
+    }
+
 case "notchdisk-preview":
     // Offscreen render of the Disk module with PLANTED volumes, so the PNG is
     // deterministic and diffable: an internal SSD mid-transfer, a roomy
@@ -1507,7 +1546,7 @@ case "notchstrip-preview":
             // "tabs" draws the same set as the tab row over an open module (Weather).
             let tiles: [(glyph: String, title: String)] = [
                 ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("▤", "Calendar"), ("☀", "Weather"),
-                ("☰", "Disk"), ("✦", "Ask"), ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⚙", "Settings")]
+                ("❖", "System"), ("☰", "Disk"), ("✦", "Ask"), ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⚙", "Settings")]
             if shape == "tabs" {
                 v.configure(groups: [marks], cards: [], listMode: false, field: field, moduleHeight: 60,
                             tabs: tiles.map { (glyph: $0.glyph, title: $0.title, active: $0.title == "Weather") })
