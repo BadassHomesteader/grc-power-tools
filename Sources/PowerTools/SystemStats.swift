@@ -35,6 +35,13 @@ import IOKit.ps
         var swapUsed: UInt64?
         var swapTotal: UInt64?
 
+        /// Throughput across every real interface, and the address this Mac
+        /// answers on. Deltas like everything else here, so nil while warming.
+        var netDownBps: Double?
+        var netUpBps: Double?
+        var localIP: String?
+        var netInterface: String?
+
         var load1: Double?
         var processes: Int?
         var uptime: TimeInterval?
@@ -77,6 +84,8 @@ import IOKit.ps
     struct Raw {
         var all = Ticks()
         var per: [Ticks] = []
+        var netIn: UInt64 = 0
+        var netOut: UInt64 = 0
         var at = Date()
     }
 
@@ -129,7 +138,10 @@ import IOKit.ps
         // CPU: ticks are counters, so busy is a delta over the interval.
         let ticks = cpuTicks()
         s.logicalCores = ticks.per.count
-        let raw = Raw(all: ticks.all, per: ticks.per, at: now)
+        let net = network()
+        s.localIP = net.ip
+        s.netInterface = net.iface
+        let raw = Raw(all: ticks.all, per: ticks.per, netIn: net.inB, netOut: net.outB, at: now)
         if let p = previous, !p.per.isEmpty, p.per.count == ticks.per.count {
             let elapsed = now.timeIntervalSince(p.at)
             // A machine that slept would otherwise report the average across
@@ -144,6 +156,9 @@ import IOKit.ps
                     s.cpuE = busyPercent(sum(ticks.per, r), sum(p.per, r))
                 }
                 s.warming = false
+                // Same counter discipline as the CPU ticks and the disk bytes.
+                s.netDownBps = Double(net.inB &- min(p.netIn, net.inB)) / elapsed
+                s.netUpBps = Double(net.outB &- min(p.netOut, net.outB)) / elapsed
             }
         }
 
@@ -229,6 +244,51 @@ import IOKit.ps
             all.idle &+= t.idle; all.nice &+= t.nice
         }
         return (all, per)
+    }
+
+    /// Bytes in/out summed over the real interfaces, plus the first non-loopback
+    /// IPv4 address. Tunnels, AirDrop links and the loopback are skipped — they
+    /// would double-count traffic that already crossed a physical interface.
+    private nonisolated static func network() -> (inB: UInt64, outB: UInt64, ip: String?, iface: String?) {
+        var head: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&head) == 0, let start = head else { return (0, 0, nil, nil) }
+        defer { freeifaddrs(head) }
+        var inB: UInt64 = 0, outB: UInt64 = 0
+        var ip: String?
+        var iface: String?
+        for ptr in sequence(first: start, next: { $0.pointee.ifa_next }) {
+            let name = String(cString: ptr.pointee.ifa_name)
+            guard name != "lo0", !name.hasPrefix("utun"), !name.hasPrefix("awdl"),
+                  !name.hasPrefix("llw"), !name.hasPrefix("bridge") else { continue }
+            guard let addr = ptr.pointee.ifa_addr else { continue }
+            let family = addr.pointee.sa_family
+            if family == UInt8(AF_LINK), let data = ptr.pointee.ifa_data {
+                let d = data.assumingMemoryBound(to: if_data.self).pointee
+                inB &+= UInt64(d.ifi_ibytes)
+                outB &+= UInt64(d.ifi_obytes)
+            }
+            if family == UInt8(AF_INET), ip == nil, (ptr.pointee.ifa_flags & UInt32(IFF_UP)) != 0 {
+                var storage = sockaddr()
+                storage = addr.pointee
+                var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(&storage, socklen_t(storage.sa_len), &host, socklen_t(host.count),
+                               nil, 0, NI_NUMERICHOST) == 0 {
+                    let text = String(cString: host)
+                    if !text.hasPrefix("127."), !text.hasPrefix("169.254.") {
+                        ip = text
+                        iface = name
+                    }
+                }
+            }
+        }
+        return (inB, outB, ip, iface)
+    }
+
+    /// Throughput reads in the unit that suits it, like the disk's.
+    static func rate(_ bps: Double?) -> String {
+        guard let bps else { return "—" }
+        if bps >= 1e6 { return String(format: "%.1f MB/s", bps / 1e6) }
+        return String(format: "%.0f KB/s", max(0, bps) / 1e3)
     }
 
     // MARK: sysctl

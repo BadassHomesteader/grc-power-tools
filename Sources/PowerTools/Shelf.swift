@@ -1,5 +1,6 @@
 import Cocoa
 import CryptoKit
+import UniformTypeIdentifiers
 
 /// The Shelf: a tray you drag files, text and images onto to park them, then
 /// drag back out somewhere else. It solves the drag nobody can do in one go —
@@ -288,8 +289,31 @@ struct ShelfItem: Identifiable {
     }
 }
 
+/// A promise that also vends the real thing.
+///
+/// A text or image row dragged into FINDER used to do nothing: a .string or
+/// .png pasteboard item is not a file, and Finder only takes files. A file
+/// promise fixes that — but on its own it would stop those rows dropping into
+/// TextEdit or Mail as text. So the provider advertises both: the promise for
+/// anything that wants a file, and the native type for everything else.
+final class ShelfPromiseProvider: NSFilePromiseProvider {
+    var nativeType: NSPasteboard.PasteboardType?
+    var nativeData: Data?
+
+    override func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
+        var types = super.writableTypes(for: pasteboard)
+        if let nativeType { types.append(nativeType) }
+        return types
+    }
+
+    override func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
+        if type == nativeType { return nativeData }
+        return super.pasteboardPropertyList(forType: type)
+    }
+}
+
 /// Rows, the drop target and the drag source, in one view.
-final class ShelfView: NSView, NSDraggingSource {
+final class ShelfView: NSView, NSDraggingSource, NSFilePromiseProviderDelegate {
     private static let headerH: CGFloat = 32
     private static let rowH: CGFloat = 52
 
@@ -548,15 +572,20 @@ final class ShelfView: NSView, NSDraggingSource {
         let item = items[row]
         let writer: NSPasteboardWriting
         switch item.kind {
-        case .file(let url): writer = url as NSURL          // a real public.file-url
-        case .text(let s):
-            let pbItem = NSPasteboardItem()
-            pbItem.setString(s, forType: .string)
-            writer = pbItem
+        case .file(let url):
+            writer = url as NSURL          // already a real public.file-url
+        case .text(let text):
+            let provider = ShelfPromiseProvider(fileType: UTType.plainText.identifier, delegate: self)
+            provider.userInfo = item.id.uuidString
+            provider.nativeType = .string
+            provider.nativeData = Data(text.utf8)
+            writer = provider
         case .image(let png):
-            let pbItem = NSPasteboardItem()
-            pbItem.setData(png, forType: .png)
-            writer = pbItem
+            let provider = ShelfPromiseProvider(fileType: UTType.png.identifier, delegate: self)
+            provider.userInfo = item.id.uuidString
+            provider.nativeType = .png
+            provider.nativeData = png
+            writer = provider
         }
         let dragItem = NSDraggingItem(pasteboardWriter: writer)
         let r = rowRect(row)
@@ -566,6 +595,58 @@ final class ShelfView: NSView, NSDraggingSource {
         let session = beginDraggingSession(with: [dragItem], event: event, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
         session.draggingFormation = .none
+    }
+
+    // MARK: File promises
+
+    /// Dropping into Finder asks for the file here, off the main thread.
+    private let promiseQueue: OperationQueue = {
+        let q = OperationQueue()
+        q.qualityOfService = .userInitiated
+        return q
+    }()
+
+    func operationQueue(for filePromiseProvider: NSFilePromiseProvider) -> OperationQueue { promiseQueue }
+
+    func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider,
+                             fileNameForType fileType: String) -> String {
+        guard let item = promisedItem(filePromiseProvider) else { return "Shelf item" }
+        switch item.kind {
+        case .image: return "\(item.title).png".replacingOccurrences(of: "/", with: "-")
+        case .text:
+            // The row's title is the first line — a usable file name, trimmed
+            // of the characters a file name cannot carry.
+            let base = item.title.replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (base.isEmpty ? "Shelf text" : String(base.prefix(60))) + ".txt"
+        case .file(let url): return url.lastPathComponent
+        }
+    }
+
+    func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider,
+                             writePromiseTo url: URL,
+                             completionHandler: @escaping (Error?) -> Void) {
+        guard let item = promisedItem(filePromiseProvider) else {
+            completionHandler(CocoaError(.fileNoSuchFile)); return
+        }
+        do {
+            switch item.kind {
+            case .text(let text): try Data(text.utf8).write(to: url)
+            case .image(let png): try png.write(to: url)
+            case .file(let src): try FileManager.default.copyItem(at: src, to: url)
+            }
+            completionHandler(nil)
+        } catch {
+            completionHandler(error)
+        }
+    }
+
+    /// The provider carries the row's id, so a shelf that changed under a slow
+    /// drop still writes the thing that was dragged.
+    private func promisedItem(_ provider: NSFilePromiseProvider) -> ShelfItem? {
+        guard let id = provider.userInfo as? String else { return nil }
+        return items.first { $0.id.uuidString == id } ?? store?.items.first { $0.id.uuidString == id }
     }
 
     private func rowSnapshot(_ i: Int) -> NSImage? {

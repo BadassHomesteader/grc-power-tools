@@ -35,15 +35,17 @@ final class AdvancedPaste {
                   localTransform: { TextOps.numbersOnly($0) }),
         Transform(digit: 9, title: "Contacts, one per line", subtitle: "Name <email>; … → name, email, blank line", ai: false, instruction: nil,
                   localTransform: { TextOps.contactList($0) }),
-        Transform(digit: 10, title: "Summarize", subtitle: "AI · the key points", ai: true,
+        Transform(digit: 10, title: "Clean links", subtitle: "strip utm_, fbclid, si… from every URL", ai: false, instruction: nil,
+                  localTransform: { TextOps.cleanLinks($0) }),
+        Transform(digit: 11, title: "Summarize", subtitle: "AI · the key points", ai: true,
                   instruction: "Summarize the following text concisely. Output only the summary."),
-        Transform(digit: 11, title: "Rewrite", subtitle: "AI · fix grammar, tighten", ai: true,
+        Transform(digit: 12, title: "Rewrite", subtitle: "AI · fix grammar, tighten", ai: true,
                   instruction: "Rewrite the following to fix grammar and make it clear and concise, keeping the meaning and tone. Output only the rewrite."),
-        Transform(digit: 12, title: "Bullet points", subtitle: "AI · as a list", ai: true,
+        Transform(digit: 13, title: "Bullet points", subtitle: "AI · as a list", ai: true,
                   instruction: "Rewrite the following as a concise bulleted list using '- '. Output only the list."),
-        Transform(digit: 13, title: "Markdown", subtitle: "AI · clean markdown", ai: true,
+        Transform(digit: 14, title: "Markdown", subtitle: "AI · clean markdown", ai: true,
                   instruction: "Reformat the following as clean, well-structured Markdown. Output only the Markdown."),
-        Transform(digit: 14, title: "Translate → English", subtitle: "AI", ai: true,
+        Transform(digit: 15, title: "Translate → English", subtitle: "AI", ai: true,
                   instruction: "Translate the following into natural English. If it's already English, correct it lightly. Output only the translation."),
     ]
 
@@ -105,6 +107,44 @@ enum TextOps {
             .map { (line: String) in line.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ") }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
+    }
+
+    /// Strip the tracking junk out of every URL in the text, leaving the link
+    /// itself alone. The pasted link is the one you meant to send, not the one
+    /// that says which post you clicked it from.
+    ///
+    /// Conservative on purpose: a fixed list of known trackers, so a query
+    /// parameter the destination actually needs is never dropped.
+    static let trackingParams: Set<String> = [
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
+        "utm_name", "utm_reader", "utm_brand", "utm_social", "utm_social-type",
+        "gclid", "gclsrc", "dclid", "gbraid", "wbraid", "fbclid", "msclkid", "twclid",
+        "ttclid", "igshid", "igsh", "yclid", "vero_id", "vero_conv", "mc_cid", "mc_eid",
+        "_hsenc", "_hsmi", "hsctatracking", "oly_anon_id", "oly_enc_id", "s_kwcid",
+        "ref_src", "ref_url", "si", "spm", "sca_esv", "at_medium", "at_campaign",
+        "icid", "ICID", "cmpid", "trk", "trkcampaign",
+    ]
+
+    static func cleanLinks(_ s: String) -> String {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return s
+        }
+        let ns = s as NSString
+        let matches = detector.matches(in: s, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return s }
+        var out = s
+        // Replace from the END so earlier ranges stay valid.
+        for m in matches.reversed() {
+            guard let url = m.url,
+                  var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  let items = parts.queryItems, !items.isEmpty else { continue }
+            let kept = items.filter { !trackingParams.contains($0.name) }
+            guard kept.count != items.count else { continue }
+            parts.queryItems = kept.isEmpty ? nil : kept
+            guard let cleaned = parts.url?.absoluteString else { continue }
+            out = (out as NSString).replacingCharacters(in: m.range, with: cleaned)
+        }
+        return out
     }
 
     /// Flatten every line break into a single line — for search boxes, URL bars,

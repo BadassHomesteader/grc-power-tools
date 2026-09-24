@@ -1335,7 +1335,7 @@ final class AppController {
             ("usage", true, .init(id: "usage", glyph: "◔", symbol: "gauge.medium", title: "Usage", height: 230) {
                 UsageModuleView()
             }),
-            ("system", true, .init(id: "system", glyph: "❖", symbol: "cpu", title: "System", height: 246) {
+            ("system", true, .init(id: "system", glyph: "❖", symbol: "cpu", title: "System", height: 274) {
                 SystemModuleView(frame: .zero)
             }),
             ("disk", true, .init(id: "disk", glyph: "☰", symbol: "internaldrive", title: "Disk", height: 214) {

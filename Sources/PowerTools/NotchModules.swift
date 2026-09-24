@@ -1000,8 +1000,16 @@ final class SystemModuleView: NotchModuleView {
             (g.3 as NSString).draw(at: NSPoint(x: x, y: 96), withAttributes: NotchTheme.small(10))
         }
 
+        // Network, in the Disk module's grammar: the link on the left, the two
+        // rates on the right.
+        let link = ["Network", s.netInterface, s.localIP].compactMap { $0 }.joined(separator: " · ")
+        (link as NSString).draw(at: NSPoint(x: left, y: 124), withAttributes: NotchTheme.small(10))
+        let flow = "◂ \(SystemStatsReader.rate(s.netDownBps))    ▸ \(SystemStatsReader.rate(s.netUpBps))" as NSString
+        flow.draw(at: NSPoint(x: right - flow.size(withAttributes: NotchTheme.title(12)).width, y: 121),
+                  withAttributes: NotchTheme.title(12))
+
         NotchTheme.faint.setFill()
-        NSRect(x: left, y: 120, width: right - left, height: 1).fill()
+        NSRect(x: left, y: 148, width: right - left, height: 1).fill()
 
         let swap = (s.swapTotal ?? 0) == 0 ? "None" : SystemStatsReader.gib(s.swapUsed)
         let pressure = SystemStatsReader.pressureText(s.pressure)
@@ -1018,13 +1026,13 @@ final class SystemModuleView: NotchModuleView {
             let x = left + CGFloat(i) * numW
             if i > 0 {
                 NotchTheme.faint.setFill()
-                NSRect(x: x - 10, y: 134, width: 1, height: 32).fill()
+                NSRect(x: x - 10, y: 162, width: 1, height: 32).fill()
             }
-            cell(n.0, n.1, nil, x: x, y: 132, tint: n.2)
+            cell(n.0, n.1, nil, x: x, y: 160, tint: n.2)
         }
 
         NotchTheme.faint.setFill()
-        NSRect(x: left, y: 176, width: right - left, height: 1).fill()
+        NSRect(x: left, y: 204, width: right - left, height: 1).fill()
 
         // Power. A desktop has no battery, so every cell here can be a dash.
         let charge = s.batteryPercent.map { "\($0)%" } ?? "—"
@@ -1052,9 +1060,9 @@ final class SystemModuleView: NotchModuleView {
             let x = left + CGFloat(i) * pw
             if i > 0 {
                 NotchTheme.faint.setFill()
-                NSRect(x: x - 10, y: 190, width: 1, height: 44).fill()
+                NSRect(x: x - 10, y: 218, width: 1, height: 44).fill()
             }
-            cell(c.0, c.1, c.2, x: x, y: 188)
+            cell(c.0, c.1, c.2, x: x, y: 216)
         }
     }
 }

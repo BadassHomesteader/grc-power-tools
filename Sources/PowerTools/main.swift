@@ -1336,6 +1336,34 @@ case "shot-hud-test":
         exit(fails == 0 ? 0 : 1)
     }
 
+case "clean-links":
+    // The Advanced Paste "Clean links" transform, on the command line — so the
+    // tracker list can be checked against real URLs without a paste palette.
+    let input = args.count >= 2 ? args[1] : ""
+    print(TextOps.cleanLinks(input))
+
+case "clean-links-test":
+    var fails = 0
+    func check(_ name: String, _ got: String, _ want: String) {
+        let ok = got == want
+        print("\(ok ? "PASS" : "FAIL") — \(name)")
+        if !ok { print("    got  \(got)\n    want \(want)"); fails += 1 }
+    }
+    check("a share tracker goes", TextOps.cleanLinks("https://youtu.be/abc123?si=XyZ9"),
+          "https://youtu.be/abc123")
+    check("campaign junk goes, the real query stays",
+          TextOps.cleanLinks("https://shop.example.com/p/42?variant=7&utm_source=news&fbclid=IwAR9"),
+          "https://shop.example.com/p/42?variant=7")
+    check("a link with nothing to strip is untouched",
+          TextOps.cleanLinks("https://docs.example.com/guide?page=3"),
+          "https://docs.example.com/guide?page=3")
+    check("several links in a sentence",
+          TextOps.cleanLinks("See https://a.com/x?utm_term=q and https://b.com/y?gclid=1 today"),
+          "See https://a.com/x and https://b.com/y today")
+    check("text with no links passes through", TextOps.cleanLinks("no links here"), "no links here")
+    print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
+    exit(fails == 0 ? 0 : 1)
+
 case "shelf-preview":
     // Offscreen render of the shelf: dark by default, "light" for the light
     // theme, "empty" for the empty state, "dropping" for the drop highlight.
@@ -1607,6 +1635,8 @@ case "notchsystem-preview":
             s.gpuBusy = 22
             s.memUsed = 36_670_000_000; s.memWired = 2_960_000_000; s.memCompressed = 10_970_000_000
             s.pressure = 1; s.swapUsed = 0; s.swapTotal = 0
+            s.netDownBps = 12_400_000; s.netUpBps = 410_000
+            s.localIP = "192.168.1.24"; s.netInterface = "en0"
             s.load1 = 2.41; s.processes = 943; s.uptime = 127.5 * 3600
             s.batteryPercent = 33; s.charging = false; s.onAC = false; s.minutesRemaining = 114
             s.healthPercent = 89.9; s.cycles = 386; s.designCycles = 1000
@@ -1614,14 +1644,14 @@ case "notchsystem-preview":
             s.warming = false
             SystemStatsReader.shared.seed(s)
         }
-        let host = NotchPreviewPlate(frame: NSRect(x: 0, y: 0, width: 660, height: 246))
+        let host = NotchPreviewPlate(frame: NSRect(x: 0, y: 0, width: 660, height: 274))
         let v = SystemModuleView(frame: host.bounds)
         host.addSubview(v)
         guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
         host.cacheDisplay(in: host.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {
             try? data.write(to: URL(fileURLWithPath: out))
-            print("wrote \(out) — system 660x246")
+            print("wrote \(out) — system 660x274")
         }
     }
 
