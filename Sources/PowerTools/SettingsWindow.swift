@@ -1200,10 +1200,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let note = NSTextField(wrappingLabelWithString:
             "Drag files, text or images onto the shelf to park them, then drag them back out "
             + "into another app, another Space, or a folder you had not opened yet. Drag it by "
-            + "its header to dock it against any edge or corner. Dragging an item OUT always "
-            + "copies — a shelved file is never moved out of its folder — and the row stays "
-            + "until you remove it. The shelf is emptied when Power Tools quits; only its "
-            + "position is remembered.")
+            + "its header to dock it against any edge or corner. The shelf's header carries a "
+            + "Copy / Move switch: on Copy (the default) a shelved file is never moved out of "
+            + "its folder and the row stays put, while on Move the file is really relocated to "
+            + "wherever you drop it and the row goes with it. Text and images always copy. The "
+            + "shelf is emptied when Power Tools quits; only its position is remembered.")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         note.preferredMaxLayoutWidth = 500

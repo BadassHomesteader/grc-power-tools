@@ -685,6 +685,20 @@ final class HotkeyMonitor {
                 swallowedKeyUps.insert(keyCode)
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.screenRecord) }
                 return nil
+            case Self.kVK_ANSI_Y:
+                // The shelf — same rules as B/J/Q/E/F: a user-assigned Quick
+                // Capture connection on Y wins, and auto-repeat must not
+                // re-toggle a held Y into a flicker.
+                if let connId = connectionLeader(for: keyCode) {
+                    log("hotkey: connection leader armed (\(connId))")
+                    pending = .quickCapture(connId); swallowedKeyUps.insert(keyCode)
+                    return nil
+                }
+                log("hotkey: +Y shelf")
+                windowMode = true
+                swallowedKeyUps.insert(keyCode)
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.shelf) }
+                return nil
             case Self.kVK_ANSI_3:
                 if regionPickerVisible { swallowedKeyUps.insert(keyCode); return nil }  // picker owns the keys
                 // Grid draw mode. Enter windowMode so release ends the session (no

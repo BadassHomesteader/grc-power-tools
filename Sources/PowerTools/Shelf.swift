@@ -177,6 +177,13 @@ struct ShelfItem: Identifiable {
 
     let store: ShelfStore
     var onVisibility: ((Bool) -> Void)?
+    /// Copy (the default) or move, chosen in the shelf's own header. A move
+    /// relocates the user's real file, so it is never a hidden modifier — the
+    /// header always says which mode is armed.
+    var moveMode = false {
+        didSet { view?.moveMode = moveMode }
+    }
+    var onModeChange: ((Bool) -> Void)?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -222,6 +229,12 @@ struct ShelfItem: Identifiable {
             self.dockOverlay.update(padFrame: panel.frame, on: screen, dark: self.dark)
         }
         v.onDragEnded = { [weak self] in self?.snapAfterDrag() }
+        v.moveMode = moveMode
+        v.onModeChange = { [weak self] move in
+            guard let self else { return }
+            self.moveMode = move
+            self.onModeChange?(move)
+        }
         view = v
 
         let win = NSPanel(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.height),
@@ -286,6 +299,10 @@ final class ShelfView: NSView, NSDraggingSource {
         didSet { reload() }
     }
     var onClose: (() -> Void)?
+    var onModeChange: ((Bool) -> Void)?
+    var moveMode = false {
+        didSet { needsDisplay = true }
+    }
     var onDragMoved: (() -> Void)?
     var onDragEnded: (() -> Void)?
 
@@ -302,6 +319,8 @@ final class ShelfView: NSView, NSDraggingSource {
     private var draggingRow: Int?
     private var clearRect = NSRect.zero
     private var closeRect = NSRect.zero
+    private var copyRect = NSRect.zero
+    private var moveRect = NSRect.zero
     private var removeRects: [(id: UUID, rect: NSRect)] = []
 
     init(dark: Bool) {
@@ -360,6 +379,26 @@ final class ShelfView: NSView, NSDraggingSource {
         ("Shelf" as NSString).draw(at: NSPoint(x: 12, y: 9),
                                    withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold),
                                                     .foregroundColor: fg])
+        // Copy / Move, right next to the title: a move takes the real file out
+        // of its folder, so the armed mode is always on screen rather than
+        // hiding behind a modifier held at drag time.
+        let seg: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .medium)]
+        let pill = NSRect(x: 58, y: 8, width: 78, height: 17)
+        (dark ? NSColor.white : .black).withAlphaComponent(0.08).setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
+        copyRect = NSRect(x: pill.minX, y: pill.minY, width: pill.width / 2, height: pill.height)
+        moveRect = NSRect(x: pill.midX, y: pill.minY, width: pill.width / 2, height: pill.height)
+        let on = moveMode ? moveRect : copyRect
+        (moveMode ? NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1) : accent).setFill()
+        NSBezierPath(roundedRect: on.insetBy(dx: 1.5, dy: 1.5), xRadius: 7, yRadius: 7).fill()
+        for (label, r, active) in [("Copy", copyRect, !moveMode), ("Move", moveRect, moveMode)] {
+            var a = seg
+            a[.foregroundColor] = active ? NSColor.white : dim
+            let ns = label as NSString
+            let w = ns.size(withAttributes: a).width
+            ns.draw(at: NSPoint(x: r.midX - w / 2, y: r.minY + 2), withAttributes: a)
+        }
+
         let x = "✕" as NSString
         let xa: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: dim]
         closeRect = NSRect(x: bounds.width - 26, y: 8, width: 16, height: 16)
@@ -475,21 +514,31 @@ final class ShelfView: NSView, NSDraggingSource {
 
     func draggingSession(_ session: NSDraggingSession,
                          sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        // COPY only, deliberately. A .file row points at a file the shelf does
-        // not own — no copy was taken — so a .move accepted by Finder would
-        // physically relocate the user's real file out of its folder on the
-        // strength of a drag out of a scratch tray.
-        context == .outsideApplication ? .copy : []
+        guard context == .outsideApplication else { return [] }
+        // Copy unless the header says Move — and only a FILE can move; text and
+        // images have nowhere to move FROM, so they always copy.
+        guard moveMode, let row = draggingRow, row < items.count, items[row].fileURL != nil else {
+            return .copy
+        }
+        // Offering both lets the destination take the move if it can and fall
+        // back to a copy if it cannot; endedAt tells us which it did.
+        return [.move, .copy]
     }
 
-    /// …and without this, holding ⌘ mid-drag flips the operation to .move
-    /// behind our back, re-opening exactly the hazard the mask just closed.
+    /// The header toggle is the ONLY thing that decides this. Without this, a ⌘
+    /// held at drag time would silently turn a copy into a move of the user's
+    /// real file — the mode should never be a modifier nobody can see.
     func ignoreModifierKeys(for session: NSDraggingSession) -> Bool { true }
 
     func draggingSession(_ session: NSDraggingSession, endedAt point: NSPoint,
                          operation: NSDragOperation) {
-        // The row survives whatever happened: parking is sticky and repeatable,
-        // and removal is explicit (✕ or Clear).
+        // A copy leaves the row alone — parking is sticky and repeatable. A
+        // MOVE means the destination took the file away, so the row now points
+        // at a path that no longer exists and has to go with it.
+        if operation == .move, let row = draggingRow, row < items.count,
+           let item = items.indices.contains(row) ? items[row] : nil, item.fileURL != nil {
+            store?.remove(id: item.id)
+        }
         draggingRow = nil
         needsDisplay = true
     }
@@ -560,6 +609,9 @@ final class ShelfView: NSView, NSDraggingSource {
         panelDragGrab = nil
 
         if closeRect.insetBy(dx: -6, dy: -6).contains(p) { onClose?(); return }
+        if copyRect.contains(p), moveMode { moveMode = false; onModeChange?(false); return }
+        if moveRect.contains(p), !moveMode { moveMode = true; onModeChange?(true); return }
+        if copyRect.union(moveRect).contains(p) { return }   // clicking the armed half does nothing
         if !clearRect.isEmpty, clearRect.insetBy(dx: -6, dy: -6).contains(p) { store?.clear(); return }
         // The ✕ is checked BEFORE the row press, so it can never start a drag.
         if let hit = removeRects.first(where: { $0.rect.insetBy(dx: -5, dy: -5).contains(p) }) {

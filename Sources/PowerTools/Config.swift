@@ -407,6 +407,9 @@ struct Config: Codable {
     var shelf: Bool = true
     /// Most items the shelf holds before the oldest drops off.
     var shelfMaxItems: Int = 40
+    /// Shelf drag-out mode. Copy by default: a shelved file is not the shelf's
+    /// to move. Move is armed in the shelf's own header and shown there.
+    var shelfDragMove: Bool = false
     /// The camera the notch mirror shows, by AVCaptureDevice.uniqueID. Empty
     /// means the system default — which is what most Macs have exactly one of.
     var notchCameraDeviceID: String = ""
@@ -526,7 +529,7 @@ struct Config: Codable {
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, agentPadGrok, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case showInCaptures
-        case shelf, shelfMaxItems
+        case shelf, shelfMaxItems, shelfDragMove
         case notchModules, notchClockZones, notchCameraDeviceID, notchCameraMirror
         case weatherPlaces, weatherPlace, weatherLat, weatherLon, weatherFahrenheit
         case powerRing, powerRingSlots
@@ -621,6 +624,7 @@ struct Config: Codable {
         }
         shelf = field(.shelf, true)
         shelfMaxItems = min(200, max(5, field(.shelfMaxItems, 40)))
+        shelfDragMove = field(.shelfDragMove, false)
         notchCameraDeviceID = field(.notchCameraDeviceID, "")
         notchCameraMirror = field(.notchCameraMirror, true)
         notchClockZones = field(.notchClockZones, ["America/New_York", "Europe/London", "Asia/Tokyo"])

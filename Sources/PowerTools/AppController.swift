@@ -923,6 +923,12 @@ final class AppController {
             ?? NSScreen.main
         guard let screen else { return }
         shelf.store.cap = config.shelfMaxItems
+        shelf.moveMode = config.shelfDragMove
+        shelf.onModeChange = { [weak self] move in
+            guard let self else { return }
+            self.config.shelfDragMove = move
+            self.config.save()
+        }
         shelf.present(dark: config.appearance.isDark, screen: screen)
     }
 

@@ -1361,6 +1361,7 @@ case "shelf-preview":
                 ShelfItem(kind: .text("https://powertools.geeksare.cool")),
             ]
         }
+        v.moveMode = args.contains("move")
         v.previewItems(items, dropping: args.contains("dropping"))
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
         v.cacheDisplay(in: v.bounds, to: rep)
