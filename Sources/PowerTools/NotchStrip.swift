@@ -426,8 +426,19 @@ final class NotchStrip {
     }
 
     private var moduleTabs: [(glyph: String, title: String, active: Bool)] {
-        guard case let .module(i) = mode else { return [] }
-        return modules.enumerated().map { ($1.glyph, $1.title, $0 == i) }
+        switch mode {
+        case .module(let i):
+            return modules.enumerated().map { ($1.glyph, $1.title, $0 == i) }
+        case .list(let si):
+            // A list is a module's content too — the Agent Pad tile's. Without
+            // the row here, opening the agent list was a dead end: every other
+            // module vanished and the only way back was the 18pt mark in the
+            // band. The tile that owns this list reads as the active one.
+            let id = si < activeSources.count ? activeSources[si].id : nil
+            return modules.enumerated().map { ($1.glyph, $1.title, $1.list != nil && $1.list == id) }
+        default:
+            return []
+        }
     }
 
     /// Put the module's own view in the space below the housing. The strip's
@@ -932,8 +943,12 @@ final class NotchStripView: NSView {
     /// divider and two finished rows at most, so the hover shape has a ceiling
     /// the way a module does. Heights vary (finished rows are two lines), so
     /// every rect is a prefix sum — no fixed-stride math anywhere in the list.
+    /// The tab row's height when one is on screen — list mode now carries it
+    /// as well as module mode, and every list rect hangs off this.
+    var tabsOffset: CGFloat { tabs.isEmpty ? 0 : NotchStrip.moduleTabRow }
+
     private var listHeight: CGFloat {
-        notchHeight + NotchStrip.listPad * 2 + rowsHeight
+        notchHeight + tabsOffset + NotchStrip.listPad * 2 + rowsHeight
     }
     private var visibleRows: Int { min(cards.count, NotchStrip.maxListRows + NotchStrip.maxRecentRows) }
     private var firstRecent: Int? { (0..<visibleRows).first { cards[$0].isRecent } }
@@ -945,7 +960,7 @@ final class NotchStripView: NSView {
             + (firstRecent == nil ? 0 : NotchStrip.recentHeaderH)
     }
     private func rowRect(_ i: Int) -> NSRect {
-        var y = notchHeight + NotchStrip.listPad
+        var y = notchHeight + tabsOffset + NotchStrip.listPad
         for j in 0..<i { y += rowHeight(j) }
         if let fr = firstRecent, i >= fr { y += NotchStrip.recentHeaderH }
         return NSRect(x: contentDX + 12, y: y, width: contentW - 24, height: rowHeight(i))
@@ -1126,6 +1141,7 @@ final class NotchStripView: NSView {
         if !picker.isEmpty { return picker.indices.map(tileRect) }
         if listMode, !cards.isEmpty {
             return (0..<visibleRows).map(rowRect) + (recentHeaderRect.map { [$0] } ?? [])
+                + (tabs.isEmpty ? [] : tabs.indices.map(tabRect))
         }
         return card == nil ? placed.map(\.rect) : ([cardTextRect] + actionRects)
     }
@@ -1265,6 +1281,7 @@ final class NotchStripView: NSView {
             return
         }
         if listMode, !cards.isEmpty {
+            if !tabs.isEmpty { drawTabs(showClose: false) }
             drawList()
             if showGuides { drawGuides() }
             return
@@ -1306,7 +1323,7 @@ final class NotchStripView: NSView {
     }
 
     /// The module bar: every module one click away, plus a way out.
-    private func drawTabs() {
+    private func drawTabs(showClose: Bool = true) {
         NSColor.white.withAlphaComponent(0.07).setFill()
         NSRect(x: contentDX, y: notchHeight, width: contentW, height: NotchStrip.moduleTabRow).fill()
         for (i, t) in tabs.enumerated() {
@@ -1314,6 +1331,7 @@ final class NotchStripView: NSView {
                      plate: t.active ? 0.14 : (hoveredTab == i ? 0.08 : 0),
                      glyphAlpha: t.active ? 1 : 0.85, titleAlpha: t.active ? 0.95 : 0.6)
         }
+        guard showClose else { return }
         let close = tabRect(-1)
         if hoveredTab == -1 {
             NSColor.white.withAlphaComponent(0.12).setFill()
@@ -1680,6 +1698,12 @@ final class NotchStripView: NSView {
         }
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
+            if !tabs.isEmpty, p.y >= notchHeight, p.y < notchHeight + tabsOffset {
+                let h = tabs.indices.first { tabRect($0).contains(p) }
+                if h != hoveredTab { hoveredTab = h; needsDisplay = true; onTabHover?(h) }
+                return
+            }
+            if hoveredTab != nil { hoveredTab = nil; needsDisplay = true }
             let onGrid = listGridRect.insetBy(dx: -6, dy: -5).contains(p)
             if onGrid != listGridHovered { listGridHovered = onGrid; needsDisplay = true; onGridHover?(onGrid) }
             let onRefresh = refreshRect.insetBy(dx: -6, dy: -5).contains(p)
@@ -1735,6 +1759,11 @@ final class NotchStripView: NSView {
         }
         if listMode, !cards.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
+            if !tabs.isEmpty, p.y >= notchHeight, p.y < notchHeight + tabsOffset,
+               let i = tabs.indices.first(where: { tabRect($0).contains(p) }) {
+                onModuleTab?(i)
+                return
+            }
             // The launcher, up in the band, opens the module row; ↻ re-sweeps.
             if listGridRect.insetBy(dx: -6, dy: -5).contains(p) { onGridHover?(true); return }
             if refreshRect.insetBy(dx: -6, dy: -5).contains(p) { onRefresh?(); return }

@@ -1787,17 +1787,22 @@ case "notchstrip-preview":
         }
         let v = NotchStripView()
         v.showGuides = guides
+        // One list of tiles for every shape that draws the module row.
+        let tiles: [(glyph: String, title: String)] = [
+            ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("▤", "Calendar"), ("☀", "Weather"),
+            ("◉", "Camera"), ("❖", "System"), ("☰", "Disk"), ("✦", "Ask"),
+            ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⊟", "Shelf"), ("⚙", "Settings")]
         switch shape {
         case "list":
             v.listHeader = header
-            v.configure(groups: [marks], cards: cards, listMode: true, field: field)
+            // The agent list carries the module row too, so the preview has to
+            // pass it or it renders a shape the app no longer draws. Agent Pad
+            // is the active tile — the list IS its content.
+            v.configure(groups: [marks], cards: cards, listMode: true, field: field,
+                        tabs: tiles.map { (glyph: $0.glyph, title: $0.title, active: $0.title == "Agent Pad") })
         case "picker", "tabs":
             // The module row as the app registers it, pads and Settings included;
             // "tabs" draws the same set as the tab row over an open module (Weather).
-            let tiles: [(glyph: String, title: String)] = [
-                ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("▤", "Calendar"), ("☀", "Weather"),
-                ("◉", "Camera"), ("❖", "System"), ("☰", "Disk"), ("✦", "Ask"),
-                ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⊟", "Shelf"), ("⚙", "Settings")]
             if shape == "tabs" {
                 v.configure(groups: [marks], cards: [], listMode: false, field: field, moduleHeight: 60,
                             tabs: tiles.map { (glyph: $0.glyph, title: $0.title, active: $0.title == "Weather") })
@@ -2238,6 +2243,24 @@ case "notchstrip-live-test":
                   && abs(tabbed.tabRect(0).height - first.height) < 0.5,
                   "13n5: launcher tile and tab are the same rect (\(Int(first.width))×\(Int(first.height)))")
         }
+
+        // 13p: the agent list KEEPS the module row. Without it, opening the
+        // list was a dead end — every other module vanished and the only way
+        // back was the 18pt mark up in the band. Checked HERE, not back at 12,
+        // because no modules are registered yet at that point and an empty row
+        // is the right answer then.
+        strip.openList(source: 0); pump(0.4)
+        if let (_, view) = strip.testSurface {
+            check(abs(view.tabsOffset - NotchStrip.moduleTabRow) < 0.5,
+                  "13p: the agent list carries the module row (\(Int(view.tabsOffset))pt)")
+            check((view.listRowRects.first?.minY ?? 0) >= NotchStrip.moduleTabRow,
+                  "13p2: …and its session rows start below that row")
+            check(view.tabRect(0).maxY <= (view.listRowRects.first?.minY ?? 0) + 0.5,
+                  "13p3: …with no overlap between a tab and the first row")
+            check(abs(view.tabRect(0).height - NotchStrip.moduleTabRow) < 0.5,
+                  "13p4: …at the same height it has over a module")
+        }
+        strip.collapse(); pump(0.3)
 
         strip.openModule(0); pump(0.4)
         check(opened.contains("alpha"), "13e: opening a module builds its view")
