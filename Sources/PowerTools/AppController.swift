@@ -1274,13 +1274,22 @@ final class AppController {
         refreshWatchers()
     }
 
-    /// Panels the notch hosts. Order here is the order in the module row.
+    /// Panels the notch hosts. ONE ordered list, and the order here is the
+    /// order on screen — the always-on tiles used to be appended after the
+    /// gated loop, which meant the row's order was decided by the gating
+    /// mechanism rather than by what a person reaches for.
+    ///
+    /// The run of it: what can I do (Hotkeys, Snap) · what is going on outside
+    /// this machine (Clock, Calendar, Weather — the most glanceable, so they
+    /// ride early) · what am I working with (Agent Pad, Macro Pad, Shelf, Ask) ·
+    /// how is the machine itself (Usage, System, Disk, Camera) · and the way
+    /// into Settings, which stays last because it is the exit.
     private func registerNotchModules() {
-        let all: [(String, NotchStrip.Module)] = [
-            ("usage", .init(id: "usage", glyph: "◔", title: "Usage", height: 230) {
-                UsageModuleView()
-            }),
-            ("hotkeys", .init(id: "hotkeys", glyph: "⌨", title: "Hotkeys", height: 300) { [weak self] in
+        // `gated: false` means the tile is always registered — a notch on
+        // screen should always reach its pads and its own settings, whatever
+        // `notchModules` says.
+        let all: [(id: String, gated: Bool, module: NotchStrip.Module)] = [
+            ("hotkeys", true, .init(id: "hotkeys", glyph: "⌨", symbol: "keyboard", title: "Hotkeys", height: 300) { [weak self] in
                 // Same shape toggleCheatSheet builds, so the module and the
                 // hold+Q sheet can never drift apart.
                 let conns = (self?.config.connections ?? [])
@@ -1289,20 +1298,50 @@ final class AppController {
                 return HotkeysModuleView(hotkeyName: self?.config.hotkey.displayName ?? "hotkey",
                                          connections: conns)
             }),
-            ("snap", .init(id: "snap", glyph: "▦", title: "Snap", height: 210) {
+            ("snap", true, .init(id: "snap", glyph: "▦", symbol: "rectangle.split.2x2", title: "Snap", height: 210) {
                 SnapModuleView()
             }),
-            ("clock", .init(id: "clock", glyph: "◷", title: "Clock", height: 150) { [weak self] in
+            ("clock", true, .init(id: "clock", glyph: "◷", symbol: "clock", title: "Clock", height: 150) { [weak self] in
                 ClockModuleView(zones: self?.config.notchClockZones ?? [])
             }),
-            ("calendar", .init(id: "calendar", glyph: "▤", title: "Calendar", height: 216) {
+            ("calendar", true, .init(id: "calendar", glyph: "▤", symbol: "calendar", title: "Calendar", height: 216) {
                 CalendarModuleView(frame: .zero)
             }),
-            ("weather", .init(id: "weather", glyph: "☀", title: "Weather", height: 270) { [weak self] in
+            ("weather", true, .init(id: "weather", glyph: "☀", symbol: "sun.max", title: "Weather", height: 270) { [weak self] in
                 WeatherModuleView(places: self?.config.weatherPlaces ?? [],
                                   fahrenheit: self?.config.weatherFahrenheit ?? true)
             }),
-            ("camera", .init(id: "camera", glyph: "◉", title: "Camera", height: 274, make: { [weak self] in
+            // Agent Pad is a LIST tile: hovering it shows the agent list right
+            // in the notch (the same view a session dot opens); only when the
+            // agents source is off does it fall back to toggling the floating
+            // pad. Macro Pad and Shelf are ACTION tiles — floating panels with
+            // their own docks, so the tile toggles them and folds the notch,
+            // exactly as hold+B and hold+Y do. The shelf cannot be hosted at
+            // all: the notch folds on hover-out and would drop a drag mid-air.
+            ("agentpad", false, .init(id: "agentpad", glyph: "◫", symbol: "terminal", title: "Agent Pad", height: 0,
+                                      make: { NSView() },
+                                      open: { [weak self] in self?.toggleAgentPad() },
+                                      list: "agents")),
+            ("macropad", false, .init(id: "macropad", glyph: "⊞", symbol: "square.grid.2x2", title: "Macro Pad", height: 0,
+                                      make: { NSView() },
+                                      open: { [weak self] in self?.toggleMacroPad() })),
+            ("shelf", false, .init(id: "shelf", glyph: "⊟", symbol: "tray.and.arrow.down", title: "Shelf", height: 0,
+                                   make: { NSView() },
+                                   open: { [weak self] in self?.toggleShelf() })),
+            ("chat", true, .init(id: "chat", glyph: "✦", symbol: "sparkles", title: "Ask", height: 200, make: { [weak self] in
+                ChatModuleView(model: self?.config.claudeModel ?? "claude-haiku-4-5",
+                               openFull: { [weak self] text in self?.openChat(with: text) })
+            }, wantsKeyboard: true)),
+            ("usage", true, .init(id: "usage", glyph: "◔", symbol: "gauge.medium", title: "Usage", height: 230) {
+                UsageModuleView()
+            }),
+            ("system", true, .init(id: "system", glyph: "❖", symbol: "cpu", title: "System", height: 246) {
+                SystemModuleView(frame: .zero)
+            }),
+            ("disk", true, .init(id: "disk", glyph: "☰", symbol: "internaldrive", title: "Disk", height: 214) {
+                DiskModuleView(frame: .zero)
+            }),
+            ("camera", true, .init(id: "camera", glyph: "◉", symbol: "camera", title: "Camera", height: 274, make: { [weak self] in
                 CameraModuleView(deviceID: self?.config.notchCameraDeviceID ?? "",
                                  mirrored: self?.config.notchCameraMirror ?? true,
                                  remember: { [weak self] id, mirror in
@@ -1312,51 +1351,18 @@ final class AppController {
                                      self.config.save()
                                  })
             }, clickOnly: true)),
-            ("system", .init(id: "system", glyph: "❖", title: "System", height: 246) {
-                SystemModuleView(frame: .zero)
-            }),
-            ("disk", .init(id: "disk", glyph: "☰", title: "Disk", height: 214) {
-                DiskModuleView(frame: .zero)
-            }),
-            ("chat", .init(id: "chat", glyph: "✦", title: "Ask", height: 200, make: { [weak self] in
-                ChatModuleView(model: self?.config.claudeModel ?? "claude-haiku-4-5",
-                               openFull: { [weak self] text in self?.openChat(with: text) })
-            }, wantsKeyboard: true)),
+            // Settings rides LAST: an action tile, not a hosted panel — it
+            // opens the real 860pt window and folds the notch away. Routed
+            // through the responder chain to AppDelegate, the same path the
+            // menu-bar "Settings…" item takes.
+            ("settings", false, .init(id: "settings", glyph: "⚙", symbol: "gearshape", title: "Settings", height: 0,
+                                      make: { NSView() },
+                                      open: { NSApp.sendAction(#selector(AppDelegate.showSettings(_:)),
+                                                               to: nil, from: nil) })),
         ]
-        for (id, module) in all where config.notchModules.contains(id) {
-            notchStrip.registerModule(module)
+        for entry in all where !entry.gated || config.notchModules.contains(entry.id) {
+            notchStrip.registerModule(entry.module)
         }
-        // Agent Pad is a LIST tile: hovering it shows the agent list right in
-        // the notch (the same view a session dot opens); only when the agents
-        // source is switched off does it fall back to toggling the floating
-        // pad. Macro Pad is an ACTION tile: a floating panel with its own dock,
-        // so the tile toggles it and folds the notch, as hold+B does. Neither
-        // is gated: a notch on screen should always be able to reach them.
-        notchStrip.registerModule(NotchStrip.Module(
-            id: "agentpad", glyph: "◫", title: "Agent Pad", height: 0,
-            make: { NSView() },
-            open: { [weak self] in self?.toggleAgentPad() },
-            list: "agents"))
-        notchStrip.registerModule(NotchStrip.Module(
-            id: "macropad", glyph: "⊞", title: "Macro Pad", height: 0,
-            make: { NSView() },
-            open: { [weak self] in self?.toggleMacroPad() }))
-        // The shelf is a floating pad with its own dock, like the two above —
-        // an ACTION tile that toggles it, not a panel the notch can host: the
-        // notch folds on hover-out and would drop a drag mid-flight.
-        notchStrip.registerModule(NotchStrip.Module(
-            id: "shelf", glyph: "⊟", title: "Shelf", height: 0,
-            make: { NSView() },
-            open: { [weak self] in self?.toggleShelf() }))
-        // Settings rides LAST and is not gated — a notch that is on screen at
-        // all should always offer a way into its own settings. An action tile,
-        // not a hosted module: it opens the real 860pt window and folds the
-        // notch away. Routed through the responder chain to AppDelegate, the
-        // same path the menu-bar "Settings…" item takes.
-        notchStrip.registerModule(NotchStrip.Module(
-            id: "settings", glyph: "⚙", title: "Settings", height: 0,
-            make: { NSView() },
-            open: { NSApp.sendAction(#selector(AppDelegate.showSettings(_:)), to: nil, from: nil) }))
     }
 
     /// The ✱ menu for a notch row. Built here rather than borrowed from the

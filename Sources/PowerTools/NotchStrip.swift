@@ -157,6 +157,11 @@ final class NotchStrip {
     struct Module {
         let id: String
         let glyph: String
+        /// An SF Symbol name, drawn in place of `glyph` when the system can
+        /// resolve it. macOS's own set reads as macOS; the Unicode glyphs it
+        /// replaces were several kinds of wrong — ☰ said "hamburger menu", not
+        /// "disk", and ◉ said "recording". The glyph stays as the fallback.
+        var symbol: String? = nil
         let title: String
         /// Content height below the housing, clamped to `maxModuleContent` —
         /// the notch stays a notch.
@@ -412,8 +417,8 @@ final class NotchStrip {
         }
     }
 
-    private var pickerEntries: [(glyph: String, title: String)] {
-        if case .picker = mode { return modules.map { ($0.glyph, $0.title) } }
+    private var pickerEntries: [(glyph: String, symbol: String?, title: String)] {
+        if case .picker = mode { return modules.map { ($0.glyph, $0.symbol, $0.title) } }
         return []
     }
 
@@ -425,17 +430,17 @@ final class NotchStrip {
                          NotchStrip.maxModuleContent - NotchStrip.moduleTabRow)
     }
 
-    private var moduleTabs: [(glyph: String, title: String, active: Bool)] {
+    private var moduleTabs: [(glyph: String, symbol: String?, title: String, active: Bool)] {
         switch mode {
         case .module(let i):
-            return modules.enumerated().map { ($1.glyph, $1.title, $0 == i) }
+            return modules.enumerated().map { ($1.glyph, $1.symbol, $1.title, $0 == i) }
         case .list(let si):
             // A list is a module's content too — the Agent Pad tile's. Without
             // the row here, opening the agent list was a dead end: every other
             // module vanished and the only way back was the 18pt mark in the
             // band. The tile that owns this list reads as the active one.
             let id = si < activeSources.count ? activeSources[si].id : nil
-            return modules.enumerated().map { ($1.glyph, $1.title, $1.list != nil && $1.list == id) }
+            return modules.enumerated().map { ($1.glyph, $1.symbol, $1.title, $1.list != nil && $1.list == id) }
         default:
             return []
         }
@@ -857,17 +862,17 @@ final class NotchStripView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    private var picker: [(glyph: String, title: String)] = []
+    private var picker: [(glyph: String, symbol: String?, title: String)] = []
     private var moduleHeight: CGFloat = 0
-    private var tabs: [(glyph: String, title: String, active: Bool)] = []
+    private var tabs: [(glyph: String, symbol: String?, title: String, active: Bool)] = []
     private var hoveredTile: Int?
     private var hoveredTab: Int?
 
     func configure(groups: [[NotchStrip.Mark]], cards: [NotchStrip.Card], listMode: Bool,
                    field: PadDock.Field,
-                   picker: [(glyph: String, title: String)] = [],
+                   picker: [(glyph: String, symbol: String?, title: String)] = [],
                    moduleHeight: CGFloat = 0,
-                   tabs: [(glyph: String, title: String, active: Bool)] = []) {
+                   tabs: [(glyph: String, symbol: String?, title: String, active: Bool)] = []) {
         self.picker = picker
         self.moduleHeight = moduleHeight
         self.tabs = tabs
@@ -1327,7 +1332,7 @@ final class NotchStripView: NSView {
         NSColor.white.withAlphaComponent(0.07).setFill()
         NSRect(x: contentDX, y: notchHeight, width: contentW, height: NotchStrip.moduleTabRow).fill()
         for (i, t) in tabs.enumerated() {
-            drawTile(glyph: t.glyph, title: nil, in: tabRect(i),
+            drawTile(glyph: t.glyph, symbol: t.symbol, title: nil, in: tabRect(i),
                      plate: t.active ? 0.14 : (hoveredTab == i ? 0.08 : 0),
                      glyphAlpha: t.active ? 1 : 0.85, titleAlpha: t.active ? 0.95 : 0.6)
         }
@@ -1348,7 +1353,7 @@ final class NotchStripView: NSView {
     /// row draws, so nothing changes size when a module opens.
     private func drawPicker() {
         for (i, m) in picker.enumerated() {
-            drawTile(glyph: m.glyph, title: nil, in: tileRect(i),
+            drawTile(glyph: m.glyph, symbol: m.symbol, title: nil, in: tileRect(i),
                      plate: hoveredTile == i ? 0.1 : 0, glyphAlpha: 1, titleAlpha: 0.7)
         }
     }
@@ -1357,7 +1362,7 @@ final class NotchStripView: NSView {
     /// draw through here, in identical rects, so the icons are the same size
     /// whether or not a module is open — they drifted apart when each row kept
     /// its own copy.
-    private func drawTile(glyph: String, title: String?, in r: NSRect,
+    private func drawTile(glyph: String, symbol: String? = nil, title: String?, in r: NSRect,
                           plate: CGFloat, glyphAlpha: CGFloat, titleAlpha: CGFloat) {
         if plate > 0 {
             NSColor.white.withAlphaComponent(plate).setFill()
@@ -1368,6 +1373,22 @@ final class NotchStripView: NSView {
         let t: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.white.withAlphaComponent(titleAlpha)]
+        // An SF Symbol when the system has one, the Unicode glyph when it does
+        // not — so a symbol Apple renames cannot blank a tile.
+        if let symbol, let img = NSImage(systemSymbolName: symbol, accessibilityDescription: title) {
+            let cfg = NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+            let icon = img.withSymbolConfiguration(cfg) ?? img
+            let size = icon.size
+            let y = title == nil ? r.midY - size.height / 2 : r.minY + 13
+            icon.draw(in: NSRect(x: r.midX - size.width / 2, y: y, width: size.width, height: size.height),
+                      from: .zero, operation: .sourceOver, fraction: glyphAlpha,
+                      respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
+            guard let title else { return }
+            let t2 = (title as NSString).size(withAttributes: t)
+            (title as NSString).draw(at: NSPoint(x: r.midX - t2.width / 2, y: r.minY + 47), withAttributes: t)
+            return
+        }
         let gs = (glyph as NSString).size(withAttributes: g)
         guard let title else {
             // No title: the glyph takes the whole tile and centres in it, at

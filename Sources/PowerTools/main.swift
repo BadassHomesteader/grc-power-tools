@@ -1789,10 +1789,14 @@ case "notchstrip-preview":
         let v = NotchStripView()
         v.showGuides = guides
         // One list of tiles for every shape that draws the module row.
-        let tiles: [(glyph: String, title: String)] = [
-            ("◔", "Usage"), ("⌨", "Hotkeys"), ("▦", "Snap"), ("◷", "Clock"), ("▤", "Calendar"), ("☀", "Weather"),
-            ("◉", "Camera"), ("❖", "System"), ("☰", "Disk"), ("✦", "Ask"),
-            ("◫", "Agent Pad"), ("⊞", "Macro Pad"), ("⊟", "Shelf"), ("⚙", "Settings")]
+        let tiles: [(glyph: String, symbol: String?, title: String)] = [
+            ("⌨", "keyboard", "Hotkeys"), ("▦", "rectangle.split.2x2", "Snap"),
+            ("◷", "clock", "Clock"), ("▤", "calendar", "Calendar"), ("☀", "sun.max", "Weather"),
+            ("◫", "terminal", "Agent Pad"), ("⊞", "square.grid.2x2", "Macro Pad"),
+            ("⊟", "tray.and.arrow.down", "Shelf"), ("✦", "sparkles", "Ask"),
+            ("◔", "gauge.medium", "Usage"), ("❖", "cpu", "System"),
+            ("☰", "internaldrive", "Disk"), ("◉", "camera", "Camera"),
+            ("⚙", "gearshape", "Settings")]
         switch shape {
         case "list":
             v.listHeader = header
@@ -1800,13 +1804,15 @@ case "notchstrip-preview":
             // pass it or it renders a shape the app no longer draws. Agent Pad
             // is the active tile — the list IS its content.
             v.configure(groups: [marks], cards: cards, listMode: true, field: field,
-                        tabs: tiles.map { (glyph: $0.glyph, title: $0.title, active: $0.title == "Agent Pad") })
+                        tabs: tiles.map { (glyph: $0.glyph, symbol: $0.symbol, title: $0.title,
+                                           active: $0.title == "Agent Pad") })
         case "picker", "tabs":
             // The module row as the app registers it, pads and Settings included;
             // "tabs" draws the same set as the tab row over an open module (Weather).
             if shape == "tabs" {
                 v.configure(groups: [marks], cards: [], listMode: false, field: field, moduleHeight: 60,
-                            tabs: tiles.map { (glyph: $0.glyph, title: $0.title, active: $0.title == "Weather") })
+                            tabs: tiles.map { (glyph: $0.glyph, symbol: $0.symbol, title: $0.title,
+                                               active: $0.title == "Weather") })
             } else {
                 v.configure(groups: [marks], cards: [], listMode: false, field: field, picker: tiles)
             }
@@ -2223,7 +2229,7 @@ case "notchstrip-live-test":
         do {
             let v = NotchStripView()
             v.configure(groups: [[]], cards: [], listMode: false, field: field,
-                        picker: (0..<14).map { (glyph: "◆", title: "Module \($0)") })
+                        picker: (0..<14).map { (glyph: "◆", symbol: nil, title: "Module \($0)") })
             v.frame = NSRect(origin: .zero, size: v.fittingSize)
             let first = v.tileRect(0), last = v.tileRect(13)
             check(abs(first.minY - last.minY) < 0.5,
@@ -2238,7 +2244,7 @@ case "notchstrip-live-test":
             // drifted apart twice now.
             let tabbed = NotchStripView()
             tabbed.configure(groups: [[]], cards: [], listMode: false, field: field, moduleHeight: 60,
-                             tabs: (0..<14).map { (glyph: "◆", title: "Module \($0)", active: $0 == 0) })
+                             tabs: (0..<14).map { (glyph: "◆", symbol: nil, title: "Module \($0)", active: $0 == 0) })
             tabbed.frame = NSRect(origin: .zero, size: tabbed.fittingSize)
             check(abs(tabbed.tabRect(0).width - first.width) < 0.5
                   && abs(tabbed.tabRect(0).height - first.height) < 0.5,
