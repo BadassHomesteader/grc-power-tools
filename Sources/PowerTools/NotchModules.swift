@@ -1066,3 +1066,115 @@ final class SystemModuleView: NotchModuleView {
         }
     }
 }
+
+// MARK: - Timers
+
+/// A countdown and a stopwatch, one tap each. The clock itself lives in
+/// TimerCenter — this view is just its face, and is thrown away every time the
+/// notch folds.
+final class TimersModuleView: NotchModuleView {
+    private let presets: [Double] = [5, 10, 25]
+    private var presetRects: [(minutes: Double, rect: NSRect)] = []
+    private var actionRects: [(action: String, rect: NSRect)] = []
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        tick(every: 0.5)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        presetRects = []
+        actionRects = []
+        let left: CGFloat = 16
+        let right = bounds.width - 16
+        let center = TimerCenter.shared
+
+        ("Timers" as NSString).draw(at: NSPoint(x: left, y: 10), withAttributes: NotchTheme.title())
+        let state: String
+        switch center.mode {
+        case .idle: state = "nothing running"
+        case .running: state = "counting down"
+        case .paused: state = "paused"
+        case .stopwatch: state = "stopwatch"
+        }
+        let st = state as NSString
+        st.draw(at: NSPoint(x: right - st.size(withAttributes: NotchTheme.small(10)).width, y: 12),
+                withAttributes: NotchTheme.small(10))
+
+        // The reading, big enough to catch from across the room.
+        let reading: String
+        switch center.mode {
+        case .idle: reading = "0:00"
+        case .stopwatch: reading = TimerCenter.clock(center.elapsed)
+        default: reading = TimerCenter.clock(center.remaining)
+        }
+        let tint: NSColor = center.mode == .running && center.remaining <= 30 ? NotchTheme.warn : NotchTheme.fg
+        (reading as NSString).draw(at: NSPoint(x: left, y: 34),
+                                   withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 46, weight: .semibold),
+                                                    .foregroundColor: tint])
+
+        // A countdown gets a bar, so the glance does not need the numbers.
+        if center.mode == .running || center.mode == .paused, center.total > 0 {
+            let done = 1 - (center.remaining / center.total)
+            NotchTheme.bar(done, in: NSRect(x: left, y: 92, width: right - left, height: 5))
+        }
+
+        // Presets, then the controls for whatever is running.
+        var x = left
+        for m in presets {
+            let label = "\(Int(m)) min" as NSString
+            let w = label.size(withAttributes: NotchTheme.body(12)).width + 22
+            let r = NSRect(x: x, y: 110, width: w, height: 28)
+            NotchTheme.faint.setFill()
+            NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8).fill()
+            label.draw(at: NSPoint(x: r.minX + 11, y: r.minY + 6), withAttributes: NotchTheme.body(12))
+            presetRects.append((m, r))
+            x = r.maxX + 8
+        }
+        let swLabel = "Stopwatch" as NSString
+        let swW = swLabel.size(withAttributes: NotchTheme.body(12)).width + 22
+        let swRect = NSRect(x: x, y: 110, width: swW, height: 28)
+        NotchTheme.faint.setFill()
+        NSBezierPath(roundedRect: swRect, xRadius: 8, yRadius: 8).fill()
+        swLabel.draw(at: NSPoint(x: swRect.minX + 11, y: swRect.minY + 6), withAttributes: NotchTheme.body(12))
+        actionRects.append(("stopwatch", swRect))
+
+        if center.isActive {
+            var cx = left
+            let controls = center.mode == .paused ? ["Resume", "Reset"]
+                         : center.mode == .stopwatch ? ["Reset"] : ["Pause", "Reset"]
+            for c in controls {
+                let label = c as NSString
+                let w = label.size(withAttributes: NotchTheme.title(12)).width + 24
+                let r = NSRect(x: cx, y: 150, width: w, height: 28)
+                NSColor.white.withAlphaComponent(0.16).setFill()
+                NSBezierPath(roundedRect: r, xRadius: 8, yRadius: 8).fill()
+                label.draw(at: NSPoint(x: r.minX + 12, y: r.minY + 6), withAttributes: NotchTheme.title(12))
+                actionRects.append((c.lowercased(), r))
+                cx = r.maxX + 8
+            }
+        } else {
+            ("Pick a length, or start the stopwatch. It keeps running when the notch folds."
+                as NSString).draw(at: NSPoint(x: left, y: 152), withAttributes: NotchTheme.small(10))
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if let hit = presetRects.first(where: { $0.rect.contains(p) }) {
+            TimerCenter.shared.start(minutes: hit.minutes)
+            needsDisplay = true
+            return
+        }
+        guard let hit = actionRects.first(where: { $0.rect.contains(p) }) else { return }
+        switch hit.action {
+        case "stopwatch": TimerCenter.shared.startStopwatch()
+        case "pause": TimerCenter.shared.pause()
+        case "resume": TimerCenter.shared.resume()
+        case "reset": TimerCenter.shared.reset()
+        default: break
+        }
+        needsDisplay = true
+    }
+}

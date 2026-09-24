@@ -200,6 +200,8 @@ final class NotchStrip {
     /// 660pt without colliding — and two rows read worse than the icons do. The
     /// names still live in Settings ▸ Notch and the ⌘Q cheat sheet.
     static let pickerRow: CGFloat = moduleTabRow
+    /// The panel a drag gets to aim at, opened while files hover the housing.
+    static let dropRow: CGFloat = 96
     /// While a module is open, its siblings stay one click away on a tab row
     /// under the housing. Without it a module was a dead end — there was no way
     /// back to the row and no way out at all.
@@ -392,7 +394,8 @@ final class NotchStrip {
             view?.listHeader = nil
         }
         view?.configure(groups: live, cards: cards, listMode: listMode, field: field,
-                        picker: pickerEntries, moduleHeight: hostedHeight, tabs: moduleTabs)
+                        picker: pickerEntries, moduleHeight: hostedHeight, tabs: moduleTabs,
+                        dropPrompt: dropPrompt)
         hostModuleIfNeeded(field: field)
         place(field: field, animated: true)
         applyKeyboardFocus()
@@ -467,6 +470,17 @@ final class NotchStrip {
 
     // MARK: Window
 
+    private func wireDropTarget(_ v: NotchStripView) {
+        v.onDragEnter = { [weak self] in self?.setDropPrompt(true) }
+        v.onDragLeave = { [weak self] in self?.setDropPrompt(false) }
+        v.onDropPasteboard = { [weak self] pb in
+            guard let self else { return 0 }
+            let n = self.onDrop?(pb) ?? 0
+            self.setDropPrompt(false)
+            return n
+        }
+    }
+
     private func build(on screen: NSScreen) {
         if panel != nil { return }
         let v = NotchStripView()
@@ -479,6 +493,8 @@ final class NotchStrip {
             if i < 0 { self.collapse() } else { self.openModule(i) }
         }
         v.onTileHover = { [weak self] i in self?.hoverModule(i) }
+        v.registerDropTypes()
+        wireDropTarget(v)
         v.onTabHover = { [weak self] i in self?.hoverModule(i) }
         v.onGridHover = { [weak self] open in self?.hoverGrid(open) }
         v.onRefresh = { [weak self] in self?.refreshRequested() }
@@ -654,6 +670,19 @@ final class NotchStrip {
     /// it so it stays. Default pinned so the test hooks and click paths keep
     /// their old behavior; the hover callers pass `pinned: false`.
     func openPicker(pinned pin: Bool = true) { mode = .picker; pinned = pin; refresh() }
+
+    /// Dragging files at the notch: the collapsed strip is 38pt of mostly
+    /// camera housing, which is no target at all, so a drag entering it opens a
+    /// panel to aim at. Set by the view's dragging destination; the drop itself
+    /// goes to `onDrop`, which the controller points at the shelf.
+    private(set) var dropPrompt = false
+    var onDrop: ((NSPasteboard) -> Int)?
+
+    func setDropPrompt(_ on: Bool) {
+        guard dropPrompt != on else { return }
+        dropPrompt = on
+        refresh()
+    }
     /// The source index a list tile points at, if that source is switched on
     /// AND has a row to show. An empty list folds the notch the moment it opens
     /// — under the cursor, from a tile still being hovered — so with nothing
@@ -865,6 +894,10 @@ final class NotchStripView: NSView {
     private var picker: [(glyph: String, symbol: String?, title: String)] = []
     private var moduleHeight: CGFloat = 0
     private var tabs: [(glyph: String, symbol: String?, title: String, active: Bool)] = []
+    private var dropPrompt = false
+    var onDragEnter: (() -> Void)?
+    var onDragLeave: (() -> Void)?
+    var onDropPasteboard: ((NSPasteboard) -> Int)?
     private var hoveredTile: Int?
     private var hoveredTab: Int?
 
@@ -872,7 +905,9 @@ final class NotchStripView: NSView {
                    field: PadDock.Field,
                    picker: [(glyph: String, symbol: String?, title: String)] = [],
                    moduleHeight: CGFloat = 0,
-                   tabs: [(glyph: String, symbol: String?, title: String, active: Bool)] = []) {
+                   tabs: [(glyph: String, symbol: String?, title: String, active: Bool)] = [],
+                   dropPrompt: Bool = false) {
+        self.dropPrompt = dropPrompt
         self.picker = picker
         self.moduleHeight = moduleHeight
         self.tabs = tabs
@@ -1002,6 +1037,8 @@ final class NotchStripView: NSView {
     }
 
     override var fittingSize: NSSize {
+        // A drag is aiming at us: give it a panel, not a 38pt sliver.
+        if dropPrompt { return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.dropRow) }
         if moduleHeight > 0 {
             return NSSize(width: midFrameWidth, height: notchHeight + NotchStrip.moduleTabRow + moduleHeight)
         }
@@ -1031,7 +1068,9 @@ final class NotchStripView: NSView {
     /// source across the cutout would make it impossible to tell whose dot is
     /// whose, which is the entire point of grouping them.
     /// Any expanded shape — list, module row, or a hosted module.
-    var isMid: Bool { (listMode && !cards.isEmpty) || card != nil || !picker.isEmpty || moduleHeight > 0 }
+    var isMid: Bool {
+        (listMode && !cards.isEmpty) || card != nil || !picker.isEmpty || moduleHeight > 0 || dropPrompt
+    }
 
     private func computePlacement() -> [NotchStrip.Placed] {
         guard !isMid, !groups.isEmpty else { return [] }
@@ -1275,6 +1314,10 @@ final class NotchStripView: NSView {
         NSColor(white: 0.04, alpha: 0.97).setFill()
         bounds.fill()
 
+        if dropPrompt {
+            drawDropPrompt()
+            return
+        }
         // A hosted module paints itself; the strip supplies the shell and the
         // tab row that gets you back out of it.
         if moduleHeight > 0 {
@@ -1324,6 +1367,35 @@ final class NotchStripView: NSView {
                     path.lineWidth = 1.5
                     path.stroke()
                 }
+        }
+    }
+
+    /// What a drag sees when it reaches the housing.
+    private func drawDropPrompt() {
+        let box = NSRect(x: contentDX + 10, y: notchHeight + 10,
+                         width: contentW - 20, height: NotchStrip.dropRow - 20)
+        let accent = NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1)
+        accent.withAlphaComponent(0.10).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12).fill()
+        accent.setStroke()
+        let path = NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12)
+        path.lineWidth = 2
+        path.setLineDash([6, 4], count: 2, phase: 0)
+        path.stroke()
+        let text = "Drop to shelf" as NSString
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14, weight: .semibold), .foregroundColor: NSColor.white]
+        let size = text.size(withAttributes: attrs)
+        text.draw(at: NSPoint(x: box.midX - size.width / 2, y: box.midY - size.height / 2 + 6),
+                  withAttributes: attrs)
+        if let icon = NSImage(systemSymbolName: "tray.and.arrow.down", accessibilityDescription: nil) {
+            let cfg = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+            let img = icon.withSymbolConfiguration(cfg) ?? icon
+            img.draw(in: NSRect(x: box.midX - img.size.width / 2, y: box.midY - 22,
+                                width: img.size.width, height: img.size.height),
+                     from: .zero, operation: .sourceOver, fraction: 0.9,
+                     respectFlipped: true, hints: nil)
         }
     }
 
@@ -1675,6 +1747,23 @@ final class NotchStripView: NSView {
     }
 
     // MARK: Mouse
+
+    // MARK: Dragging destination — files aimed at the housing land on the shelf
+
+    func registerDropTypes() {
+        registerForDraggedTypes([.fileURL, .URL, .png, .tiff, .rtf, .string])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        onDragEnter?()
+        return .copy
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
+    override func draggingExited(_ sender: NSDraggingInfo?) { onDragLeave?() }
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { true }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        (onDropPasteboard?(sender.draggingPasteboard) ?? 0) > 0
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()

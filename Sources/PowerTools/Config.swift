@@ -389,8 +389,8 @@ struct Config: Codable {
     /// Notch modules — panels the notch hosts, as opposed to sources that
     /// publish into it. Each can be switched off; the ⋯ mark disappears when
     /// none are on.
-    static let defaultNotchModules = ["usage", "hotkeys", "snap", "clock", "calendar", "weather",
-                                      "system", "disk", "camera", "chat"]
+    static let defaultNotchModules = ["usage", "hotkeys", "snap", "clock", "calendar", "timers",
+                                      "weather", "system", "disk", "camera", "chat"]
     /// Defaults shipped before today's. A saved list equal to one of these
     /// predates a module rather than expressing a choice, so it is upgraded on
     /// load (see `init(from:)`) — every module shipped appends one entry here.
@@ -400,6 +400,8 @@ struct Config: Codable {
         ["usage", "hotkeys", "snap", "clock", "calendar", "weather", "disk", "chat"],  // pre-System
         ["usage", "hotkeys", "snap", "clock", "calendar", "weather",
          "system", "disk", "chat"],                                                    // pre-Camera
+        ["usage", "hotkeys", "snap", "clock", "calendar", "weather",
+         "system", "disk", "camera", "chat"],                                          // pre-Timers
     ]
     var notchModules: [String] = Config.defaultNotchModules
     /// The Shelf: a floating tray you drag files, text and images onto to park

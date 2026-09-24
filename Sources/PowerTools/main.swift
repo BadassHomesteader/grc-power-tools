@@ -1593,6 +1593,23 @@ case "camera-test":
         exit(fails == 0 ? 0 : 1)
     }
 
+case "notchtimers-preview":
+    // "running" plants a countdown so the bar and the controls render.
+    let out = args.count >= 2 ? args[1] : "notchtimers-preview.png"
+    MainActor.assumeIsolated {
+        if args.contains("running") { TimerCenter.shared.start(minutes: 25) }
+        let host = NotchPreviewPlate(frame: NSRect(x: 0, y: 0, width: 660, height: 190))
+        let v = TimersModuleView(frame: host.bounds)
+        host.addSubview(v)
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out) — timers 660x190")
+        }
+        TimerCenter.shared.reset()
+    }
+
 case "notchcamera-preview":
     // Renders the module's CHROME and its failure states — not the feed, which
     // exists only on glass. Pass live|denied|nodevice|asking.
@@ -1821,7 +1838,8 @@ case "notchstrip-preview":
         // One list of tiles for every shape that draws the module row.
         let tiles: [(glyph: String, symbol: String?, title: String)] = [
             ("⌨", "keyboard", "Hotkeys"), ("▦", "rectangle.split.2x2", "Snap"),
-            ("◷", "clock", "Clock"), ("▤", "calendar", "Calendar"), ("☀", "sun.max", "Weather"),
+            ("◷", "clock", "Clock"), ("▤", "calendar", "Calendar"), ("◵", "timer", "Timers"),
+            ("☀", "sun.max", "Weather"),
             ("◫", "terminal", "Agent Pad"), ("⊞", "square.grid.2x2", "Macro Pad"),
             ("⊟", "tray.and.arrow.down", "Shelf"), ("✦", "sparkles", "Ask"),
             ("◔", "gauge.medium", "Usage"), ("❖", "cpu", "System"),
@@ -2298,6 +2316,24 @@ case "notchstrip-live-test":
                   "13p4: …at the same height it has over a module")
         }
         strip.collapse(); pump(0.3)
+
+        // 13q: files aimed at the housing. The drag itself is a modal AppKit
+        // loop driven by the real mouse and cannot be simulated, but the two
+        // things that make it possible can: the view accepts the types, and a
+        // drag entering opens a panel big enough to aim at instead of leaving
+        // a 38pt sliver of camera housing.
+        do {
+            let v = NotchStripView()
+            v.registerDropTypes()
+            check(v.registeredDraggedTypes.contains(.fileURL),
+                  "13q: the notch accepts dragged files")
+            check(v.registeredDraggedTypes.contains(.string) && v.registeredDraggedTypes.contains(.png),
+                  "13q2: …and dragged text and images")
+            v.configure(groups: [[]], cards: [], listMode: false, field: field, dropPrompt: true)
+            check(abs(v.fittingSize.height - (field.notch.height + NotchStrip.dropRow)) < 0.5,
+                  "13q3: a drag opens a \(Int(NotchStrip.dropRow))pt target (\(Int(v.fittingSize.height))pt total)")
+            check(v.isMid, "13q4: …drawn as an expanded panel, not the Min pill")
+        }
 
         strip.openModule(0); pump(0.4)
         check(opened.contains("alpha"), "13e: opening a module builds its view")

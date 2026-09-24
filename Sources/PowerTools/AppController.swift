@@ -309,6 +309,32 @@ final class AppController {
         shelf.onVisibility = { [weak self] visible in
             self?.hotkey?.shelfVisible = visible
         }
+        // Files dragged at the camera housing land on the shelf, and the shelf
+        // comes out to show where they went — a drop with no visible result
+        // reads as a drop that failed.
+        TimerCenter.shared.onFinish = { [weak self] ran in
+            guard let self else { return }
+            let mins = Int((ran / 60).rounded())
+            self.overlay.showSuccess(mins > 0 ? "Timer done — \(mins) min" : "Timer done")
+            NSSound(named: "Glass")?.play()
+        }
+        notchStrip.onDrop = { [weak self] pb in
+            guard let self, self.config.shelf else { return 0 }
+            let added = self.shelfStore.ingest(pb)
+            if added > 0, !self.shelf.isVisible {
+                let screen = NSScreen.screens.first {
+                    NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
+                } ?? NSScreen.main
+                if let screen {
+                    self.shelf.store.cap = self.config.shelfMaxItems
+                    self.shelf.present(dark: self.config.appearance.isDark, screen: screen)
+                }
+            }
+            if added > 0 {
+                self.overlay.showSuccess(added == 1 ? "Shelved" : "Shelved \(added) items")
+            }
+            return added
+        }
         shelfStore.onReject = { [weak self] message in
             self?.overlay.showError(message)
         }
@@ -1306,6 +1332,9 @@ final class AppController {
             }),
             ("calendar", true, .init(id: "calendar", glyph: "▤", symbol: "calendar", title: "Calendar", height: 216) {
                 CalendarModuleView(frame: .zero)
+            }),
+            ("timers", true, .init(id: "timers", glyph: "◵", symbol: "timer", title: "Timers", height: 190) {
+                TimersModuleView(frame: .zero)
             }),
             ("weather", true, .init(id: "weather", glyph: "☀", symbol: "sun.max", title: "Weather", height: 270) { [weak self] in
                 WeatherModuleView(places: self?.config.weatherPlaces ?? [],
