@@ -350,7 +350,12 @@ struct Config: Codable {
     /// private MultitouchSupport framework; silently off when unavailable).
     var macroPadThreeFingerTap: Bool = true
     /// How many fingers the summon tap needs — 3 or 4.
-    var macroPadSummonFingers: Int = 3
+    var macroPadSummonFingers: Int = 4
+    /// The other tap: a ring of the pad's columns under the cursor. Four
+    /// fingers bring the board, three bring the ring — two gestures, two
+    /// shapes, both fire-once.
+    var macroRingFingers: Int = 3
+    var macroRing: Bool = true
 
     /// Agent Pad (hold hotkey + J): floating Claude Code session panel fed by
     /// hooks POSTing to a loopback server. Port changes need an app relaunch
@@ -528,6 +533,7 @@ struct Config: Codable {
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs, macroPadThreeFingerTap, macroPadSummonFingers
+        case macroRing, macroRingFingers
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, agentPadGrok, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case showInCaptures
@@ -603,7 +609,9 @@ struct Config: Codable {
         }
         macroPadStepDelayMs = field(.macroPadStepDelayMs, 350)
         macroPadThreeFingerTap = field(.macroPadThreeFingerTap, true)
-        macroPadSummonFingers = min(5, max(2, field(.macroPadSummonFingers, 3)))
+        macroPadSummonFingers = min(5, max(2, field(.macroPadSummonFingers, 4)))
+        macroRingFingers = min(5, max(2, field(.macroRingFingers, 3)))
+        macroRing = field(.macroRing, true)
         agentPad = field(.agentPad, true)
         agentPadPort = field(.agentPadPort, 8377)
         agentPadCodex = field(.agentPadCodex, true)

@@ -514,6 +514,34 @@ case "chat-preview":
         }
     }
 
+case "macroring-preview":
+    // The ring under the cursor. No args = the inner ring (the columns);
+    // "open=N" opens column N's buttons; "hover=N" highlights one.
+    let out = args.count >= 2 ? args[1] : "macroring-preview.png"
+    MainActor.assumeIsolated {
+        _ = NSApplication.shared
+        let moves = ["APS", "NJAW", "KYAW", "0_Actions", "MWS", "RFP"].map {
+            Config.MacroButton(title: $0, text: $0, pressReturn: true,
+                               menuPath: Config.MacroButton.moveMenuPath)
+        }
+        let acts = [("Delete", "delete"), ("Archive", "cmd+shift+m"), ("Flag", "cmd+shift+g")].map {
+            Config.MacroButton(title: $0.0, chord: $0.1, group: "Actions")
+        }
+        let v = MacroRingView(appName: "Outlook", buttons: moves + acts, moveSearch: true)
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        if let openArg = args.first(where: { $0.hasPrefix("open=") }),
+           let g = Int(openArg.dropFirst(5)) {
+            let hoverArg = args.first { $0.hasPrefix("hover=") }
+            v.previewOpen(group: g, hover: hoverArg.flatMap { Int($0.dropFirst(6)) })
+        }
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out) — macro ring \(Int(v.bounds.width))x\(Int(v.bounds.height))")
+        }
+    }
+
 case "macropad-preview":
     // Offscreen render of the macro pad for design checks (sample profile,
     // second button shown as a keyword-suggested match). Flags: "light",
@@ -1243,7 +1271,7 @@ case "trackpad-tap-test":
     print("AXIsProcessTrusted: \(AXIsProcessTrusted())  MultitouchSupport: \(probe.available ? "loaded" : "MISSING")  devices: \(probe.devices)")
     let detector = TrackpadTapDetector()
     detector.onContactChange = { n in print("\(TapProbe.stamp())  contacts=\(n)") }
-    detector.onTap = { print("\(TapProbe.stamp())  TAP (three-finger)") }
+    detector.onTap = { fingers in print("\(TapProbe.stamp())  TAP (\(fingers)-finger)") }
     detector.update(enabled: true)
     let probeMask: CGEventMask =
         (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.leftMouseUp.rawValue)

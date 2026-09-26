@@ -46,7 +46,10 @@ final class HotkeyMonitor {
         case activityMonitor              // ⌃⇧⎋ — open Activity Monitor (Task Manager)
         case macroPad                     // hold + B — toggle the per-app macro pad
         case macroPadDigit(Int)           // hold + 1…9/0 while the pad is open — fire that button
-        case macroPadSummon               // hold + three-finger tap — the pad beside the cursor
+        /// hold + a multi-finger tap — the surface beside the cursor. The
+        /// count rides along: three fingers and four fingers are different
+        /// gestures asking for different shapes.
+        case macroPadSummon(fingers: Int)
         case macroPadSummonClose          // leader-held Esc while a summoned pad is up — dismiss it
         case agentPad                     // hold + J — toggle the Claude Code session pad
         case cheatSheet                   // hold + Q — toggle the hotkey cheat sheet
@@ -178,10 +181,10 @@ final class HotkeyMonitor {
     /// same — so the leader release ends quietly instead of dictating. If the
     /// release beats this write, the controller's summon path calls
     /// interruptDictation() and the stray recording is dropped; nothing wedges.
-    func trackpadThreeFingerTap() {
+    func trackpadThreeFingerTap(fingers: Int = 3) {
         guard held, macroPadSummonEnabled, !interrupted else { return }
         windowMode = true
-        dispatch(.macroPadSummon)
+        dispatch(.macroPadSummon(fingers: fingers))
     }
 
     private static let kVK_Function: Int64 = 63

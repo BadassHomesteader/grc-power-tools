@@ -33,7 +33,7 @@ final class AppController {
                             dark: config.appearance.isDark)
             hotkey?.powerRingEnabled = config.powerRing
             hotkey?.macroPadSummonEnabled = config.macroPad && config.macroPadThreeFingerTap
-            trackpadTap.setTapFingers(config.macroPadSummonFingers)
+            trackpadTap.setTapCounts([config.macroPadSummonFingers, config.macroRingFingers])
             trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
             if !config.agentPadCodex { claudeRegistry.setExternal(kind: "codex", []) }
             if !config.agentPadCursor { claudeRegistry.setExternal(kind: "cursor", []) }
@@ -60,6 +60,7 @@ final class AppController {
     private let readAloud = ReadAloud()
     private let grabAndMove = GrabAndMove()
     private let macroPad = MacroPad()
+    private let macroRing = MacroRing()
     /// Session-only by design: quitting empties the shelf (see Shelf.swift).
     let shelfStore = ShelfStore()
     lazy var shelf = ShelfPad(store: shelfStore)
@@ -237,11 +238,20 @@ final class AppController {
             case .macroPad:
                 self.toggleMacroPad()
             case .macroPadDigit(let idx):
-                self.fireMacroPadDigit(idx)
-            case .macroPadSummon:
-                self.summonMacroPad()
+                if self.macroRing.isVisible { self.macroRing.fireDigit(idx) }
+                else { self.fireMacroPadDigit(idx) }
+            case .macroPadSummon(let fingers):
+                // Four fingers bring the board, three bring the ring — the
+                // same fire-once gesture in two shapes.
+                if self.config.macroRing, fingers == self.config.macroRingFingers,
+                   fingers != self.config.macroPadSummonFingers {
+                    self.summonMacroRing()
+                } else {
+                    self.summonMacroPad()
+                }
             case .macroPadSummonClose:
-                self.macroPad.endSummon()
+                if self.macroRing.isVisible { self.macroRing.dismiss() }
+                else { self.macroPad.endSummon() }
             case .agentPad:
                 self.toggleAgentPad()
             case .cheatSheet:
@@ -351,8 +361,8 @@ final class AppController {
         // The three-finger tap lands on the multitouch thread; the monitor's
         // entry point is built for that (reads `held`, dispatches to main
         // itself) — no actor hop, so the monitor is captured directly.
-        trackpadTap.setTapFingers(config.macroPadSummonFingers)
-        trackpadTap.onTap = { monitor.trackpadThreeFingerTap() }
+        trackpadTap.setTapCounts([config.macroPadSummonFingers, config.macroRingFingers])
+        trackpadTap.onTap = { fingers in monitor.trackpadThreeFingerTap(fingers: fingers) }
         trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
@@ -967,6 +977,42 @@ final class AppController {
     /// hold + three-finger tap on the trackpad: the pad beside the cursor for
     /// ONE macro. Hidden → opens there; docked → moves there; already summoned
     /// → the summon ends (back to its berth, or away if it was closed).
+    /// hold + three-finger tap: the pad's columns as a dial under the cursor.
+    func summonMacroRing() {
+        interruptDictation()
+        guard config.macroPad else {
+            overlay.showError("Macro Pad is off — enable it in Settings ▸ Macro Pad")
+            return
+        }
+        if macroRing.isVisible { macroRing.dismiss(); return }
+        // The profile of whatever is in front, resolved the way the pad does.
+        let app = NSWorkspace.shared.frontmostApplication
+        let bundleID = (app?.bundleIdentifier == "com.grc.whisper" ? nil : app?.bundleIdentifier) ?? ""
+        let appLabel = (app?.bundleIdentifier == "com.grc.whisper" ? nil : app?.localizedName) ?? "No app"
+        let buttons = config.macroPadProfiles.first { $0.bundleID == bundleID }?.buttons ?? []
+        guard !buttons.isEmpty else {
+            overlay.showError("No macros for \(appLabel) — add them in Settings ▸ Macro Pad")
+            return
+        }
+        let mouse = NSEvent.mouseLocation
+        macroRing.onAction = { [weak self] button in
+            self?.runMacroButton(button, targetBundleID: bundleID)
+        }
+        // The Move column is a search box; a ring cannot hold one, so it hands
+        // straight over to the board at the same spot.
+        macroRing.onWantsBoard = { [weak self] in self?.summonMacroPad() }
+        macroRing.onVisibility = { [weak self] visible in
+            guard let self else { return }
+            self.hotkey?.macroPadSummoned = visible
+            // The tap only swallows digits it has buttons for; while the ring
+            // is up, the biggest column decides how many that is.
+            let widest = PadColumns.columns(for: buttons).columns.map(\.indices.count).max() ?? 0
+            self.hotkey?.macroPadButtonCount = visible ? widest : 0
+        }
+        macroRing.present(appName: appLabel, buttons: buttons,
+                          moveSearch: PadColumns.columns(for: buttons).moveSearch, at: mouse)
+    }
+
     func summonMacroPad() {
         interruptDictation()
         if macroPad.isVisible {

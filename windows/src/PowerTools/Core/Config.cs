@@ -108,6 +108,8 @@ public sealed class Config
     public bool RestorePads = true;
     // Shelf: Mac-only behaviour today, but the schema is shared, so the keys are
     // declared, parsed and written back here rather than being dropped on save.
+    public bool MacroRing = true;
+    public int MacroRingFingers = 3;
     public bool Shelf = true;
     public int ShelfMaxItems = 40;
     public bool ShelfDragMove = false;
@@ -244,6 +246,8 @@ public sealed class Config
         c.AgentPadCursor = Bool(root, "agentPadCursor", true);
         c.AgentPadGrok = Bool(root, "agentPadGrok", true);
         c.RestorePads = Bool(root, "restorePads", true);
+        c.MacroRing = Bool(root, "macroRing", true);
+        c.MacroRingFingers = Int(root, "macroRingFingers", 3);
         c.Shelf = Bool(root, "shelf", true);
         c.ShelfMaxItems = Int(root, "shelfMaxItems", 40);
         c.ShelfDragMove = Bool(root, "shelfDragMove", false);
@@ -340,6 +344,8 @@ public sealed class Config
             ["agentPadCursor"] = AgentPadCursor,
             ["agentPadGrok"] = AgentPadGrok,
             ["restorePads"] = RestorePads,
+            ["macroRing"] = MacroRing,
+            ["macroRingFingers"] = MacroRingFingers,
             ["shelf"] = Shelf,
             ["shelfMaxItems"] = ShelfMaxItems,
             ["shelfDragMove"] = ShelfDragMove,

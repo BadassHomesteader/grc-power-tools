@@ -66,8 +66,10 @@ final class TrackpadTapDetector {
     /// True when the private framework resolved (not whether a trackpad exists).
     var available: Bool { Self.fns != nil }
 
-    /// Fired on the multitouch thread when a three-finger tap completes.
-    var onTap: (() -> Void)?
+    /// Fired on the multitouch thread when a tap completes, carrying HOW MANY
+    /// fingers made it — three and four now mean different things (ring vs
+    /// board), so the count has to survive the trip.
+    var onTap: ((Int) -> Void)?
     /// Fired on the multitouch thread on every contact-count transition
     /// (0/1/2/3/4+); diagnostics only (the CLI probe).
     var onContactChange: ((Int) -> Void)?
@@ -94,10 +96,20 @@ final class TrackpadTapDetector {
     private var tapSince: Double = 0
     private var lastFire: Double = -1
     private var lastCount: Int32 = -1
-    /// How many fingers make the tap (3 or 4). Set from the main thread, read
-    /// on the MT thread — both under `lock`.
-    private var tapFingers: Int32 = 3
-    func setTapFingers(_ n: Int) { lock.lock(); tapFingers = Int32(max(2, min(5, n))); lock.unlock() }
+    /// Which finger counts count as a tap. More than one is the point: a
+    /// three-finger tap and a four-finger tap are separate gestures now.
+    /// Set from the main thread, read on the MT thread — both under `lock`.
+    private var tapCounts: Set<Int32> = [3]
+    /// The most fingers seen during the current tap; a four-finger tap passes
+    /// through three on the way down, so the PEAK is what identifies it.
+    private var tapPeak: Int32 = 0
+    func setTapFingers(_ n: Int) { setTapCounts([n]) }
+    func setTapCounts(_ counts: Set<Int>) {
+        lock.lock()
+        tapCounts = Set(counts.map { Int32(max(2, min(5, $0))) })
+        if tapCounts.isEmpty { tapCounts = [3] }
+        lock.unlock()
+    }
 
     /// Framework present + device count, without starting anything (Doctor / CLI).
     static func probe() -> (available: Bool, devices: Int) {
@@ -184,31 +196,38 @@ final class TrackpadTapDetector {
         }
 
         var fire = false
+        var fired: Int32 = 0
         lock.lock()
-        let target = tapFingers
+        let accepted = tapCounts
+        let ceiling = accepted.max() ?? 3
         let changed = count != lastCount
         lastCount = count
-        if count > target {
+        if count > ceiling {
             tooMany = true
-        } else if count == target {
+        } else if accepted.contains(count) {
             if !tapActive, !tooMany {
                 tapActive = true
                 tapSince = timestamp
             }
+            // Four fingers land through three: keep the high-water mark, since
+            // that is what says which gesture this was.
+            if count > tapPeak { tapPeak = count }
         } else if count == 0 {
-            if tapActive, !tooMany,
+            if tapActive, !tooMany, tapPeak > 0,
                timestamp - tapSince <= tapWindow,
                lastFire < 0 || timestamp - lastFire >= cooldown {
                 lastFire = timestamp
                 fire = true
+                fired = tapPeak
             }
             tapActive = false
             tooMany = false
+            tapPeak = 0
         }
         lock.unlock()
 
         if changed { onContactChange?(Int(count)) }
-        if fire { onTap?() }
+        if fire { onTap?(Int(fired)) }
     }
 }
 
