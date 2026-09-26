@@ -534,6 +534,8 @@ case "macropad-preview":
             : ["Invoices", "Projects", "Receipts", "Travel", "Newsletters", "Archive"]
                 .map { Config.MacroButton(title: $0, chord: "cmd+shift+m", text: $0, pressReturn: true) }
         let v = MacroPadView(dark: dark)
+        // "summon" renders the fire-once shape: no window controls, no chord.
+        v.chromeless = args.contains("summon")
         v.configure(appName: "Microsoft Outlook", buttons: buttons, dark: dark,
                     hotkeyName: "Option + Shift", mini: mini)
         v.frame = NSRect(origin: .zero, size: v.fittingSize)

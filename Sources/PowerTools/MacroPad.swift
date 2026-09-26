@@ -482,6 +482,8 @@ final class MacroPad {
         // Summoned = the plain full pad, never the strip.
         let summoned = summonPoint != nil
         let wasEditing = view.isSearchEditing
+        // Summoned = fire-once at the cursor, so it wears no window controls.
+        view.chromeless = summoned
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
                        buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName,
                        mini: !summoned && miniActive,
@@ -750,7 +752,7 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
     private static let btnH: CGFloat = 30
     private static let gap: CGFloat = 5
     private static let emptyH: CGFloat = 52
-    private static let footerH: CGFloat = 17
+    private static let footerH: CGFloat = 4   // the chord moved into the header
     private static let sq: CGFloat = 14      // traffic-light square
     private static let sqGap: CGFloat = 4
     private static let miniPad: CGFloat = 7
@@ -759,6 +761,11 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
     private static let colGap: CGFloat = 8
     private static let colHeaderH: CGFloat = 16
     private static let searchH: CGFloat = 24
+
+    /// True while the pad is summoned at the cursor: it fires once and leaves,
+    /// so the minimise / rescan / close controls and the footer hint have
+    /// nothing to do on it.
+    var chromeless = false
 
     init(dark: Bool) {
         self.dark = dark
@@ -896,14 +903,52 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
 
 
 
-    // Same palette as the other panels so everything feels like one system.
-    private var bg: NSColor {
-        dark ? NSColor(srgbRed: 0.13, green: 0.13, blue: 0.15, alpha: 0.98)
-             : NSColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 0.98)
-    }
-    private var fg: NSColor { dark ? .white : .black }
-    private var dim: NSColor { (dark ? NSColor.white : .black).withAlphaComponent(0.5) }
+    // The notch's palette, in every appearance. The pad, the ring and the notch
+    // are one surface in three shapes, and the notch is dark by construction —
+    // so the pad follows it rather than the system theme. (`dark` is still
+    // carried for the mini strip's contrast and for callers that pass it.)
+    private var bg: NSColor { NSColor(white: 0.04, alpha: 0.97) }
+    private var fg: NSColor { .white }
+    private var dim: NSColor { NSColor.white.withAlphaComponent(0.55) }
+    private var faint: NSColor { NSColor.white.withAlphaComponent(0.10) }
     private var accent: NSColor { NSColor(srgbRed: 0.4, green: 0.45, blue: 1, alpha: 1) }
+
+    /// The SF Symbol for a button, worked out from what it does: a Move menu
+    /// path is a folder, and the handful of standard mail actions have obvious
+    /// symbols. Anything unrecognised gets a neutral mark rather than a guess.
+    static func symbolName(for b: Config.MacroButton) -> String {
+        switch b.title.lowercased() {
+        case let t where t.contains("delete") || t.contains("trash"): return "trash"
+        case let t where t.contains("archive"): return "archivebox"
+        case let t where t.contains("flag"): return "flag"
+        case let t where t.contains("reply"): return "arrowshape.turn.up.left"
+        case let t where t.contains("forward"): return "arrowshape.turn.up.right"
+        case let t where t.contains("mute") || t.contains("unmute"): return "mic.slash"
+        case let t where t.contains("share"): return "square.and.arrow.up"
+        case let t where t.contains("accept"): return "checkmark"
+        case let t where t.contains("reject"): return "xmark"
+        case let t where t.contains("prev"): return "chevron.up"
+        case let t where t.contains("next"): return "chevron.down"
+        // "session", not "new" — a bare contains("new") turns Newsletters into
+        // a plus sign.
+        case let t where t.contains("session"): return "plus.square"
+        case let t where t.contains("focus"): return "scope"
+        // Anything else that files the message is a folder; the rest get a
+        // neutral mark rather than a guess.
+        default: return b.menuPath == Config.MacroButton.moveMenuPath ? "folder" : "square.grid.2x2"
+        }
+    }
+
+    private func drawSymbol(_ name: String, in r: NSRect, alpha: CGFloat) {
+        guard let img = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return }
+        let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+        let icon = img.withSymbolConfiguration(cfg) ?? img
+        icon.draw(in: NSRect(x: r.midX - icon.size.width / 2, y: r.midY - icon.size.height / 2,
+                             width: icon.size.width, height: icon.size.height),
+                  from: .zero, operation: .sourceOver, fraction: alpha,
+                  respectFlipped: true, hints: nil)
+    }
 
     private func buttonRect(_ i: Int) -> NSRect {
         if multi, let c = cell[i] {
@@ -955,19 +1000,35 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
         }
 
         (appName as NSString).draw(
-            at: NSPoint(x: Self.pad + 4, y: Self.pad + 3),
-            withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: fg])
+            at: NSPoint(x: Self.pad + 4, y: Self.pad + 4),
+            withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: dim])
+        // The chord rides in the header instead of a footer — the notch puts
+        // what a surface is for in the band, not under it.
+        if !chromeless {
+            let chord = "\(hotkeyName.isEmpty ? "hotkey" : hotkeyName) + digit" as NSString
+            let ca: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10),
+                                                     .foregroundColor: dim.withAlphaComponent(0.45)]
+            chord.draw(at: NSPoint(x: minimizeRect.minX - 8 - chord.size(withAttributes: ca).width,
+                                   y: Self.pad + 5), withAttributes: ca)
+        }
+        faint.setFill()
+        NSRect(x: Self.pad + 4, y: Self.pad + Self.headerH - 5,
+               width: bounds.width - (Self.pad + 4) * 2, height: 1).fill()
 
-        let glyphAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: dim.withAlphaComponent(scanning ? 0.25 : 0.5),
-        ]
-        ("↻" as NSString).draw(in: rescanRect.offsetBy(dx: 3, dy: 1), withAttributes: glyphAttrs)
-        ("✕" as NSString).draw(in: closeRect.offsetBy(dx: 3, dy: 1), withAttributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
-        // – collapses to traffic lights; □ (while peeking) pins full mode back.
-        ((peeking ? "□" : "–") as NSString).draw(in: minimizeRect.offsetBy(dx: 4, dy: 1), withAttributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
+        // A summoned pad has nowhere to go and nothing to rescan: it fires once
+        // and leaves, so it wears no window controls.
+        if !chromeless {
+            let glyphAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: dim.withAlphaComponent(scanning ? 0.25 : 0.5),
+            ]
+            ("↻" as NSString).draw(in: rescanRect.offsetBy(dx: 3, dy: 1), withAttributes: glyphAttrs)
+            ("✕" as NSString).draw(in: closeRect.offsetBy(dx: 3, dy: 1), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
+            // – collapses to traffic lights; □ (while peeking) pins full mode back.
+            ((peeking ? "□" : "–") as NSString).draw(in: minimizeRect.offsetBy(dx: 4, dy: 1), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: dim])
+        }
 
         // Column titles (cheat-sheet section style) — only when laid out side by side.
         if multi {
@@ -1017,15 +1078,25 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
                 path.lineWidth = 1.5
                 path.stroke()
             }
-            // Digit badge for the first ten buttons (hold hotkey + digit fires it).
-            var titleX = r.minX + 10
+            // Icon first, then the name, with the digit as a chip on the right
+            // — the notch's tile grammar, laid out in a row.
+            drawSymbol(Self.symbolName(for: btn),
+                       in: NSRect(x: r.minX + 6, y: r.minY, width: 22, height: r.height),
+                       alpha: isPressed ? 1 : 0.85)
+            let titleX = r.minX + 32
+            var titleRight = r.maxX - 10
             if i < 10 {
+                let chip = NSRect(x: r.maxX - 25, y: r.minY + 7, width: 17, height: 16)
+                (isPressed ? NSColor.white.withAlphaComponent(0.22) : faint).setFill()
+                NSBezierPath(roundedRect: chip, xRadius: 4, yRadius: 4).fill()
                 let digit = "\((i + 1) % 10)" as NSString
-                digit.draw(at: NSPoint(x: r.minX + 8, y: r.minY + 9), withAttributes: [
+                let da: [NSAttributedString.Key: Any] = [
                     .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold),
-                    .foregroundColor: isPressed ? NSColor.white.withAlphaComponent(0.85) : dim,
-                ])
-                titleX = r.minX + 22
+                    .foregroundColor: isPressed ? NSColor.white.withAlphaComponent(0.9) : dim,
+                ]
+                digit.draw(at: NSPoint(x: chip.midX - digit.size(withAttributes: da).width / 2,
+                                       y: chip.minY + 2), withAttributes: da)
+                titleRight = chip.minX - 6
             }
             let title = btn.title as NSString
             let attrs: [NSAttributedString.Key: Any] = [
@@ -1037,17 +1108,10 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
                     return p
                 }(),
             ]
-            title.draw(in: NSRect(x: titleX, y: r.minY + 7, width: r.maxX - 10 - titleX, height: 16), withAttributes: attrs)
+            title.draw(in: NSRect(x: titleX, y: r.minY + 7, width: max(10, titleRight - titleX), height: 16),
+                       withAttributes: attrs)
         }
 
-        // The digits are LEADER keys — without this line nobody guesses that.
-        let hint = "hold \(hotkeyName.isEmpty ? "hotkey" : hotkeyName) + digit · click also works" as NSString
-        let hintAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9), .foregroundColor: dim.withAlphaComponent(0.35),
-        ]
-        let hintSize = hint.size(withAttributes: hintAttrs)
-        hint.draw(at: NSPoint(x: bounds.midX - hintSize.width / 2, y: bounds.height - Self.pad - 12),
-                  withAttributes: hintAttrs)
     }
 
     /// Preview hook (macropad-preview CLI) — set state without live capture.
