@@ -558,6 +558,22 @@ case "macroring-test":
         let asBefore = atan2(high.y - 90 - v.bounds.midY, 0) > 0
         check("…and measuring from the panel centre would have said UP (the bug)", asBefore)
 
+        // Digits. The tap only swallows a digit when something is listening,
+        // and the ring had no flag of its own — macroPadVisible is the board's,
+        // so hold+digit fell through to the app and did nothing at all.
+        var live = -1
+        var fired: String?
+        v.onLevelChange = { live = $0 }
+        v.onPick = { fired = $0.title }
+        check("inner ring: no digits live (they belong to the app)", live == -1 || live == 0)
+        v.openForTest(2)                      // Favorites
+        check("opening Favorites arms 6 digits — got \(live)", live == 6)
+        v.fireDigit(2)
+        check("digit 3 fires the third folder — got \(fired ?? "nothing")", fired == "KYAW")
+        fired = nil
+        v.fireDigit(9)
+        check("a digit past the column fires nothing", fired == nil)
+
         print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
         exit(fails == 0 ? 0 : 1)
     }

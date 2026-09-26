@@ -108,6 +108,11 @@ final class HotkeyMonitor {
     var clipboardDrawerVisible = false
     /// Buttons in the pad's current profile — digits ≥ this pass through.
     var macroPadButtonCount = 0
+    /// The ring, separately from the board — both can be on screen, and the
+    /// ring only has digits to offer once a column is OPEN, so its count is 0
+    /// on the inner ring and digits fall through to the app untouched.
+    var macroRingVisible = false
+    var macroRingButtonCount = 0
     /// Three-finger-tap summon: feature flag + "a summoned pad is up" mirror
     /// (same discipline). Both written from main; the tap itself arrives from
     /// the multitouch thread via `trackpadThreeFingerTap()`.
@@ -534,7 +539,9 @@ final class HotkeyMonitor {
             // exists); unmapped digits keep their normal meaning. Fires on
             // keydown so several emails can be filed in one hold — the runs
             // queue and flush when the leader lifts. Auto-repeat swallowed.
-            if macroPadVisible, let idx = Self.macroDigitIndex[keyCode], idx < macroPadButtonCount {
+            let digitLimit = macroRingVisible ? macroRingButtonCount : macroPadButtonCount
+            if macroPadVisible || macroRingVisible,
+               let idx = Self.macroDigitIndex[keyCode], idx < digitLimit {
                 windowMode = true
                 swallowedKeyUps.insert(keyCode)
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {

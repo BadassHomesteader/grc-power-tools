@@ -1004,10 +1004,12 @@ final class AppController {
         macroRing.onVisibility = { [weak self] visible in
             guard let self else { return }
             self.hotkey?.macroPadSummoned = visible
-            // The tap only swallows digits it has buttons for; while the ring
-            // is up, the biggest column decides how many that is.
-            let widest = PadColumns.columns(for: buttons).columns.map(\.indices.count).max() ?? 0
-            self.hotkey?.macroPadButtonCount = visible ? widest : 0
+            self.hotkey?.macroRingVisible = visible
+        }
+        // Digits are live only while a column is open — on the inner ring they
+        // belong to whatever app is in front.
+        macroRing.onDigitCount = { [weak self] count in
+            self?.hotkey?.macroRingButtonCount = count
         }
         macroRing.present(appName: appLabel, buttons: buttons,
                           moveSearch: PadColumns.columns(for: buttons).moveSearch, at: mouse)

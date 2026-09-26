@@ -23,6 +23,9 @@ import Cocoa
     /// hands off to the board at the same spot.
     var onWantsBoard: (() -> Void)?
     var onVisibility: ((Bool) -> Void)?
+    /// How many digits are live right now: 0 on the inner ring, the open
+    /// column's size once one is open.
+    var onDigitCount: ((Int) -> Void)?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -40,6 +43,7 @@ import Cocoa
             self.onWantsBoard?()
         }
         v.onClose = { [weak self] in self?.dismiss() }
+        v.onLevelChange = { [weak self] count in self?.onDigitCount?(count) }
 
         let size = v.fittingSize
         let screen = NSScreen.screens.first { NSMouseInRect(cursor, $0.frame, false) } ?? NSScreen.main
@@ -73,6 +77,7 @@ import Cocoa
         view = v
         win.orderFrontRegardless()
         onVisibility?(true)
+        onDigitCount?(0)          // the inner ring has nothing to fire yet
     }
 
     func dismiss() {
@@ -80,6 +85,7 @@ import Cocoa
         panel?.orderOut(nil)
         panel = nil
         view = nil
+        onDigitCount?(0)
         onVisibility?(false)
     }
 
@@ -95,6 +101,7 @@ final class MacroRingView: NSView {
     private let moveSearch: Bool
 
     var onPick: ((Config.MacroButton) -> Void)?
+    var onLevelChange: ((Int) -> Void)?
     var onPickBoard: (() -> Void)?
     var onClose: (() -> Void)?
 
@@ -359,6 +366,7 @@ final class MacroRingView: NSView {
         }
         openGroup = i
         hoveredOuter = nil
+        onLevelChange?(groups[i].buttons.count)
         needsDisplay = true
     }
 
@@ -366,8 +374,14 @@ final class MacroRingView: NSView {
         guard settled else { return }   // the tap's own click, arriving late
         let p = convert(event.locationInWindow, from: nil)
         if closeRect.contains(p) {
-            if openGroup != nil { openGroup = nil; hoveredOuter = nil; needsDisplay = true }
-            else { onClose?() }
+            if openGroup != nil {
+                openGroup = nil
+                hoveredOuter = nil
+                onLevelChange?(0)
+                needsDisplay = true
+            } else {
+                onClose?()
+            }
             return
         }
         if let g = openGroup {
@@ -385,6 +399,9 @@ final class MacroRingView: NSView {
         guard index < items.count else { return }
         onPick?(items[index])
     }
+
+    /// Test hook: open a column the way a flick would.
+    func openForTest(_ i: Int) { openInner(i) }
 
     /// Test hook: which sector a point aims at, and how many groups there are.
     func sectorForTest(_ p: NSPoint) -> Int? { sector(at: p, count: groups.count) }
