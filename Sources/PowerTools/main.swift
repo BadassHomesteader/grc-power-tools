@@ -514,6 +514,54 @@ case "chat-preview":
         }
     }
 
+case "macroring-test":
+    // The bug this exists for: the panel is clamped on screen, so its centre
+    // is NOT under the pointer. Summon near the top of the display and the
+    // pointer sits above the middle — the ring then read "up" before any flick
+    // and fired whatever lived there (Move, which opens the board). Aiming now
+    // measures from the pointer, so these hold wherever the panel had to sit.
+    MainActor.assumeIsolated {
+        _ = NSApplication.shared
+        var fails = 0
+        func check(_ name: String, _ ok: Bool) {
+            print("\(ok ? "PASS" : "FAIL") — \(name)")
+            if !ok { fails += 1 }
+        }
+        let moves = ["APS", "NJAW", "KYAW", "0_Actions", "MWS", "RFP"].map {
+            Config.MacroButton(title: $0, text: $0, pressReturn: true,
+                               menuPath: Config.MacroButton.moveMenuPath)
+        }
+        let acts = [("Delete", "delete"), ("Archive", "cmd+shift+m"), ("Flag", "cmd+shift+g")].map {
+            Config.MacroButton(title: $0.0, chord: $0.1, group: "Actions")
+        }
+        let v = MacroRingView(appName: "Outlook", buttons: moves + acts, moveSearch: true)
+        v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        check("sectors are Move · Actions · Favorites — got \(v.groupTitlesForTest)",
+              v.groupTitlesForTest == ["Move", "Actions", "Favorites"])
+
+        // Pointer in the middle: the plain case.
+        let mid = NSPoint(x: v.bounds.midX, y: v.bounds.midY)
+        v.hub = mid
+        check("down aims at Favorites", v.sectorForTest(NSPoint(x: mid.x, y: mid.y - 90)) == 2)
+        check("right aims at Actions", v.sectorForTest(NSPoint(x: mid.x + 90, y: mid.y)) == 1)
+        check("up aims at Move", v.sectorForTest(NSPoint(x: mid.x, y: mid.y + 90)) == 0)
+
+        // Pointer near the top of a panel that had to be clamped downward —
+        // the exact shape of the reported bug.
+        let high = NSPoint(x: v.bounds.midX, y: v.bounds.maxY - 60)
+        v.hub = high
+        check("clamped panel: down STILL aims at Favorites, not Move",
+              v.sectorForTest(NSPoint(x: high.x, y: high.y - 90)) == 2)
+        check("clamped panel: up still aims at Move",
+              v.sectorForTest(NSPoint(x: high.x, y: high.y + 40)) == 0)
+        // What the old code did: measure from the panel's middle instead.
+        let asBefore = atan2(high.y - 90 - v.bounds.midY, 0) > 0
+        check("…and measuring from the panel centre would have said UP (the bug)", asBefore)
+
+        print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
+        exit(fails == 0 ? 0 : 1)
+    }
+
 case "macroring-preview":
     // The ring under the cursor. No args = the inner ring (the columns);
     // "open=N" opens column N's buttons; "hover=N" highlights one.

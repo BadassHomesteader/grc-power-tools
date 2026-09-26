@@ -50,6 +50,13 @@ import Cocoa
         origin.x = min(max(origin.x, visible.minX + 8), visible.maxX - size.width - 8)
         origin.y = min(max(origin.y, visible.minY + 8), visible.maxY - size.height - 8)
         v.frame = NSRect(origin: .zero, size: size)
+        // THE DIAL IS DRAWN AROUND THE POINTER, NOT THE PANEL. Clamping a
+        // 520pt panel on screen moves its centre away from the cursor — summon
+        // near the top of the display and the pointer ends up ABOVE the middle,
+        // so the ring reads "up" before a flick happens and fires whatever
+        // sector lives there. Handing the cursor's position in view coordinates
+        // keeps the directions honest wherever the panel had to sit.
+        v.hub = NSPoint(x: cursor.x - origin.x, y: cursor.y - origin.y)
 
         let win = NSPanel(contentRect: NSRect(origin: origin, size: size),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -99,6 +106,12 @@ final class MacroRingView: NSView {
     private let bornAt = Date()
     private var settled: Bool { Date().timeIntervalSince(bornAt) > 0.35 }
 
+    /// Where the pointer was when the ring opened, in view coordinates — the
+    /// dial's real centre. Defaults to the middle for offscreen previews.
+    var hub: NSPoint? {
+        didSet { needsDisplay = true }
+    }
+
     private var openGroup: Int?
     private var hoveredInner: Int?
     private var hoveredOuter: Int?
@@ -141,7 +154,7 @@ final class MacroRingView: NSView {
     /// Nothing here ever takes key, so the first click has to act.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    private var centre: NSPoint { NSPoint(x: bounds.midX, y: bounds.midY) }
+    private var centre: NSPoint { hub ?? NSPoint(x: bounds.midX, y: bounds.midY) }
 
     /// Compass placement: up, right, down, left for the first four, then evenly
     /// around. Up-right-down is what three groups get, which is the whole
@@ -151,6 +164,28 @@ final class MacroRingView: NSView {
             return [CGFloat.pi / 2, 0, -CGFloat.pi / 2, CGFloat.pi][i]
         }
         return CGFloat.pi / 2 - (CGFloat(i) / CGFloat(n)) * 2 * .pi
+    }
+
+    /// The second level FANS OUT the way you flicked instead of becoming
+    /// another full circle. Flick down for Favorites and the folders spread
+    /// across the bottom, so the hand keeps going in the direction it already
+    /// started — a second ring asks you to come back to the middle and start
+    /// again, which is the opposite of what a flick wants.
+    private func fanAngles(count: Int, around parent: CGFloat) -> [CGFloat] {
+        guard count > 1 else { return [parent] }
+        let gap = min(0.44, 2.5 / CGFloat(count - 1))
+        let span = gap * CGFloat(count - 1)
+        // Laid left to right across the fan, so the digits read in order.
+        return (0..<count).map { parent - span / 2 + CGFloat($0) * gap }
+    }
+
+    /// Every seat angle for whatever level is showing — one source for drawing
+    /// and for aiming, so they cannot disagree.
+    private func levelAngles() -> [CGFloat] {
+        guard let g = openGroup, g < groups.count else {
+            return (0..<groups.count).map { angle($0, of: groups.count) }
+        }
+        return fanAngles(count: groups[g].buttons.count, around: angle(g, of: groups.count))
     }
 
     private func seat(_ angle: CGFloat, radius: CGFloat) -> NSRect {
@@ -180,22 +215,24 @@ final class MacroRingView: NSView {
         if openGroup == nil {
             drawCentred(String(appName.prefix(12)), at: NSPoint(x: centre.x, y: centre.y - 5),
                         size: 10, weight: .semibold, color: dim)
-        } else {
-            drawCentred("✕", at: NSPoint(x: centre.x, y: centre.y - 8), size: 15, color: dim)
+        } else if let g = openGroup, g < groups.count {
+            // Where you are, and the way back — one target instead of a ghost
+            // seat out on the spoke that nothing could see.
+            drawCentred("↩", at: NSPoint(x: centre.x, y: centre.y + 2), size: 13, color: dim)
+            drawCentred(groups[g].title.uppercased(), at: NSPoint(x: centre.x, y: centre.y - 15),
+                        size: 8, weight: .bold, color: dim.withAlphaComponent(0.7))
         }
 
         if let g = openGroup, g < groups.count {
-            // Second level: this column's buttons, around the dial.
+            // The column you flicked into, fanned out that same way.
             let items = groups[g].buttons
             for (i, b) in items.enumerated() {
-                let r = seat(angle(i, of: max(items.count, 1)) , radius: Self.outerRadius)
+                let r = seat(levelAngles()[i], radius: Self.outerRadius)
                 outerRects.append(r)
                 drawSeat(r, symbol: MacroPadView.symbolName(for: b), label: b.title,
                          digit: i < 10 ? (i + 1) % 10 : nil,
                          active: hoveredOuter == i, outward: true)
             }
-            drawCentred(groups[g].title.uppercased(), at: NSPoint(x: centre.x, y: centre.y + 26),
-                        size: 9, weight: .bold, color: dim.withAlphaComponent(0.5))
             return
         }
 
@@ -295,17 +332,21 @@ final class MacroRingView: NSView {
     /// Which seat a point is pointing at, by angle — not by hit-testing the
     /// circle, so the gap between seats still aims somewhere.
     private func sector(at p: NSPoint, count: Int) -> Int? {
-        guard count > 0, reach(p) > 26 else { return nil }
+        let targets = levelAngles()
+        guard count > 0, !targets.isEmpty, reach(p) > 26 else { return nil }
         let a = atan2(p.y - centre.y, p.x - centre.x)
         var best: (i: Int, d: CGFloat)?
-        for i in 0..<count {
-            let target = angle(i, of: count)
+        for (i, target) in targets.enumerated() where i < count {
             var d = abs(atan2(sin(a - target), cos(a - target)))
             if d > .pi { d = 2 * .pi - d }
             if best == nil || d < best!.d { best = (i, d) }
         }
-        // Only claim the flick if it is actually near that spoke.
-        guard let best, best.d < (.pi / CGFloat(max(count, 1))) + 0.15 else { return nil }
+        // Claim the flick only if it really is near that spoke. A fan's seats
+        // sit closer together than a ring's, so the tolerance follows the gap.
+        let spread: CGFloat = targets.count > 1
+            ? abs(atan2(sin(targets[1] - targets[0]), cos(targets[1] - targets[0]))) / 2 + 0.12
+            : .pi
+        guard let best, best.d < spread else { return nil }
         return best.i
     }
 
@@ -344,6 +385,10 @@ final class MacroRingView: NSView {
         guard index < items.count else { return }
         onPick?(items[index])
     }
+
+    /// Test hook: which sector a point aims at, and how many groups there are.
+    func sectorForTest(_ p: NSPoint) -> Int? { sector(at: p, count: groups.count) }
+    var groupTitlesForTest: [String] { groups.map(\.title) }
 
     /// Preview hook: render the second level without a trackpad.
     func previewOpen(group: Int, hover: Int?) {
