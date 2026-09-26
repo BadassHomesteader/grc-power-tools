@@ -2524,6 +2524,27 @@ case "notchstrip-live-test":
             view.mouseExited(with: outEv); pump(0.4)
             check(strip.mode == .min, "15c2: a hover-opened list folds back on leave")
 
+            // 15c3-4: hover swaps BOTH ways. The agent list used to be a
+            // one-way door — hoverModule's arm closures only acted on .picker
+            // and .module, so with the list up, hovering any other tile fell
+            // through and nothing moved. Every other module could hover-swap.
+            // 15c2 left the notch at Min, so the row has to come back before a
+            // tile rect means anything.
+            strip.openPicker(); pump(0.3)
+            let lt2 = view.tileRect(strip.moduleCount - 1)
+            moveTo(NSPoint(x: lt2.midX, y: lt2.midY)); pump(0.45)
+            // Once a panel is open those icons are the TAB row, so the rects
+            // come from tabRect and the hover arrives via onTabHover.
+            let tab0 = view.tabRect(0)
+            moveTo(NSPoint(x: tab0.midX, y: tab0.midY)); pump(0.5)
+            check({ if case .module(0) = strip.mode { return true } else { return false } }(),
+                  "15c3: hovering a module tab FROM the list opens that module")
+            let listTab = view.tabRect(strip.moduleCount - 1)
+            moveTo(NSPoint(x: listTab.midX, y: listTab.midY)); pump(0.5)
+            check({ if case .list(0) = strip.mode { return true } else { return false } }(),
+                  "15c4: …and hovering the list tab from a module goes back to the list")
+            view.mouseExited(with: outEv); pump(0.4)
+
             // 15d: nothing running. The launcher alone keeps the notch up — its
             // module row is a menu, and a menu that vanishes whenever no agent
             // is running is not one you can use.

@@ -755,7 +755,11 @@ final class NotchStrip {
             armHover(0.15) { [weak self] in
                 guard let self else { return }
                 switch self.mode {
-                case .picker, .module: self.showList(si, pinned: false)
+                // .list belongs here too: hovering from one open panel to
+                // another is how every tile behaves, and leaving it out made
+                // the agent list a one-way door — once it was up, hovering the
+                // other tiles did nothing at all.
+                case .picker, .module, .list: self.showList(si, pinned: false)
                 default: break
                 }
             }
@@ -770,9 +774,11 @@ final class NotchStrip {
         armHover(0.15) { [weak self] in
             guard let self else { return }
             switch self.mode {
-            case .picker, .module:
+            case .picker, .module, .list:
                 // A keyboard module (Ask) stays open so you can type/dictate into
                 // it; the rest are transient and fold back when you hover away.
+                // .list is in here so you can hover straight out of the agent
+                // list into any other module, the same as from a module.
                 self.openModule(i, pinned: self.modules[i].wantsKeyboard || self.modules[i].clickOnly)
             default: break
             }
