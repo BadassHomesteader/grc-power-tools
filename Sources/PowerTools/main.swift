@@ -61,7 +61,8 @@ func usage() -> Never {
       grc-whisper transcribe <file> [--engine apple|parakeet]   transcribe an audio file (engine test)
       grc-whisper polish <text>       run the cleanup pipeline on text (LLM test)
       grc-whisper doctor              check permissions and on-device models
-      grc-whisper trackpad-tap-test [seconds]   probe the three-finger-tap detector + mouse events
+      grc-whisper trackpad-tap-test [seconds] [fingers...]   probe the tap detector + mouse events
+                                      e.g. `trackpad-tap-test 30 3 4 5` to see which counts land
       grc-whisper dict add <term> [misheard,variants]
       grc-whisper dict rm <term>
       grc-whisper dict list
@@ -1330,12 +1331,44 @@ case "trackpad-tap-test":
     // down) — so we can see whether Three-Finger Drag turns a quick tap into
     // a synthetic click, and whether that click lands before or after TAP.
     let seconds = args.count >= 2 ? Double(args[1]) ?? 20 : 20
+    // Trailing digits pick which contact counts count as a tap, so a bare
+    // four- or five-finger trigger can be tried against the system's own
+    // four-finger swipes / pinches before anything is wired to it.
+    let probeFingers = Set(args.dropFirst(2).compactMap { Int($0) }.filter { (2...5).contains($0) })
     TapProbe.t0 = CFAbsoluteTimeGetCurrent()
     let probe = TrackpadTapDetector.probe()
-    print("AXIsProcessTrusted: \(AXIsProcessTrusted())  MultitouchSupport: \(probe.available ? "loaded" : "MISSING")  devices: \(probe.devices)")
+    // Input Monitoring, not Accessibility, is what gates the multitouch
+    // contact stream — and running the bundled binary FROM A TERMINAL
+    // attributes the grant to the terminal, not to Power Tools, so this can
+    // read false here while the real app works fine.
+    print("AXIsProcessTrusted: \(AXIsProcessTrusted())  InputMonitoring: \(CGPreflightListenEventAccess())  MultitouchSupport: \(probe.available ? "loaded" : "MISSING")  devices: \(probe.devices)")
+    // The menu-bar app registers the SAME MTDevice. Two live contact-frame
+    // callbacks on one device is the first thing to rule out when the probe
+    // sees nothing at all, so say so up front rather than let it look like a
+    // detector bug.
+    let others = NSRunningApplication.runningApplications(withBundleIdentifier: "com.grc.whisper")
+        .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+    if !others.isEmpty {
+        print("WARNING: Power Tools is already running (pid \(others.map { String($0.processIdentifier) }.joined(separator: ","))) — it holds the same multitouch device. Quit it if no frames appear below.")
+    }
     let detector = TrackpadTapDetector()
+    // Raw frames, before the hover filter: this is what separates "the pad
+    // never reported 5 contacts" from "we filtered them out".
+    var rawFrames = 0
+    var lastRaw: (Int32, Int32) = (-1, -1)
+    detector.onRawFrame = { n, state in
+        rawFrames += 1
+        guard (n, state) != lastRaw else { return }
+        lastRaw = (n, state)
+        let note = (n == 0 || (3...5).contains(state)) ? "" : "  <- filtered out (not touching)"
+        print("\(TapProbe.stamp())  raw numTouches=\(n) state=\(state)\(note)")
+    }
     detector.onContactChange = { n in print("\(TapProbe.stamp())  contacts=\(n)") }
-    detector.onTap = { fingers in print("\(TapProbe.stamp())  TAP (\(fingers)-finger)") }
+    detector.onTap = { fingers, speed in
+        let verdict = speed <= HotkeyMonitor.bareSummonMaxSpeed ? "tap" : "SWIPE — a bare gesture would reject this"
+        print("\(TapProbe.stamp())  TAP (\(fingers)-finger)  peak speed \(String(format: "%.2f", speed)) → \(verdict)")
+    }
+    if !probeFingers.isEmpty { detector.setTapCounts(probeFingers) }
     detector.update(enabled: true)
     let probeMask: CGEventMask =
         (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.leftMouseUp.rawValue)
@@ -1356,11 +1389,16 @@ case "trackpad-tap-test":
     } else {
         print("mouse tap unavailable (this process isn't Accessibility-trusted) — contact log only")
     }
-    print("listening \(Int(seconds))s — do: 3× three-finger tap · 3× with the hotkey held · a three-finger window drag")
+    let watching = probeFingers.isEmpty ? "3" : probeFingers.sorted().map(String.init).joined(separator: "/")
+    print("listening \(Int(seconds))s, tap counts \(watching) — do: taps · a Mission Control swipe · a Launchpad pinch · a Show Desktop spread")
     RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     detector.update(enabled: false)
     RunLoop.main.run(until: Date().addingTimeInterval(0.2))
-    print("done")
+    if rawFrames == 0 {
+        print("done — NO multitouch frames arrived at all. The device is delivering to someone else (quit Power Tools and rerun) or Input Monitoring is not granted to this terminal.")
+    } else {
+        print("done — \(rawFrames) raw frames seen")
+    }
 
 case "dockoverlay-preview":
     // Offscreen render of the drag-time dock-target overlay (fake 1440x900

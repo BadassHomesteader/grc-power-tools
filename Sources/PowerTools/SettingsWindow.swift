@@ -88,6 +88,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let macroPadCheck = NSButton(checkboxWithTitle: "Macro Pad — floating per-app buttons (hold hotkey + B, or menu bar ▸ Macro Pad)", target: nil, action: nil)
     private let macroSummonCheck = NSButton(checkboxWithTitle: "Summon to the cursor for one macro — hold hotkey + a trackpad tap", target: nil, action: nil)
     private let macroSummonFingers = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let macroBareCheck = NSButton(checkboxWithTitle: "…or with no hotkey at all — a bare trackpad tap", target: nil, action: nil)
+    private let macroBareFingers = NSPopUpButton(frame: .zero, pullsDown: false)
     private let macroFoldersView = NSTextView()
     private let macroPadStatus = NSTextField(labelWithString: " ")
 
@@ -685,6 +687,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroSummonFingers.addItems(withTitles: ["Three fingers", "Four fingers"])
         macroSummonFingers.target = self
         macroSummonFingers.action = #selector(macroSummonFingersChanged)
+        macroBareCheck.target = self
+        macroBareCheck.action = #selector(macroBareToggled)
+        // Only four and five are on offer: macOS leaves no TAP bound at any
+        // count, but three-finger drag is live, and two is the click.
+        macroBareFingers.addItems(withTitles: ["Four fingers", "Five fingers (safest)"])
+        macroBareFingers.target = self
+        macroBareFingers.action = #selector(macroBareFingersChanged)
 
         let example = NSTextField(labelWithString: "One folder per line, optional keywords:   Projects | acme, quarterly")
         example.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
@@ -779,7 +788,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         return vstack([
             section("Macro Pad", [note, macroPadCheck, macroSummonCheck,
-                                  formRow("Summon fingers", macroSummonFingers)], width: 560),
+                                  formRow("Summon fingers", macroSummonFingers, labelWidth: 112),
+                                  macroBareCheck,
+                                  formRow("Bare tap fingers", macroBareFingers, labelWidth: 112)], width: 560),
             section("Outlook folders", [example, scroll, saveBtn, macroPadStatus], width: 560),
             section("All profiles & buttons", [
                 editorNote,
@@ -1103,6 +1114,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func macroSummonFingersChanged() {
         config.macroPadSummonFingers = macroSummonFingers.indexOfSelectedItem + 3   // 0→3, 1→4
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func macroBareToggled() {
+        config.macroPadBareSummon = (macroBareCheck.state == .on)
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func macroBareFingersChanged() {
+        config.macroPadBareSummonFingers = macroBareFingers.indexOfSelectedItem + 4   // 0→4, 1→5
         config.save()
         onConfigChange(config)
     }
@@ -1492,9 +1515,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         return box
     }
 
-    private func formRow(_ label: String, _ control: NSView) -> NSView {
+    /// `labelWidth` is the shared 92pt column; a row whose label is longer
+    /// than that widens its own rather than pushing every other row's control
+    /// across the window.
+    private func formRow(_ label: String, _ control: NSView, labelWidth: CGFloat = 92) -> NSView {
         let l = NSTextField(labelWithString: label)
-        l.widthAnchor.constraint(equalToConstant: 92).isActive = true
+        l.widthAnchor.constraint(equalToConstant: labelWidth).isActive = true
         let row = NSStackView(views: [l, control])
         row.spacing = 10
         row.alignment = .centerY
@@ -1539,6 +1565,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroPadCheck.state = config.macroPad ? .on : .off
         macroSummonCheck.state = config.macroPadThreeFingerTap ? .on : .off
         macroSummonFingers.selectItem(at: max(0, min(1, config.macroPadSummonFingers - 3)))
+        macroBareCheck.state = config.macroPadBareSummon ? .on : .off
+        macroBareFingers.selectItem(at: max(0, min(1, config.macroPadBareSummonFingers - 4)))
         agentPadCheck.state = config.agentPad ? .on : .off
         shelfCheck.state = config.shelf ? .on : .off
         shelfMaxPopup.selectItem(at: [10, 20, 40, 80, 200].firstIndex(of: config.shelfMaxItems) ?? 2)

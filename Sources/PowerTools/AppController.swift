@@ -33,7 +33,8 @@ final class AppController {
                             dark: config.appearance.isDark)
             hotkey?.powerRingEnabled = config.powerRing
             hotkey?.macroPadSummonEnabled = config.macroPad && config.macroPadThreeFingerTap
-            trackpadTap.setTapCounts([config.macroPadSummonFingers, config.macroRingFingers])
+            hotkey?.bareSummonFingers = config.bareSummonFingers
+            trackpadTap.setTapCounts(config.tapCounts)
             trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
             if !config.agentPadCodex { claudeRegistry.setExternal(kind: "codex", []) }
             if !config.agentPadCursor { claudeRegistry.setExternal(kind: "cursor", []) }
@@ -244,7 +245,8 @@ final class AppController {
                 // Four fingers bring the board, three bring the ring — the
                 // same fire-once gesture in two shapes.
                 if self.config.macroRing, fingers == self.config.macroRingFingers,
-                   fingers != self.config.macroPadSummonFingers {
+                   fingers != self.config.macroPadSummonFingers,
+                   fingers != self.config.bareSummonFingers {
                     self.summonMacroRing()
                 } else {
                     self.summonMacroPad()
@@ -361,8 +363,11 @@ final class AppController {
         // The three-finger tap lands on the multitouch thread; the monitor's
         // entry point is built for that (reads `held`, dispatches to main
         // itself) — no actor hop, so the monitor is captured directly.
-        trackpadTap.setTapCounts([config.macroPadSummonFingers, config.macroRingFingers])
-        trackpadTap.onTap = { fingers in monitor.trackpadThreeFingerTap(fingers: fingers) }
+        trackpadTap.setTapCounts(config.tapCounts)
+        monitor.bareSummonFingers = config.bareSummonFingers
+        trackpadTap.onTap = { fingers, speed in
+            monitor.trackpadThreeFingerTap(fingers: fingers, speed: speed)
+        }
         trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main

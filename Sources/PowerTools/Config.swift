@@ -356,6 +356,23 @@ struct Config: Codable {
     /// shapes, both fire-once.
     var macroRingFingers: Int = 3
     var macroRing: Bool = true
+    /// The pad WITHOUT the hotkey: a bare five-finger tap. macOS claims no tap
+    /// at any finger count — it binds four-finger swipes, the four-finger
+    /// pinch (Launchpad) and the five-finger spread (Show Desktop), all of
+    /// which are motion — so five contacts landing flat is an unclaimed slot.
+    /// The detector's speed gate is what keeps the spread out of it.
+    var macroPadBareSummon: Bool = true
+    /// Fingers for that bare tap. Five is the safe default: four sits under
+    /// Mission Control / App Exposé / space switching, which are live.
+    var macroPadBareSummonFingers: Int = 5
+    /// The bare count the monitor should honour, or 0 when the gesture is off.
+    var bareSummonFingers: Int { macroPadBareSummon ? macroPadBareSummonFingers : 0 }
+    /// Every contact count the detector needs to watch for.
+    var tapCounts: Set<Int> {
+        var counts: Set<Int> = [macroPadSummonFingers, macroRingFingers]
+        if macroPadBareSummon { counts.insert(macroPadBareSummonFingers) }
+        return counts
+    }
 
     /// Agent Pad (hold hotkey + J): floating Claude Code session panel fed by
     /// hooks POSTing to a loopback server. Port changes need an app relaunch
@@ -533,7 +550,7 @@ struct Config: Codable {
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs, macroPadThreeFingerTap, macroPadSummonFingers
-        case macroRing, macroRingFingers
+        case macroRing, macroRingFingers, macroPadBareSummon, macroPadBareSummonFingers
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, agentPadGrok, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case showInCaptures
@@ -612,6 +629,8 @@ struct Config: Codable {
         macroPadSummonFingers = min(5, max(2, field(.macroPadSummonFingers, 4)))
         macroRingFingers = min(5, max(2, field(.macroRingFingers, 3)))
         macroRing = field(.macroRing, true)
+        macroPadBareSummon = field(.macroPadBareSummon, true)
+        macroPadBareSummonFingers = min(5, max(4, field(.macroPadBareSummonFingers, 5)))
         agentPad = field(.agentPad, true)
         agentPadPort = field(.agentPadPort, 8377)
         agentPadCodex = field(.agentPadCodex, true)

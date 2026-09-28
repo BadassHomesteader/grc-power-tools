@@ -68,11 +68,20 @@ final class TrackpadTapDetector {
 
     /// Fired on the multitouch thread when a tap completes, carrying HOW MANY
     /// fingers made it — three and four now mean different things (ring vs
-    /// board), so the count has to survive the trip.
-    var onTap: ((Int) -> Void)?
+    /// board), so the count has to survive the trip — and the peak speed the
+    /// contacts reached, for tuning `maxTapSpeed`.
+    /// The speed is reported, not judged: a HELD gesture is already qualified
+    /// by its hotkey and fires however fast it moved. Only the bare gesture
+    /// has to earn it, so the threshold lives with that caller.
+    var onTap: ((Int, Float) -> Void)?
     /// Fired on the multitouch thread on every contact-count transition
     /// (0/1/2/3/4+); diagnostics only (the CLI probe).
     var onContactChange: ((Int) -> Void)?
+    /// Every frame the framework delivers, BEFORE the hover filter: raw
+    /// `numTouches` and the first record's `state` (-1 when the frame carried
+    /// no records). Diagnostics only — it is how we tell "the framework never
+    /// reported five contacts" apart from "we filtered them out".
+    var onRawFrame: ((Int32, Int32) -> Void)?
 
     /// First 3-contact frame → lift must land within this window to be a tap.
     var tapWindow: Double = 0.35
@@ -103,6 +112,9 @@ final class TrackpadTapDetector {
     /// The most fingers seen during the current tap; a four-finger tap passes
     /// through three on the way down, so the PEAK is what identifies it.
     private var tapPeak: Int32 = 0
+    /// Fastest the contacts moved during the current gesture — a tap stays
+    /// near zero, a swipe or a spread does not.
+    private var tapPeakSpeed: Float = 0
     func setTapFingers(_ n: Int) { setTapCounts([n]) }
     func setTapCounts(_ counts: Set<Int>) {
         lock.lock()
@@ -186,17 +198,33 @@ final class TrackpadTapDetector {
 
     fileprivate func frame(touches: UnsafeMutableRawPointer?, numTouches: Int32, timestamp: Double) {
         var count: Int32 = 0
+        var rawState: Int32 = -1
         // Only ever dereference the buffer when the framework says it holds
         // at least one record; the first record's state filters hover frames
         // (Magic Trackpad proximity reports contacts that aren't touching).
+        var speed: Float = 0
         if numTouches > 0, let touches {
             let state = touches.loadUnaligned(fromByteOffset: 20, as: Int32.self)
+            rawState = state
             let touching = (3...5).contains(state)   // MakeTouch / Touching / BreakTouch
             count = touching ? numTouches : 0
+            // The first record's normalized velocity (pos@32/36, vel@40/44 —
+            // the same record whose state sits at 20, and the only one safe to
+            // read since macOS 26 changed the stride). One finger is enough:
+            // in a swipe or a spread they all travel together. Sampled only in
+            // the settled Touching state — MakeTouch and BreakTouch frames
+            // carry a landing spike that is not motion across the pad.
+            if state == 4 {
+                let vx = touches.loadUnaligned(fromByteOffset: 40, as: Float.self)
+                let vy = touches.loadUnaligned(fromByteOffset: 44, as: Float.self)
+                speed = (vx * vx + vy * vy).squareRoot()
+            }
         }
+        onRawFrame?(numTouches, rawState)
 
         var fire = false
         var fired: Int32 = 0
+        var firedSpeed: Float = 0
         lock.lock()
         let accepted = tapCounts
         let ceiling = accepted.max() ?? 3
@@ -208,10 +236,12 @@ final class TrackpadTapDetector {
             if !tapActive, !tooMany {
                 tapActive = true
                 tapSince = timestamp
+                tapPeakSpeed = 0
             }
             // Four fingers land through three: keep the high-water mark, since
             // that is what says which gesture this was.
             if count > tapPeak { tapPeak = count }
+            if speed > tapPeakSpeed { tapPeakSpeed = speed }
         } else if count == 0 {
             if tapActive, !tooMany, tapPeak > 0,
                timestamp - tapSince <= tapWindow,
@@ -219,15 +249,17 @@ final class TrackpadTapDetector {
                 lastFire = timestamp
                 fire = true
                 fired = tapPeak
+                firedSpeed = tapPeakSpeed
             }
             tapActive = false
             tooMany = false
             tapPeak = 0
+            tapPeakSpeed = 0
         }
         lock.unlock()
 
         if changed { onContactChange?(Int(count)) }
-        if fire { onTap?(Int(fired)) }
+        if fire { onTap?(Int(fired), firedSpeed) }
     }
 }
 

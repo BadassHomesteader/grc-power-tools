@@ -186,11 +186,34 @@ final class HotkeyMonitor {
     /// same — so the leader release ends quietly instead of dictating. If the
     /// release beats this write, the controller's summon path calls
     /// interruptDictation() and the stray recording is dropped; nothing wedges.
-    func trackpadThreeFingerTap(fingers: Int = 3) {
-        guard held, macroPadSummonEnabled, !interrupted else { return }
+    func trackpadThreeFingerTap(fingers: Int = 3, speed: Float = 0) {
+        guard macroPadSummonEnabled else { return }
+        // The BARE gesture (five fingers, no leader): there is no hold, so
+        // none of the hold bookkeeping applies — no `windowMode` to set (no
+        // release will come looking for it), and `interrupted` is a
+        // hold-scoped flag that may still be set from the last one.
+        if !held, fingers == bareSummonFingers, bareSummonFingers > 0 {
+            // Nothing else qualifies this one, so it has to qualify itself.
+            // macOS binds no TAP at four or five fingers, but it does bind
+            // motion at both — Mission Control, App Exposé, space switching,
+            // Launchpad's pinch, Show Desktop's spread — and a quick flick
+            // wears the same 0 → N → 0 shape inside the same window. Speed is
+            // the only thing that tells them apart.
+            guard speed <= Self.bareSummonMaxSpeed else { return }
+            dispatch(.macroPadSummon(fingers: fingers))
+            return
+        }
+        guard held, !interrupted else { return }
         windowMode = true
         dispatch(.macroPadSummon(fingers: fingers))
     }
+    /// Finger count that summons the pad with NO hotkey held; 0 = off.
+    /// Written from main, read on the multitouch thread — an Int is atomic
+    /// enough for a value that only changes when settings are saved.
+    var bareSummonFingers = 0
+    /// Normalized pad-widths per second. Above this the bare gesture was a
+    /// swipe; held gestures are never measured against it.
+    static let bareSummonMaxSpeed: Float = 0.6
 
     private static let kVK_Function: Int64 = 63
     private static let kVK_RightOption: Int64 = 61
