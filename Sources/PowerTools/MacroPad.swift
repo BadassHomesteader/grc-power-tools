@@ -168,6 +168,15 @@ final class MacroPad {
     private var scanGen = 0
     /// Skip re-OCR when the window pixels haven't changed since the last scan.
     private var lastCapture: Data?
+    /// Outlook is READ, not screenshotted: the message under the pad on the
+    /// last Accessibility read, by identity — the AX path's `lastCapture`.
+    private var lastMessageIdentity: String?
+    /// Outlook's folder names, read once per present; the Move search
+    /// resolves a typed fragment against them before anything is sent.
+    private var outlookFolders: [String] = []
+    /// Where mail from each sender went (fed by the controller on every move,
+    /// read here for suggestions). Outlook only.
+    weak var store: Store?
 
     var isVisible: Bool { panel != nil }
     /// Fired on show/hide and profile swaps so the hotkey tap knows when (and
@@ -262,7 +271,16 @@ final class MacroPad {
         buildPanel(on: screen)
         render(on: screen)   // render ends with notifyState()
         startSuggestTimer()
+        if currentBundleID == OutlookReader.bundleID { refreshOutlookFolders() }
         persistPlacement()   // open=true — survives quits/deploys for launch restore
+    }
+
+    /// Off the main thread — every AX call is answered by Outlook's main thread.
+    private func refreshOutlookFolders() {
+        Task.detached(priority: .utility) { [weak self] in
+            let names = OutlookReader.folders()
+            DispatchQueue.main.async { self?.outlookFolders = names }
+        }
     }
 
     /// An already-open pad: bring it beside the cursor. A free-floating pad's
@@ -291,6 +309,7 @@ final class MacroPad {
         suggestTimer?.invalidate()
         suggestTimer = nil
         lastCapture = nil
+        lastMessageIdentity = nil
         panel?.orderOut(nil)
         panel = nil
         padView = nil
@@ -383,6 +402,7 @@ final class MacroPad {
         currentBundleID = bundleID
         currentAppName = name ?? "App"
         lastCapture = nil
+        lastMessageIdentity = nil
         // A scan of the OLD app's window must not light up the NEW profile.
         invalidateScan()
         if isVisible { render() }
@@ -401,10 +421,17 @@ final class MacroPad {
         }
         // Move search: the typed fragment rides the same Message ▸ Move path
         // as the folder buttons (recent-folder prefix match, else the Choose
-        // Folder picker gets the text + Return).
+        // Folder picker gets the text + Return). In Outlook the fragment is
+        // first resolved against the REAL folder list, so the picker is sent
+        // an exact name — its own first-match-on-Return is otherwise a guess.
         view.onMoveSearch = { [weak self] text in
             guard let self, let bundleID = self.currentBundleID else { return }
-            let button = Config.MacroButton(title: "Move to \(text)", text: text, pressReturn: true,
+            var folder = text
+            if bundleID == OutlookReader.bundleID, let hit = OutlookReader.resolve(text, in: self.outlookFolders) {
+                folder = hit
+            }
+            if folder != text { log("macropad: move search “\(text)” → “\(folder)”") }
+            let button = Config.MacroButton(title: "Move to \(folder)", text: folder, pressReturn: true,
                                             menuPath: Config.MacroButton.moveMenuPath)
             self.fire(button, bundleID: bundleID)
         }
@@ -476,7 +503,8 @@ final class MacroPad {
         // squares are why the user peeked); every other render clears them via
         // configure() and forces the next scan to re-OCR.
         let hits = preservingHighlights ? view.suggested : []
-        if !preservingHighlights { lastCapture = nil }
+        let folder = preservingHighlights ? view.suggestedFolder : nil
+        if !preservingHighlights { lastCapture = nil; lastMessageIdentity = nil }
         var current: Config.MacroProfile?
         if let id = currentBundleID { current = profile(for: id) }
         // Summoned = the plain full pad, never the strip.
@@ -492,6 +520,7 @@ final class MacroPad {
         // also hand key back, or the new app in front gets no keyboard.
         if wasEditing, !view.searchFieldVisible { releaseKey() }
         view.suggested = hits
+        view.suggestedFolder = folder
         let size = view.fittingSize
         view.frame = NSRect(origin: .zero, size: size)
 
@@ -585,13 +614,16 @@ final class MacroPad {
 
     private func startSuggestTimer() {
         suggestTimer?.invalidate()
-        suggestTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
+        // 2 s: an Accessibility read is cheap and the OCR path dedupes on
+        // identical pixels, so the extra ticks cost a screenshot, not a scan.
+        suggestTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshSuggestions() }
         }
     }
 
     private func refreshSuggestions() {
         guard isVisible, let bundleID = currentBundleID, let profile = profile(for: bundleID) else { return }
+        if bundleID == OutlookReader.bundleID { refreshOutlookSuggestions(profile: profile); return }
         let keyworded = profile.buttons.contains { !$0.keywords.trimmingCharacters(in: .whitespaces).isEmpty }
         guard keyworded, CGPreflightScreenCaptureAccess() else { return }
         // Only scan while the target app is actually in front — its window is
@@ -627,6 +659,61 @@ final class MacroPad {
                 if kws.contains(where: { text.contains($0) }) { hits.insert(i) }
             }
             self.padView?.suggested = hits
+        }
+    }
+
+    /// Outlook: the message is READ — sender name and address, recipients,
+    /// subject and body straight from Accessibility, no screenshot, no OCR,
+    /// no Screen Recording — and besides the keyword hits the pad lights the
+    /// folder this sender's (or this domain's) mail went to before. A
+    /// remembered folder with no button of its own rides the Move box:
+    /// Return on the empty box files there.
+    private func refreshOutlookSuggestions(profile: Config.MacroProfile) {
+        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == OutlookReader.bundleID else { return }
+        guard suggestTask == nil else { return }   // one read in flight at a time
+        scanGen += 1
+        let gen = scanGen
+        padView?.scanning = true
+        let store = self.store
+        suggestTask = Task { [weak self] in
+            defer {
+                if let self, self.scanGen == gen {
+                    self.suggestTask = nil
+                    self.padView?.scanning = false
+                }
+            }
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let read = await Task.detached(priority: .userInitiated) { OutlookReader.currentMessage() }.value
+            guard let self, self.scanGen == gen, !Task.isCancelled else { return }
+            guard let msg = read else { return }   // nothing in the reading pane — keep what's lit
+            if msg.identity == self.lastMessageIdentity { return }
+            self.lastMessageIdentity = msg.identity
+            guard let id = self.currentBundleID, let profile = self.profile(for: id) else { return }
+            let text = msg.searchText
+            var hits: Set<Int> = []
+            var names: [String] = []
+            for (i, btn) in profile.buttons.enumerated() {
+                let kws = btn.keywords.lowercased().split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                if kws.contains(where: { text.contains($0) }) { hits.insert(i); names.append(btn.title) }
+            }
+            var remembered: String?
+            if let store, !msg.fromAddress.isEmpty,
+               let top = store.rememberedFolders(sender: msg.fromAddress).first {
+                remembered = top.folder
+            }
+            let onPad = remembered.flatMap { r in
+                profile.buttons.firstIndex { $0.menuPath == Config.MacroButton.moveMenuPath
+                    && $0.text.caseInsensitiveCompare(r) == .orderedSame }
+            }
+            if let onPad { hits.insert(onPad) }
+            let view = self.padView
+            DispatchQueue.main.async {
+                view?.suggested = hits
+                view?.suggestedFolder = onPad == nil ? remembered : nil
+            }
+            let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+            log("macropad: outlook message read in \(ms)ms — keywords: \(names.isEmpty ? "none" : names.joined(separator: ", ")); remembered: \(remembered ?? "none")")
         }
     }
 
@@ -708,6 +795,12 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
     }
     var suggested: Set<Int> = [] { didSet { needsDisplay = true } }
     var scanning = false { didSet { needsDisplay = true } }
+    /// A folder the pad remembers for this sender that has no button of its
+    /// own: the Move box shows it as "↩ Name", and Return on the empty box
+    /// files there.
+    var suggestedFolder: String? {
+        didSet { searchFieldStorage?.placeholderString = suggestedFolder.map { "↩ \($0)" } ?? "folder…" }
+    }
 
     private var appName = ""
     private var buttons: [Config.MacroButton] = []
@@ -784,6 +877,7 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
         hovered = nil
         pressed = nil
         suggested = []
+        suggestedFolder = nil
         let grouped = PadColumns.columns(for: buttons)
         columns = grouped.columns
         moveSearch = grouped.moveSearch
@@ -850,7 +944,11 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         searchField.stringValue = ""
         endSearchEditing()
-        guard !text.isEmpty else { return }
+        if text.isEmpty {
+            // Empty + Return = the remembered folder shown as the placeholder.
+            if let folder = suggestedFolder { onMoveSearch?(folder) }
+            return
+        }
         onMoveSearch?(text)
     }
 

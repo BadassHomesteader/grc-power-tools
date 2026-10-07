@@ -2920,6 +2920,101 @@ case "claude-hooks":
         print("usage: claude-hooks install|remove|status [--settings path] [--port n]"); exit(1)
     }
 
+case "outlook-read":
+    // Read-only: what the Macro Pad sees in New Outlook through Accessibility —
+    // the message in front (sender, recipients, subject, body length) and the
+    // folder list; a trailing word is resolved the way the Move search does it.
+    guard AXIsProcessTrusted() else { print("this process isn't Accessibility-trusted"); exit(2) }
+    let t0 = CFAbsoluteTimeGetCurrent()
+    let msg = OutlookReader.currentMessage()
+    let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+    if let msg {
+        print("message (\(ms)ms): from \(msg.fromName) <\(msg.fromAddress)>  to \(msg.recipients.joined(separator: ", "))")
+        print("  subject: \(msg.subject)")
+        let peek = String(msg.body.prefix(100)).replacingOccurrences(of: "\n", with: " ")
+        print("  body: \(msg.body.count) chars — \(peek)…")
+    } else {
+        print("no message read (\(ms)ms) — Outlook not running, or nothing in the reading pane")
+    }
+    let t1 = CFAbsoluteTimeGetCurrent()
+    let folders = OutlookReader.folders()
+    let fms = Int((CFAbsoluteTimeGetCurrent() - t1) * 1000)
+    print("folders (\(fms)ms): \(folders.count) — \(folders.prefix(12).joined(separator: ", "))\(folders.count > 12 ? ", …" : "")")
+    if args.count >= 2 {
+        print("resolve “\(args[1])” → \(OutlookReader.resolve(args[1], in: folders) ?? "no match")")
+    }
+
+case "outlook-picker-dump":
+    // Opens Message ▸ Move ▸ Choose Folder… in Outlook, prints the picker's
+    // Accessibility tree, then presses its Cancel. Run it when nobody is
+    // typing in Outlook — the picker takes the keyboard while it is up.
+    guard AXIsProcessTrusted() else { print("this process isn't Accessibility-trusted"); exit(2) }
+    guard let ol = NSRunningApplication.runningApplications(withBundleIdentifier: OutlookReader.bundleID).first else {
+        print("Outlook not running"); exit(1)
+    }
+    let pid = ol.processIdentifier
+    let before = Inserter.focusedElement(pid: pid)
+    let opened = Inserter.clickMenuItemMatching(pid: pid, path: ["Message", "Move"], name: "\u{0}no-such-folder\u{0}")
+    print("menu: \(opened)")
+    guard opened == .openedPicker else { print("picker did not open"); exit(1) }
+    let focused = Inserter.waitForFocusedTextField(pid: pid, before: before, timeout: 2)
+    print("search field focused: \(focused)")
+    Thread.sleep(forTimeInterval: 0.4)
+    let app = AXUIElementCreateApplication(pid)
+    var sheet: AXUIElement?
+    if let win = OutlookReader.element(app, kAXFocusedWindowAttribute) {
+        sheet = (OutlookReader.attr(win, "AXSheets") as? [AXUIElement])?.first
+        if sheet == nil, OutlookReader.str(win, kAXSubroleAttribute) == "AXDialog" { sheet = win }
+        if sheet == nil, let f = Inserter.focusedElement(pid: pid) { sheet = OutlookReader.element(f, "AXWindow") ?? win }
+    }
+    guard let root = sheet else { print("no sheet / dialog found"); exit(1) }
+    var lines = 0
+    var cancel: AXUIElement?
+    func dump(_ e: AXUIElement, _ d: Int) {
+        if lines > 160 || d > 16 { return }
+        let r = OutlookReader.role(e)
+        let t = OutlookReader.text(e)
+        if r == "AXButton", t.localizedCaseInsensitiveContains("cancel"), cancel == nil { cancel = e }
+        if !t.isEmpty || ["AXTable", "AXOutline", "AXList", "AXTextField", "AXSheet", "AXWindow"].contains(r) {
+            print("\(String(repeating: "  ", count: d))\(r)\(OutlookReader.str(e, kAXSubroleAttribute).map { "/" + $0 } ?? ""): \(String(t.prefix(100)))")
+            lines += 1
+        }
+        for c in OutlookReader.children(e) { dump(c, d + 1) }
+    }
+    dump(root, 0)
+    if let cancel { print("pressing Cancel: \(AXUIElementPerformAction(cancel, kAXPressAction as CFString) == .success)") }
+    else { print("no Cancel button found — AXCancel: \(AXUIElementPerformAction(root, "AXCancel" as CFString) == .success)") }
+
+case "folder-memory-test":
+    // The sender → folder memory on a scratch database, plus folder-name
+    // resolution: exact sender beats a busier domain sibling, counts rank,
+    // unknown senders fall back to their domain, exact > prefix > substring.
+    let path = NSTemporaryDirectory() + "pt-folder-memory-\(getpid()).sqlite"
+    let s = Store(path: path)
+    s.rememberFolder(sender: "a@amwater.com", folder: "NJAW")
+    s.rememberFolder(sender: "a@amwater.com", folder: "NJAW")
+    s.rememberFolder(sender: "b@amwater.com", folder: "KYAW")
+    s.rememberFolder(sender: "b@amwater.com", folder: "KYAW")
+    s.rememberFolder(sender: "b@amwater.com", folder: "KYAW")
+    s.rememberFolder(sender: "c@dialai.ca", folder: "APS")
+    var pass = true
+    func check(_ name: String, _ ok: Bool) { print("\(ok ? "PASS" : "FAIL") \(name)"); if !ok { pass = false } }
+    let a = s.rememberedFolders(sender: "a@amwater.com")
+    check("exact sender wins over a busier domain sibling (a → NJAW first)", a.first?.folder == "NJAW")
+    check("domain sibling still listed second (a → KYAW second)", a.count == 2 && a[1].folder == "KYAW")
+    check("unknown sender falls back to its domain, busiest first (→ KYAW)", s.rememberedFolders(sender: "new@amwater.com").first?.folder == "KYAW")
+    check("unrelated domain sees nothing", s.rememberedFolders(sender: "z@example.com").isEmpty)
+    check("case-insensitive sender (C@DialAI.ca → APS)", s.rememberedFolders(sender: "C@DialAI.ca").first?.folder == "APS")
+    check("empty sender → nothing", s.rememberedFolders(sender: "").isEmpty)
+    check("resolve: exact beats prefix", OutlookReader.resolve("aps", in: ["APS Archive", "APS"]) == "APS")
+    check("resolve: shortest prefix match", OutlookReader.resolve("con", in: ["Conversation History", "Conference"]) == "Conference")
+    check("resolve: substring fallback", OutlookReader.resolve("action", in: ["0_Actions", "Inbox"]) == "0_Actions")
+    check("resolve: no match → nil", OutlookReader.resolve("zzz", in: ["Inbox"]) == nil)
+    check("name/address split", OutlookReader.nameAndAddress(" Grace (APS Voice Agent), alerts@mail.dialai.ca, Presence Unknown") == ("Grace (APS Voice Agent)", "alerts@mail.dialai.ca"))
+    try? FileManager.default.removeItem(atPath: path)
+    print(pass ? "ALL GREEN" : "FAILURES")
+    exit(pass ? 0 : 1)
+
 case "doctor":
     let report = try! runBlocking { await Doctor.report() }
     print(report)

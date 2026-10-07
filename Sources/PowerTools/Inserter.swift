@@ -220,6 +220,33 @@ enum Inserter {
         return AXUIElementPerformAction(target, kAXPressAction as CFString) == .success
     }
 
+    /// The element holding the keyboard focus in `pid`, if any.
+    static func focusedElement(pid: pid_t) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &v) == .success,
+              let v, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+        return (v as! AXUIElement)
+    }
+
+    /// Poll until a text field OTHER than `before` holds the focus — a dialog
+    /// just opened and put its caret in its search box — so typing lands in
+    /// it, not in whatever had the caret a moment ago. False on timeout; the
+    /// caller then falls back to its fixed delay. Off the main thread only.
+    static func waitForFocusedTextField(pid: pid_t, before: AXUIElement?, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let f = focusedElement(pid: pid) {
+                var r: CFTypeRef?
+                let role = AXUIElementCopyAttributeValue(f, kAXRoleAttribute as CFString, &r) == .success ? (r as? String ?? "") : ""
+                let changed = before.map { !CFEqual($0, f) } ?? true
+                if changed, ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(role) { return true }
+            }
+            usleep(40_000)
+        }
+        return false
+    }
+
     enum MenuMatchResult {
         case matched         // clicked a submenu item matching the name directly — action is complete
         case openedPicker    // no direct match; clicked a "Choose Folder…"-style escape hatch instead

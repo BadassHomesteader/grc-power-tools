@@ -360,6 +360,7 @@ final class AppController {
         macroPad.onSummonChanged = { [weak self] summoned in
             self?.hotkey?.macroPadSummoned = summoned
         }
+        macroPad.store = store   // sender → folder memory, for suggestions
         macroPad.onSearchEditingChanged = { [weak self] editing in
             self?.hotkey?.macroPadSearchEditing = editing
         }
@@ -1053,10 +1054,11 @@ final class AppController {
         )
         // Keyword suggestions ride on SCK window capture — without the Screen
         // Recording grant they'd silently never light up. Ask + explain once.
+        // Outlook is the exception: its message is read through Accessibility.
         let hasKeywords = config.macroPadProfiles.contains { profile in
             profile.buttons.contains { !$0.keywords.trimmingCharacters(in: .whitespaces).isEmpty }
         }
-        if hasKeywords, !CGPreflightScreenCaptureAccess() {
+        if hasKeywords, app?.bundleIdentifier != OutlookReader.bundleID, !CGPreflightScreenCaptureAccess() {
             _ = CGRequestScreenCaptureAccess()
             overlay.showError("Keyword suggestions need Screen Recording — grant it in Privacy & Security, then quit & reopen")
         }
@@ -1672,6 +1674,12 @@ final class AppController {
             overlay.showError("Macro “\(button.title)” has an unrecognized chord — fix it in config.json")
             return
         }
+        // An Outlook folder move: the pad learns where this sender's mail
+        // goes. The sender is read BEFORE the move (the selection changes once
+        // the message is gone) and recorded once the move was sent.
+        let isOutlookMove = targetBundleID == OutlookReader.bundleID
+            && button.menuPath == Config.MacroButton.moveMenuPath && !button.text.isEmpty
+        let store = self.store
         let prev = macroChain
         macroChain = Task { @MainActor in
             await prev?.value
@@ -1696,6 +1704,14 @@ final class AppController {
             // typeText/postKey pace themselves with usleep, which must not
             // stall the app's UI mid-macro.
             await Task.detached(priority: .userInitiated) { [weak self] in
+                let sender = isOutlookMove ? (OutlookReader.currentMessage()?.fromAddress ?? "") : ""
+                func remember() {
+                    guard isOutlookMove, !sender.isEmpty else { return }
+                    store.rememberFolder(sender: sender, folder: button.text)
+                    log("macropad: remembered “\(button.text)” for mail from \(sender.split(separator: "@").last.map(String.init) ?? "?")")
+                }
+                var viaPicker = false
+                let focusBefore = Inserter.focusedElement(pid: pid)
                 if !menuPath.isEmpty, !button.text.isEmpty {
                     // A menu with a folder name to hit (Outlook's Move): click
                     // the matching submenu item directly rather than typing —
@@ -1703,9 +1719,10 @@ final class AppController {
                     // filter, so typing here can land on the wrong command.
                     switch Inserter.clickMenuItemMatching(pid: pid, path: menuPath, name: button.text) {
                     case .matched:
+                        remember()
                         return   // the click alone completed the move
                     case .openedPicker:
-                        break    // a real dialog is open now — type into it below
+                        viaPicker = true   // a real dialog is open now — type into it below
                     case .notFound:
                         if let self {
                             await MainActor.run {
@@ -1727,13 +1744,23 @@ final class AppController {
                     Inserter.postKey(chord.key, flags: chord.flags)
                 }
                 if !button.text.isEmpty {
-                    try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
+                    // The picker's search box must hold the caret before we
+                    // type: wait for it (a NEW text field focused, not the one
+                    // focused before the menu press) rather than trust a fixed
+                    // delay — a slow Outlook otherwise got half the name, a
+                    // fast one waited for nothing. Timeout → the old delay.
+                    if viaPicker, Inserter.waitForFocusedTextField(pid: pid, before: focusBefore, timeout: 1.5) {
+                        try? await Task.sleep(nanoseconds: 80_000_000)
+                    } else {
+                        try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
+                    }
                     Inserter.typeText(button.text)
                 }
                 if button.pressReturn {
                     try? await Task.sleep(nanoseconds: UInt64(stepMs) * 1_000_000)
                     Inserter.postKey(CGKeyCode(36 /* kVK_Return */), flags: [])
                 }
+                if viaPicker { remember() }
             }.value
         }
     }

@@ -68,6 +68,13 @@ final class Store {
             name TEXT NOT NULL,
             json TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS folder_memory(
+            sender TEXT NOT NULL,
+            folder TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0,
+            last TEXT NOT NULL,
+            PRIMARY KEY(sender, folder)
+        );
         """)
         // Migration for clips tables created before image support.
         addColumnIfMissing(table: "clips", column: "image", ddl: "ALTER TABLE clips ADD COLUMN image BLOB")
@@ -94,6 +101,67 @@ final class Store {
         }
         sqlite3_finalize(stmt)
         if !found { exec(ddl) }
+    }
+
+    // MARK: Folder memory (Macro Pad — where mail from each sender went)
+
+    struct FolderMemory {
+        let folder: String
+        let score: Int
+    }
+
+    /// One more filing of `sender`'s mail into `folder`.
+    func rememberFolder(sender: String, folder: String) {
+        let s = sender.trimmingCharacters(in: .whitespaces).lowercased()
+        let f = folder.trimmingCharacters(in: .whitespaces)
+        guard !s.isEmpty, !f.isEmpty else { return }
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            let sql = """
+            INSERT INTO folder_memory(sender, folder, count, last) VALUES(?,?,1,?)
+            ON CONFLICT(sender, folder) DO UPDATE SET count = count + 1, last = excluded.last
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, s, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, f, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, ISO8601DateFormatter().string(from: Date()), -1, SQLITE_TRANSIENT)
+            sqlite3_step(stmt)
+        }
+    }
+
+    /// Folders `sender`'s mail has gone to, best first. A filing from the
+    /// exact address weighs three times one from anyone else at the same
+    /// domain, so a new colleague at a client still lands on the client's
+    /// folder while a known sender keeps their own.
+    func rememberedFolders(sender: String, limit: Int = 5) -> [FolderMemory] {
+        let s = sender.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !s.isEmpty else { return [] }
+        let domain = s.split(separator: "@").last.map(String.init) ?? ""
+        return queue.sync {
+            guard let db else { return [] }
+            var stmt: OpaquePointer?
+            let sql = """
+            SELECT folder, SUM(CASE WHEN sender = ? THEN count * 3 ELSE count END) AS score
+            FROM folder_memory
+            WHERE sender = ? OR (? <> '' AND sender LIKE ?)
+            GROUP BY folder ORDER BY score DESC, MAX(last) DESC LIMIT ?
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, s, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, s, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, domain, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 4, "%@" + domain, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int(stmt, 5, Int32(limit))
+            var out: [FolderMemory] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(FolderMemory(folder: String(cString: sqlite3_column_text(stmt, 0)),
+                                        score: Int(sqlite3_column_int(stmt, 1))))
+            }
+            return out
+        }
     }
 
     // MARK: History
