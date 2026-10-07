@@ -113,9 +113,9 @@ final class HotkeyMonitor {
     /// on the inner ring and digits fall through to the app untouched.
     var macroRingVisible = false
     var macroRingButtonCount = 0
-    /// Three-finger-tap summon: feature flag + "a summoned pad is up" mirror
+    /// Finger-tap summon: feature flag + "a summoned pad is up" mirror
     /// (same discipline). Both written from main; the tap itself arrives from
-    /// the multitouch thread via `trackpadThreeFingerTap()`.
+    /// the multitouch thread via `trackpadTap(_:)`.
     var macroPadSummonEnabled = true
     var macroPadSummoned = false
     /// True while the pad's Move search box has the caret (same discipline):
@@ -180,40 +180,62 @@ final class HotkeyMonitor {
     /// mid-click) must not leave the NEXT right-click's up eaten.
     private var ringSwallowArmedAt: CFAbsoluteTime = 0
 
-    /// Hold + three-finger tap (TrackpadTapDetector, on the multitouch
-    /// thread): summon the macro pad beside the cursor. `windowMode` is
-    /// written off the tap thread here — the health timer already does the
-    /// same — so the leader release ends quietly instead of dictating. If the
-    /// release beats this write, the controller's summon path calls
+    /// A multi-finger tap (TrackpadTapDetector, on the multitouch thread):
+    /// summon the macro pad / ring beside the cursor. `windowMode` is written
+    /// off the tap thread here — the health timer already does the same — so
+    /// the leader release ends quietly instead of dictating. If the release
+    /// beats this write, the controller's summon path calls
     /// interruptDictation() and the stray recording is dropped; nothing wedges.
-    func trackpadThreeFingerTap(fingers: Int = 3, speed: Float = 0) {
-        guard macroPadSummonEnabled else { return }
-        // The BARE gesture (five fingers, no leader): there is no hold, so
-        // none of the hold bookkeeping applies — no `windowMode` to set (no
-        // release will come looking for it), and `interrupted` is a
-        // hold-scoped flag that may still be set from the last one.
-        if !held, fingers == bareSummonFingers, bareSummonFingers > 0 {
+    /// Every decision is logged: a tap that "did nothing" must say why.
+    func trackpadTap(_ tap: TrackpadTapDetector.Gesture) {
+        let fingers = tap.fingers
+        guard macroPadSummonEnabled else {
+            log("trackpad: \(fingers)-finger tap ignored — the summon gesture is off in Settings ▸ Macro Pad")
+            return
+        }
+        // The BARE gesture (no leader): there is no hold, so none of the hold
+        // bookkeeping applies — no `windowMode` to set (no release will come
+        // looking for it), and `interrupted` is a hold-scoped flag that may
+        // still be set from the last one.
+        if !held {
+            guard bareSummonFingers > 0, fingers == bareSummonFingers else {
+                let bare = bareSummonFingers > 0 ? "\(bareSummonFingers) fingers" : "off"
+                log("trackpad: \(fingers)-finger tap with no hotkey held — ignored (bare summon: \(bare))")
+                return
+            }
             // Nothing else qualifies this one, so it has to qualify itself.
             // macOS binds no TAP at four or five fingers, but it does bind
             // motion at both — Mission Control, App Exposé, space switching,
             // Launchpad's pinch, Show Desktop's spread — and a quick flick
-            // wears the same 0 → N → 0 shape inside the same window. Speed is
-            // the only thing that tells them apart.
-            guard speed <= Self.bareSummonMaxSpeed else { return }
+            // wears the same 0 → N → 0 shape inside the same window. Travel
+            // is what tells them apart: a tap's contacts stay where they
+            // landed; every system gesture moves them.
+            guard tap.travel <= Self.bareSummonMaxTravel else {
+                log("trackpad: \(fingers)-finger gesture travelled \(String(format: "%.3f", tap.travel)) of the pad (limit \(Self.bareSummonMaxTravel)) — a swipe, not a tap; ignored")
+                return
+            }
+            log("trackpad: \(fingers)-finger tap, no hotkey → summon")
             dispatch(.macroPadSummon(fingers: fingers))
             return
         }
-        guard held, !interrupted else { return }
+        guard !interrupted else {
+            log("trackpad: hold + \(fingers)-finger tap ignored — another key interrupted this hold")
+            return
+        }
         windowMode = true
+        log("trackpad: hold + \(fingers)-finger tap → summon")
         dispatch(.macroPadSummon(fingers: fingers))
     }
     /// Finger count that summons the pad with NO hotkey held; 0 = off.
     /// Written from main, read on the multitouch thread — an Int is atomic
     /// enough for a value that only changes when settings are saved.
     var bareSummonFingers = 0
-    /// Normalized pad-widths per second. Above this the bare gesture was a
-    /// swipe; held gestures are never measured against it.
-    static let bareSummonMaxSpeed: Float = 0.6
+    /// Normalized pad units (1 = the pad's width/height). Farther than this
+    /// from where a contact landed, the bare gesture was a swipe, pinch or
+    /// spread; held gestures are never measured against it. A tap settles
+    /// within ~0.02; Mission Control, Launchpad and Show Desktop all move
+    /// well past 0.1.
+    static let bareSummonMaxTravel: Float = 0.08
 
     private static let kVK_Function: Int64 = 63
     private static let kVK_RightOption: Int64 = 61

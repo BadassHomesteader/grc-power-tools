@@ -93,8 +93,8 @@ enum Doctor {
             name: "Trackpad gestures",
             ok: true,
             detail: pad.available
-                ? "MultitouchSupport loaded, \(pad.devices) multitouch device(s) — hold hotkey + three-finger tap summons the Macro Pad"
-                : "not available (private MultitouchSupport framework missing) — three-finger-tap summon is off"
+                ? "MultitouchSupport loaded, \(pad.devices) multitouch device(s) — finger taps summon the Macro Pad / Ring (see the app log's trackpad: lines)"
+                : "not available (private MultitouchSupport framework missing) — finger-tap summon is off"
         ))
 
         let secure = IsSecureEventInputEnabled()

@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-/// Three-finger tap on the trackpad, seen from a background app.
+/// Multi-finger taps on the trackpad, seen from a background app.
 ///
 /// No public API delivers raw trackpad contacts to a process that isn't the
 /// key app, so this rides Apple's PRIVATE MultitouchSupport.framework — the
@@ -9,15 +9,23 @@ import AppKit
 /// runtime (no link-time dependency): if the framework or a symbol is missing
 /// the detector reports `available == false` and the gesture is simply off.
 ///
-/// Struct discipline: macOS 26 changed the stride of the per-touch record, so
-/// `touches[i]` for i ≥ 1 is garbage under the classic layout. We never
-/// declare the struct — only `numTouches` (framework-computed) and the FIRST
-/// touch's `state` (Int32 at byte offset 20: frame@0, timestamp@8,
-/// identifier@16, state@20) are read, the latter to drop hover frames.
+/// Struct discipline: the per-record layout we rely on is the classic MTTouch
+/// head — frame Int32 @0, timestamp Double @8, identifier Int32 @16, state
+/// Int32 @20, normalized position Float @32/36, normalized velocity Float
+/// @40/44. macOS 26 changed the STRIDE between records, so `touches[i]` for
+/// i ≥ 1 is garbage under the classic 96-byte stride. Rather than assume a
+/// stride, it is DETECTED: every record carries its frame's timestamp, so on a
+/// frame with two or more records the candidate stride whose second record
+/// repeats the callback's timestamp (and holds a legal state) is the real one.
+/// Until a stride is confirmed — or if none ever is — only record 0 is read and
+/// it speaks for the whole frame (the original behaviour).
 ///
-/// Tap = contacts go 0 → 3 (never more) → 0 within `tapWindow`. Callbacks
-/// arrive on a framework-owned thread; `onTap` / `onContactChange` fire on
-/// that thread — the caller hops.
+/// Tap = the touching count reaches an accepted value and all contacts lift
+/// within the window for that finger count. Callbacks arrive on a framework-
+/// owned thread; `onTap` / `onContactChange` fire on that thread — the caller
+/// hops. Every gesture that reached the smallest accepted count is logged with
+/// its outcome and, when dropped, the reason — that line is the first thing to
+/// read when "the tap didn't work".
 final class TrackpadTapDetector {
     typealias MTDeviceRef = UnsafeMutableRawPointer
     private typealias ContactCallback = @convention(c) (MTDeviceRef?, UnsafeMutableRawPointer?, Int32, Double, Int32) -> Void
@@ -42,7 +50,7 @@ final class TrackpadTapDetector {
     /// Resolved once per process; nil when the framework or a symbol is gone.
     private static let fns: Fns? = {
         guard let handle = dlopen(frameworkPath, RTLD_NOW) else {
-            log("trackpad: MultitouchSupport not loadable — three-finger tap off")
+            log("trackpad: MultitouchSupport not loadable — finger taps off")
             return nil
         }
         func sym(_ name: String) -> UnsafeMutableRawPointer? { dlsym(handle, name) }
@@ -51,7 +59,7 @@ final class TrackpadTapDetector {
               let unreg = sym("MTUnregisterContactFrameCallback"),
               let start = sym("MTDeviceStart"),
               let stop = sym("MTDeviceStop") else {
-            log("trackpad: MultitouchSupport symbols missing — three-finger tap off")
+            log("trackpad: MultitouchSupport symbols missing — finger taps off")
             return nil
         }
         let running = sym("MTDeviceIsRunning")
@@ -66,27 +74,42 @@ final class TrackpadTapDetector {
     /// True when the private framework resolved (not whether a trackpad exists).
     var available: Bool { Self.fns != nil }
 
-    /// Fired on the multitouch thread when a tap completes, carrying HOW MANY
-    /// fingers made it — three and four now mean different things (ring vs
-    /// board), so the count has to survive the trip — and the peak speed the
-    /// contacts reached, for tuning `maxTapSpeed`.
-    /// The speed is reported, not judged: a HELD gesture is already qualified
-    /// by its hotkey and fires however fast it moved. Only the bare gesture
-    /// has to earn it, so the threshold lives with that caller.
-    var onTap: ((Int, Float) -> Void)?
-    /// Fired on the multitouch thread on every contact-count transition
-    /// (0/1/2/3/4+); diagnostics only (the CLI probe).
+    /// What a completed tap looked like. `fingers` is the PEAK touching count
+    /// (four fingers land through three, so the high-water mark is the
+    /// gesture); `travel` is how far any contact moved from where it landed,
+    /// in normalized pad units (1 = the pad's width/height) — a tap stays near
+    /// zero, a swipe or a spread does not; `peakSpeed` is the fastest
+    /// normalized velocity seen, reported for the log only.
+    struct Gesture {
+        let fingers: Int
+        let duration: Double
+        let travel: Float
+        let peakSpeed: Float
+    }
+
+    /// Fired on the multitouch thread when a tap completes. The detector
+    /// reports, it does not judge: a HELD gesture is already qualified by its
+    /// hotkey; only the bare gesture has to earn it, and that threshold lives
+    /// with the caller.
+    var onTap: ((Gesture) -> Void)?
+    /// Fired on the multitouch thread on every touching-count transition;
+    /// diagnostics only (the CLI probe).
     var onContactChange: ((Int) -> Void)?
-    /// Every frame the framework delivers, BEFORE the hover filter: raw
+    /// Every frame the framework delivers, BEFORE any filtering: raw
     /// `numTouches` and the first record's `state` (-1 when the frame carried
     /// no records). Diagnostics only — it is how we tell "the framework never
     /// reported five contacts" apart from "we filtered them out".
     var onRawFrame: ((Int32, Int32) -> Void)?
 
-    /// First 3-contact frame → lift must land within this window to be a tap.
+    /// First accepted-count frame → lift must land within this window to be a
+    /// tap, for three fingers. Each finger beyond three adds `windowPerFinger`:
+    /// more fingers land and lift more staggered, so the same hand takes
+    /// longer to make the same tap.
     var tapWindow: Double = 0.35
+    var windowPerFinger: Double = 0.1
     /// Two taps closer than this collapse into one (finger-bounce guard).
     var cooldown: Double = 0.4
+    func window(forFingers n: Int32) -> Double { tapWindow + windowPerFinger * Double(max(0, Int(n) - 3)) }
 
     private let queue = DispatchQueue(label: "grc-whisper.trackpadtap", qos: .userInteractive)
     /// The MTDevice objects (CF-bridged) — retained here for as long as they
@@ -106,21 +129,83 @@ final class TrackpadTapDetector {
     private var lastFire: Double = -1
     private var lastCount: Int32 = -1
     /// Which finger counts count as a tap. More than one is the point: a
-    /// three-finger tap and a four-finger tap are separate gestures now.
+    /// three-finger tap and a four-finger tap are separate gestures.
     /// Set from the main thread, read on the MT thread — both under `lock`.
     private var tapCounts: Set<Int32> = [3]
     /// The most fingers seen during the current tap; a four-finger tap passes
     /// through three on the way down, so the PEAK is what identifies it.
     private var tapPeak: Int32 = 0
-    /// Fastest the contacts moved during the current gesture — a tap stays
-    /// near zero, a swipe or a spread does not.
+    /// The most contacts the frame ever reported this gesture, accepted or
+    /// not — so a dropped gesture can say "6 contacts" in the log.
+    private var gesturePeak: Int32 = 0
+    /// Fastest the contacts moved during the current gesture.
     private var tapPeakSpeed: Float = 0
+    /// Farthest any contact strayed from where it landed this gesture.
+    private var tapTravel: Float = 0
+    /// Where each contact (by identifier) first touched this gesture.
+    private var landing: [Int32: (Float, Float)] = [:]
     func setTapFingers(_ n: Int) { setTapCounts([n]) }
     func setTapCounts(_ counts: Set<Int>) {
         lock.lock()
         tapCounts = Set(counts.map { Int32(max(2, min(5, $0))) })
         if tapCounts.isEmpty { tapCounts = [3] }
         lock.unlock()
+    }
+
+    // MARK: Record stride (MT thread only)
+
+    /// Bytes between consecutive contact records once known; 0 = unknown.
+    private(set) var stride = 0
+    private var strideGuess = 0
+    private var strideFramesTried = 0
+    private var strideGaveUp = false
+    /// Classic MTTouch is 96 bytes; the rest cover a field added or dropped.
+    private static let strideCandidates = [72, 80, 88, 96, 100, 104, 108, 112, 116, 120, 124, 128, 136, 144, 152, 160]
+    /// How many multi-record frames to try before settling for record 0 only.
+    private static let strideAttempts = 300
+
+    private static func looksLikeRecord(_ base: UnsafeMutableRawPointer, at off: Int, timestamp: Double) -> Bool {
+        let t = base.loadUnaligned(fromByteOffset: off + 8, as: Double.self)
+        let s = base.loadUnaligned(fromByteOffset: off + 20, as: Int32.self)
+        return t == timestamp && (0...7).contains(s)
+    }
+
+    private func resolveStride(_ base: UnsafeMutableRawPointer, numTouches: Int32, timestamp: Double) -> Int {
+        if stride > 0 {
+            // Keep the lock honest: if the second record ever stops carrying
+            // the frame's timestamp, the stride is wrong — forget it.
+            if numTouches >= 2, !Self.looksLikeRecord(base, at: stride, timestamp: timestamp) {
+                log("trackpad: record stride \(stride) stopped validating — back to first-record-only reads")
+                stride = 0; strideGuess = 0; strideFramesTried = 0
+                return 0
+            }
+            return stride
+        }
+        guard !strideGaveUp, numTouches >= 2 else { return 0 }
+        strideFramesTried += 1
+        // Record 0 must itself carry the frame's timestamp, or the layout
+        // assumption behind every offset here is already wrong.
+        var found = 0
+        if Self.looksLikeRecord(base, at: 0, timestamp: timestamp) {
+            // Stay inside the smallest buffer this many records could occupy.
+            let limit = Int(numTouches) * Self.strideCandidates[0] - 24
+            for s in Self.strideCandidates where s <= limit {
+                if Self.looksLikeRecord(base, at: s, timestamp: timestamp) { found = s; break }
+            }
+        }
+        if found > 0 {
+            if found == strideGuess {
+                stride = found
+                let layout = found == 96 ? "classic layout" : "not the classic 96"
+                log("trackpad: contact record stride detected: \(found) bytes (\(layout)) — counting every touching contact")
+            } else {
+                strideGuess = found   // confirm on a second frame before trusting it
+            }
+        } else if strideFramesTried >= Self.strideAttempts {
+            strideGaveUp = true
+            log("trackpad: record stride not detected in \(strideFramesTried) multi-contact frames — first-record-only reads")
+        }
+        return stride
     }
 
     /// Framework present + device count, without starting anything (Doctor / CLI).
@@ -164,7 +249,10 @@ final class TrackpadTapDetector {
         }
         let list = (arr as NSArray) as [AnyObject]
         lock.lock()
-        tapActive = false; tooMany = false; lastCount = -1
+        tapActive = false; tooMany = false; lastCount = -1; lastFire = -1
+        tapPeak = 0; gesturePeak = 0; tapPeakSpeed = 0; tapTravel = 0
+        landing.removeAll()
+        stride = 0; strideGuess = 0; strideFramesTried = 0; strideGaveUp = false
         lock.unlock()
         gDetector = self
         for obj in list {
@@ -196,70 +284,121 @@ final class TrackpadTapDetector {
 
     // MARK: Contact frames (multitouch thread)
 
+    private struct Contact {
+        let id: Int32
+        let state: Int32
+        let x: Float, y: Float
+        let vx: Float, vy: Float
+        var touching: Bool { (3...5).contains(state) }   // MakeTouch / Touching / BreakTouch
+    }
+
+    private static func read(_ base: UnsafeMutableRawPointer, at off: Int) -> Contact {
+        Contact(id: base.loadUnaligned(fromByteOffset: off + 16, as: Int32.self),
+                state: base.loadUnaligned(fromByteOffset: off + 20, as: Int32.self),
+                x: base.loadUnaligned(fromByteOffset: off + 32, as: Float.self),
+                y: base.loadUnaligned(fromByteOffset: off + 36, as: Float.self),
+                vx: base.loadUnaligned(fromByteOffset: off + 40, as: Float.self),
+                vy: base.loadUnaligned(fromByteOffset: off + 44, as: Float.self))
+    }
+
     fileprivate func frame(touches: UnsafeMutableRawPointer?, numTouches: Int32, timestamp: Double) {
-        var count: Int32 = 0
+        var contacts: [Contact] = []
         var rawState: Int32 = -1
+        var strideNow = 0
+        // One lock for the whole frame: it serialises with the config push
+        // (setTapCounts) and the device restart (startLocked resets every
+        // field read or written below) — both rare, both on other threads.
+        // The callbacks fire after it is released.
+        lock.lock()
         // Only ever dereference the buffer when the framework says it holds
-        // at least one record; the first record's state filters hover frames
-        // (Magic Trackpad proximity reports contacts that aren't touching).
-        var speed: Float = 0
+        // at least one record.
         if numTouches > 0, let touches {
-            let state = touches.loadUnaligned(fromByteOffset: 20, as: Int32.self)
-            rawState = state
-            let touching = (3...5).contains(state)   // MakeTouch / Touching / BreakTouch
-            count = touching ? numTouches : 0
-            // The first record's normalized velocity (pos@32/36, vel@40/44 —
-            // the same record whose state sits at 20, and the only one safe to
-            // read since macOS 26 changed the stride). One finger is enough:
-            // in a swipe or a spread they all travel together. Sampled only in
-            // the settled Touching state — MakeTouch and BreakTouch frames
-            // carry a landing spike that is not motion across the pad.
-            if state == 4 {
-                let vx = touches.loadUnaligned(fromByteOffset: 40, as: Float.self)
-                let vy = touches.loadUnaligned(fromByteOffset: 44, as: Float.self)
-                speed = (vx * vx + vy * vy).squareRoot()
+            strideNow = resolveStride(touches, numTouches: numTouches, timestamp: timestamp)
+            // With the stride known every record is read; without it only the
+            // first — the only one whose offsets are certain.
+            let n = strideNow > 0 ? Int(numTouches) : 1
+            contacts.reserveCapacity(n)
+            for i in 0..<n { contacts.append(Self.read(touches, at: i * strideNow)) }
+            rawState = contacts[0].state
+        }
+
+        // The touching count. Per record when the stride is known; otherwise
+        // record 0 speaks for the frame (hover frames — Magic Trackpad
+        // proximity, a thumb in range — read as nothing touching).
+        let touching = contacts.filter { $0.touching }
+        let count: Int32 = strideNow > 0 ? Int32(touching.count) : (touching.isEmpty ? 0 : numTouches)
+        // Motion. Velocity only in the settled Touching state — MakeTouch and
+        // BreakTouch frames carry a landing spike that is not motion across
+        // the pad. Travel is measured from where each contact landed, which a
+        // spike cannot fake.
+        var speed: Float = 0
+        var moved: Float = 0
+        for c in touching {
+            if c.state == 4 { speed = max(speed, (c.vx * c.vx + c.vy * c.vy).squareRoot()) }
+            if let origin = landing[c.id] {
+                let dx = c.x - origin.0, dy = c.y - origin.1
+                moved = max(moved, (dx * dx + dy * dy).squareRoot())
+            } else {
+                landing[c.id] = (c.x, c.y)
             }
         }
-        onRawFrame?(numTouches, rawState)
 
         var fire = false
-        var fired: Int32 = 0
-        var firedSpeed: Float = 0
-        lock.lock()
+        var gesture: Gesture?
+        var report: String?
         let accepted = tapCounts
         let ceiling = accepted.max() ?? 3
+        let minCount = accepted.min() ?? 3
         let changed = count != lastCount
         lastCount = count
+        if count > gesturePeak { gesturePeak = count }
+        if speed > tapPeakSpeed { tapPeakSpeed = speed }
+        if moved > tapTravel { tapTravel = moved }
         if count > ceiling {
             tooMany = true
         } else if accepted.contains(count) {
             if !tapActive, !tooMany {
                 tapActive = true
                 tapSince = timestamp
-                tapPeakSpeed = 0
             }
             // Four fingers land through three: keep the high-water mark, since
             // that is what says which gesture this was.
             if count > tapPeak { tapPeak = count }
-            if speed > tapPeakSpeed { tapPeakSpeed = speed }
         } else if count == 0 {
-            if tapActive, !tooMany, tapPeak > 0,
-               timestamp - tapSince <= tapWindow,
-               lastFire < 0 || timestamp - lastFire >= cooldown {
-                lastFire = timestamp
-                fire = true
-                fired = tapPeak
-                firedSpeed = tapPeakSpeed
+            if gesturePeak >= minCount {
+                // The gesture is over — decide, and say what happened.
+                let dur = tapActive ? timestamp - tapSince : 0
+                let window = window(forFingers: tapPeak)
+                let shape = String(format: "%.2fs travel %.3f speed %.2f", dur, tapTravel, tapPeakSpeed)
+                if tooMany {
+                    report = "trackpad: \(gesturePeak)-contact gesture \(shape) — dropped: more than \(ceiling) contacts"
+                } else if !tapActive || tapPeak == 0 {
+                    report = "trackpad: \(gesturePeak)-contact gesture \(shape) — dropped: never settled on an accepted count"
+                } else if dur > window {
+                    report = "trackpad: \(tapPeak)-finger gesture \(shape) — dropped: longer than the \(String(format: "%.2fs", window)) tap window"
+                } else if lastFire >= 0, timestamp - lastFire < cooldown {
+                    report = "trackpad: \(tapPeak)-finger tap \(shape) — dropped: \(String(format: "%.2fs", timestamp - lastFire)) after the last tap (cooldown \(cooldown)s)"
+                } else {
+                    lastFire = timestamp
+                    fire = true
+                    gesture = Gesture(fingers: Int(tapPeak), duration: dur, travel: tapTravel, peakSpeed: tapPeakSpeed)
+                    report = "trackpad: \(tapPeak)-finger tap \(shape) → TAP"
+                }
             }
             tapActive = false
             tooMany = false
             tapPeak = 0
+            gesturePeak = 0
             tapPeakSpeed = 0
+            tapTravel = 0
+            landing.removeAll()
         }
         lock.unlock()
 
+        onRawFrame?(numTouches, rawState)
+        if let report { log(report) }
         if changed { onContactChange?(Int(count)) }
-        if fire { onTap?(Int(fired), firedSpeed) }
+        if fire, let gesture { onTap?(gesture) }
     }
 }
 

@@ -1364,9 +1364,9 @@ case "trackpad-tap-test":
         print("\(TapProbe.stamp())  raw numTouches=\(n) state=\(state)\(note)")
     }
     detector.onContactChange = { n in print("\(TapProbe.stamp())  contacts=\(n)") }
-    detector.onTap = { fingers, speed in
-        let verdict = speed <= HotkeyMonitor.bareSummonMaxSpeed ? "tap" : "SWIPE — a bare gesture would reject this"
-        print("\(TapProbe.stamp())  TAP (\(fingers)-finger)  peak speed \(String(format: "%.2f", speed)) → \(verdict)")
+    detector.onTap = { tap in
+        let verdict = tap.travel <= HotkeyMonitor.bareSummonMaxTravel ? "tap" : "SWIPE — a bare gesture would reject this"
+        print("\(TapProbe.stamp())  TAP (\(tap.fingers)-finger)  \(String(format: "%.2fs", tap.duration))  travel \(String(format: "%.3f", tap.travel))  peak speed \(String(format: "%.2f", tap.peakSpeed)) → \(verdict)")
     }
     if !probeFingers.isEmpty { detector.setTapCounts(probeFingers) }
     detector.update(enabled: true)

@@ -244,11 +244,14 @@ final class AppController {
             case .macroPadSummon(let fingers):
                 // Four fingers bring the board, three bring the ring — the
                 // same fire-once gesture in two shapes.
+                let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
                 if self.config.macroRing, fingers == self.config.macroRingFingers,
                    fingers != self.config.macroPadSummonFingers,
                    fingers != self.config.bareSummonFingers {
+                    log("macropad: \(fingers)-finger summon → ring (front app: \(front))")
                     self.summonMacroRing()
                 } else {
+                    log("macropad: \(fingers)-finger summon → board (front app: \(front), pad \(self.macroPad.isVisible ? (self.macroPad.isSummoned ? "already summoned" : "docked") : "closed"))")
                     self.summonMacroPad()
                 }
             case .macroPadSummonClose:
@@ -360,14 +363,12 @@ final class AppController {
         macroPad.onSearchEditingChanged = { [weak self] editing in
             self?.hotkey?.macroPadSearchEditing = editing
         }
-        // The three-finger tap lands on the multitouch thread; the monitor's
-        // entry point is built for that (reads `held`, dispatches to main
-        // itself) — no actor hop, so the monitor is captured directly.
+        // The finger tap lands on the multitouch thread; the monitor's entry
+        // point is built for that (reads `held`, dispatches to main itself) —
+        // no actor hop, so the monitor is captured directly.
         trackpadTap.setTapCounts(config.tapCounts)
         monitor.bareSummonFingers = config.bareSummonFingers
-        trackpadTap.onTap = { fingers, speed in
-            monitor.trackpadThreeFingerTap(fingers: fingers, speed: speed)
-        }
+        trackpadTap.onTap = { tap in monitor.trackpadTap(tap) }
         trackpadTap.update(enabled: config.macroPad && config.macroPadThreeFingerTap)
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
