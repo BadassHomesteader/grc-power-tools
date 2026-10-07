@@ -75,6 +75,11 @@ final class Store {
             last TEXT NOT NULL,
             PRIMARY KEY(sender, folder)
         );
+        CREATE TABLE IF NOT EXISTS folder_usage(
+            folder TEXT PRIMARY KEY,
+            count INTEGER NOT NULL DEFAULT 0,
+            last REAL NOT NULL
+        );
         """)
         // Migration for clips tables created before image support.
         addColumnIfMissing(table: "clips", column: "image", ddl: "ALTER TABLE clips ADD COLUMN image BLOB")
@@ -160,6 +165,42 @@ final class Store {
                 out.append(FolderMemory(folder: String(cString: sqlite3_column_text(stmt, 0)),
                                         score: Int(sqlite3_column_int(stmt, 1))))
             }
+            return out
+        }
+    }
+
+    /// One more move into `folder`, whoever sent the mail — this is what the
+    /// learned Favorites are built from. `last` is a fractional epoch so two
+    /// filings in one second still order.
+    func noteFolderUse(folder: String) {
+        let f = folder.trimmingCharacters(in: .whitespaces)
+        guard !f.isEmpty else { return }
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            let sql = """
+            INSERT INTO folder_usage(folder, count, last) VALUES(?,1,?)
+            ON CONFLICT(folder) DO UPDATE SET count = count + 1, last = excluded.last
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, f, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+            sqlite3_step(stmt)
+        }
+    }
+
+    /// Folders filed into, most recent first.
+    func recentFolders(limit: Int = 8) -> [String] {
+        guard limit > 0 else { return [] }
+        return queue.sync {
+            guard let db else { return [] }
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT folder FROM folder_usage ORDER BY last DESC, count DESC LIMIT ?", -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int(stmt, 1, Int32(limit))
+            var out: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW { out.append(String(cString: sqlite3_column_text(stmt, 0))) }
             return out
         }
     }

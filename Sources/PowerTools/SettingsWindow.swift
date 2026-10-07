@@ -90,6 +90,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let macroSummonFingers = NSPopUpButton(frame: .zero, pullsDown: false)
     private let macroBareCheck = NSButton(checkboxWithTitle: "…or with no hotkey at all — a bare trackpad tap", target: nil, action: nil)
     private let macroBareFingers = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let macroLearned = NSPopUpButton(frame: .zero, pullsDown: false)
+    private static let learnedChoices = [0, 4, 8, 12, 16]
     private let macroFoldersView = NSTextView()
     private let macroPadStatus = NSTextField(labelWithString: " ")
 
@@ -675,7 +677,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     }
 
     private func macroPadTab() -> NSView {
-        let note = NSTextField(labelWithString: "A floating button pad (like an on-screen Stream Deck) that swaps with the app in front. Clicking a button never steals focus. First profile: Outlook filing — each folder below becomes a button that moves the selected email there (Message ▸ Move, clicked directly since New Outlook dropped its keyboard shortcut → folder name → ⏎). Add keywords after a | and the pad highlights the buttons whose keywords appear in the open email — in Outlook the message itself is read (sender address, subject, body) through Accessibility, and the pad also lights the folder this sender's mail went to before; other apps use a screenshot + on-device OCR. Nothing leaves your Mac. Drag the pad anywhere; ✕ closes it. While the pad is open, hold your hotkey and tap the button's digit (1…9, 0 = tenth) to fire it without clicking — tap several to file several emails in one hold. Buttons aren't limited to moves — any keystroke works (Delete, Archive, Reply…): add them to the Outlook profile in config.json and this editor leaves them alone. Profiles for other apps: also config.json.")
+        let note = NSTextField(labelWithString: "A floating button pad (like an on-screen Stream Deck) that swaps with the app in front. Clicking a button never steals focus. First profile: Outlook filing — each folder below becomes a button that moves the selected email there (Message ▸ Move, clicked directly since New Outlook dropped its keyboard shortcut → folder name → ⏎). Add keywords after a | and the pad highlights the buttons whose keywords appear in the open email — in Outlook the message itself is read (sender address, subject, body) through Accessibility, and the pad also lights the folder this sender's mail went to before; other apps use a screenshot + on-device OCR. Nothing leaves your Mac. Favorites also learn: any folder you file into — from the Move box, the picker or the ring — joins the Favorites column by itself, most recent first, after the folders listed below (whose digits never move); list a folder below to pin it. Drag the pad anywhere; ✕ closes it. While the pad is open, hold your hotkey and tap the button's digit (1…9, 0 = tenth) to fire it without clicking — tap several to file several emails in one hold. Buttons aren't limited to moves — any keystroke works (Delete, Archive, Reply…): add them to the Outlook profile in config.json and this editor leaves them alone. Profiles for other apps: also config.json.")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         note.lineBreakMode = .byWordWrapping
@@ -694,6 +696,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroBareFingers.addItems(withTitles: ["Four fingers", "Five fingers (safest)"])
         macroBareFingers.target = self
         macroBareFingers.action = #selector(macroBareFingersChanged)
+        // Folders you file into join the Favorites column by themselves, most
+        // recent first, after the ones listed below (whose digits never move).
+        macroLearned.addItems(withTitles: ["Off", "4 folders", "8 folders", "12 folders", "16 folders"])
+        macroLearned.target = self
+        macroLearned.action = #selector(macroLearnedChanged)
 
         let example = NSTextField(labelWithString: "One folder per line, optional keywords:   Projects | acme, quarterly")
         example.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
@@ -790,7 +797,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             section("Macro Pad", [note, macroPadCheck, macroSummonCheck,
                                   formRow("Summon fingers", macroSummonFingers, labelWidth: 112),
                                   macroBareCheck,
-                                  formRow("Bare tap fingers", macroBareFingers, labelWidth: 112)], width: 560),
+                                  formRow("Bare tap fingers", macroBareFingers, labelWidth: 112),
+                                  formRow("Learned favorites", macroLearned, labelWidth: 112)], width: 560),
             section("Outlook folders", [example, scroll, saveBtn, macroPadStatus], width: 560),
             section("All profiles & buttons", [
                 editorNote,
@@ -1126,6 +1134,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
     @objc private func macroBareFingersChanged() {
         config.macroPadBareSummonFingers = macroBareFingers.indexOfSelectedItem + 4   // 0→4, 1→5
+        config.save()
+        onConfigChange(config)
+    }
+
+    @objc private func macroLearnedChanged() {
+        let i = max(0, min(Self.learnedChoices.count - 1, macroLearned.indexOfSelectedItem))
+        config.macroPadLearnedFavorites = Self.learnedChoices[i]
         config.save()
         onConfigChange(config)
     }
@@ -1567,6 +1582,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         macroSummonFingers.selectItem(at: max(0, min(1, config.macroPadSummonFingers - 3)))
         macroBareCheck.state = config.macroPadBareSummon ? .on : .off
         macroBareFingers.selectItem(at: max(0, min(1, config.macroPadBareSummonFingers - 4)))
+        macroLearned.selectItem(at: Self.learnedChoices.firstIndex(of: config.macroPadLearnedFavorites) ?? 2)
         agentPadCheck.state = config.agentPad ? .on : .off
         shelfCheck.state = config.shelf ? .on : .off
         shelfMaxPopup.selectItem(at: [10, 20, 40, 80, 200].firstIndex(of: config.shelfMaxItems) ?? 2)

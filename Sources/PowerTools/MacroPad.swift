@@ -177,6 +177,29 @@ final class MacroPad {
     /// Where mail from each sender went (fed by the controller on every move,
     /// read here for suggestions). Outlook only.
     weak var store: Store?
+    /// Learned Favorites: folders filed into, most recent first, appended to
+    /// the Outlook profile after the pinned buttons. `learnedLimit` is how
+    /// many (Settings ▸ Macro Pad ▸ Learned favorites; 0 = off).
+    var learnedLimit = 8
+    private var learnedFolders: [String] = []
+
+    /// Re-read the learned list; true when it changed (a folder was just
+    /// filed into, or the limit moved).
+    @discardableResult
+    private func refreshLearnedFolders() -> Bool {
+        let fresh = learnedLimit > 0 ? (store?.recentFolders(limit: learnedLimit + 24) ?? []) : []
+        guard fresh != learnedFolders else { return false }
+        learnedFolders = fresh
+        return true
+    }
+
+    /// The buttons the pad would show for `bundleID` right now — the
+    /// configured ones plus, for Outlook, the learned tail. The ring draws
+    /// from the same list so the two surfaces never disagree.
+    func effectiveButtons(for bundleID: String) -> [Config.MacroButton] {
+        if bundleID == OutlookReader.bundleID { refreshLearnedFolders() }
+        return profile(for: bundleID)?.buttons ?? []
+    }
 
     var isVisible: Bool { panel != nil }
     /// Fired on show/hide and profile swaps so the hotkey tap knows when (and
@@ -268,6 +291,7 @@ final class MacroPad {
             summonPoint = cursor
             miniActive = false   // a summoned pad is always the full pad
         }
+        if currentBundleID == OutlookReader.bundleID { refreshLearnedFolders() }
         buildPanel(on: screen)
         render(on: screen)   // render ends with notifyState()
         startSuggestTimer()
@@ -506,7 +530,14 @@ final class MacroPad {
         let folder = preservingHighlights ? view.suggestedFolder : nil
         if !preservingHighlights { lastCapture = nil; lastMessageIdentity = nil }
         var current: Config.MacroProfile?
-        if let id = currentBundleID { current = profile(for: id) }
+        var learned: Set<Int> = []
+        if let id = currentBundleID {
+            current = profile(for: id)
+            // The learned tail sits after the configured buttons.
+            let pinned = profiles.first { $0.bundleID.caseInsensitiveCompare(id) == .orderedSame }?.buttons.count ?? 0
+            let total = current?.buttons.count ?? pinned
+            if total > pinned { learned = Set(pinned..<total) }
+        }
         // Summoned = the plain full pad, never the strip.
         let summoned = summonPoint != nil
         let wasEditing = view.isSearchEditing
@@ -515,7 +546,8 @@ final class MacroPad {
         view.configure(appName: currentAppName.isEmpty ? "No app" : currentAppName,
                        buttons: current?.buttons ?? [], dark: dark, hotkeyName: hotkeyName,
                        mini: !summoned && miniActive,
-                       peeking: !summoned && miniPreferred && !miniActive)
+                       peeking: !summoned && miniPreferred && !miniActive,
+                       learned: learned)
         // A profile swap / collapse that hides the search box mid-edit must
         // also hand key back, or the new app in front gets no keyboard.
         if wasEditing, !view.searchFieldVisible { releaseKey() }
@@ -580,8 +612,22 @@ final class MacroPad {
         notifyState()
     }
 
+    /// The profile for `bundleID` — for Outlook, with the learned Favorites
+    /// appended: every folder filed into that isn't already a pinned button,
+    /// most recent first, capped at `learnedLimit`. Appended, never
+    /// interleaved, so the pinned buttons' digits stay put.
     private func profile(for bundleID: String) -> Config.MacroProfile? {
-        profiles.first { $0.bundleID.caseInsensitiveCompare(bundleID) == .orderedSame }
+        guard var p = profiles.first(where: { $0.bundleID.caseInsensitiveCompare(bundleID) == .orderedSame }) else { return nil }
+        guard bundleID == OutlookReader.bundleID, learnedLimit > 0, !learnedFolders.isEmpty else { return p }
+        let pinned = Set(p.buttons.filter { $0.menuPath == Config.MacroButton.moveMenuPath }.map { $0.text.lowercased() })
+        var added = 0
+        for folder in learnedFolders where !pinned.contains(folder.lowercased()) {
+            p.buttons.append(Config.MacroButton(title: folder, text: folder, pressReturn: true,
+                                                menuPath: Config.MacroButton.moveMenuPath, group: "Favorites"))
+            added += 1
+            if added >= learnedLimit { break }
+        }
+        return p
     }
 
     // MARK: Chords
@@ -623,7 +669,18 @@ final class MacroPad {
 
     private func refreshSuggestions() {
         guard isVisible, let bundleID = currentBundleID, let profile = profile(for: bundleID) else { return }
-        if bundleID == OutlookReader.bundleID { refreshOutlookSuggestions(profile: profile); return }
+        if bundleID == OutlookReader.bundleID {
+            if refreshLearnedFolders() {
+                // A folder just filed into joined the Favorites: re-lay the pad
+                // (render refreshes suggestions again with the new list) and
+                // let the next read re-aim the highlights.
+                lastMessageIdentity = nil
+                render(preservingHighlights: true)
+                return
+            }
+            refreshOutlookSuggestions(profile: profile)
+            return
+        }
         let keyworded = profile.buttons.contains { !$0.keywords.trimmingCharacters(in: .whitespaces).isEmpty }
         guard keyworded, CGPreflightScreenCaptureAccess() else { return }
         // Only scan while the target app is actually in front — its window is
@@ -866,10 +923,15 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Indices of the learned Favorites (the tail): drawn a shade quieter so
+    /// the pinned list reads as the one you wrote.
+    private var learned: Set<Int> = []
+
     func configure(appName: String, buttons: [Config.MacroButton], dark: Bool, hotkeyName: String = "",
-                   mini: Bool = false, peeking: Bool = false) {
+                   mini: Bool = false, peeking: Bool = false, learned: Set<Int> = []) {
         self.appName = appName
         self.buttons = buttons
+        self.learned = learned
         self.dark = dark
         self.mini = mini
         self.peeking = peeking
@@ -1199,7 +1261,7 @@ final class MacroPadView: NSView, NSTextFieldDelegate {
             let title = btn.title as NSString
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 12, weight: isSuggested ? .semibold : .regular),
-                .foregroundColor: isPressed ? NSColor.white : fg,
+                .foregroundColor: isPressed ? NSColor.white : (learned.contains(i) ? fg.withAlphaComponent(0.7) : fg),
                 .paragraphStyle: {
                     let p = NSMutableParagraphStyle()
                     p.lineBreakMode = .byTruncatingTail

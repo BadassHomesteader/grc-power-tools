@@ -29,6 +29,7 @@ final class AppController {
             hotkey?.setConnectionLeaders(Self.leaderMap(config.connections))
             windowSwitcher.dark = config.appearance.isDark
             grabAndMove.update(enabled: config.grabAndMove, modifiers: config.grabMoveModifiers.flags)
+            macroPad.learnedLimit = config.macroPadLearnedFavorites
             macroPad.update(enabled: config.macroPad, profiles: config.macroPadProfiles,
                             dark: config.appearance.isDark)
             hotkey?.powerRingEnabled = config.powerRing
@@ -361,6 +362,7 @@ final class AppController {
             self?.hotkey?.macroPadSummoned = summoned
         }
         macroPad.store = store   // sender → folder memory, for suggestions
+        macroPad.learnedLimit = config.macroPadLearnedFavorites
         macroPad.onSearchEditingChanged = { [weak self] editing in
             self?.hotkey?.macroPadSearchEditing = editing
         }
@@ -996,7 +998,8 @@ final class AppController {
         let app = NSWorkspace.shared.frontmostApplication
         let bundleID = (app?.bundleIdentifier == "com.grc.whisper" ? nil : app?.bundleIdentifier) ?? ""
         let appLabel = (app?.bundleIdentifier == "com.grc.whisper" ? nil : app?.localizedName) ?? "No app"
-        let buttons = config.macroPadProfiles.first { $0.bundleID == bundleID }?.buttons ?? []
+        // The same list the board shows — learned Favorites included.
+        let buttons = macroPad.effectiveButtons(for: bundleID)
         guard !buttons.isEmpty else {
             overlay.showError("No macros for \(appLabel) — add them in Settings ▸ Macro Pad")
             return
@@ -1706,7 +1709,9 @@ final class AppController {
             await Task.detached(priority: .userInitiated) { [weak self] in
                 let sender = isOutlookMove ? (OutlookReader.currentMessage()?.fromAddress ?? "") : ""
                 func remember() {
-                    guard isOutlookMove, !sender.isEmpty else { return }
+                    guard isOutlookMove else { return }
+                    store.noteFolderUse(folder: button.text)   // the learned Favorites
+                    guard !sender.isEmpty else { return }
                     store.rememberFolder(sender: sender, folder: button.text)
                     log("macropad: remembered “\(button.text)” for mail from \(sender.split(separator: "@").last.map(String.init) ?? "?")")
                 }

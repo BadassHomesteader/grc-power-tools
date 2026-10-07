@@ -365,6 +365,10 @@ struct Config: Codable {
     /// Fingers for that bare tap. Five is the safe default: four sits under
     /// Mission Control / App Exposé / space switching, which are live.
     var macroPadBareSummonFingers: Int = 5
+    /// Favorites the Outlook pad LEARNS from your own filing: any folder a
+    /// move goes to joins the Favorites column, most recent first, after the
+    /// pinned ones (whose digits never move). How many; 0 = off.
+    var macroPadLearnedFavorites: Int = 8
     /// The bare count the monitor should honour, or 0 when the gesture is off.
     var bareSummonFingers: Int { macroPadBareSummon ? macroPadBareSummonFingers : 0 }
     /// Every contact count the detector needs to watch for.
@@ -550,7 +554,7 @@ struct Config: Codable {
         case captureEndpoint, captureAuthHeader, captureBodyTemplate
         case connections
         case macroPad, macroPadProfiles, macroPadStepDelayMs, macroPadThreeFingerTap, macroPadSummonFingers
-        case macroRing, macroRingFingers, macroPadBareSummon, macroPadBareSummonFingers
+        case macroRing, macroRingFingers, macroPadBareSummon, macroPadBareSummonFingers, macroPadLearnedFavorites
         case agentPad, agentPadPort, agentPadCodex, agentPadCursor, agentPadGrok, restorePads
         case notchStrip, notchAgents, notchQuota, notchQuotaAt, notchStripMigrated
         case showInCaptures
@@ -631,6 +635,7 @@ struct Config: Codable {
         macroRing = field(.macroRing, true)
         macroPadBareSummon = field(.macroPadBareSummon, true)
         macroPadBareSummonFingers = min(5, max(4, field(.macroPadBareSummonFingers, 5)))
+        macroPadLearnedFavorites = min(24, max(0, field(.macroPadLearnedFavorites, 8)))
         agentPad = field(.agentPad, true)
         agentPadPort = field(.agentPadPort, 8377)
         agentPadCodex = field(.agentPadCodex, true)
