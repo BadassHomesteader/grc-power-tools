@@ -165,7 +165,6 @@ final class ClockModuleView: NotchModuleView {
 final class HotkeysModuleView: NotchModuleView {
     private let sections: [(title: String, rows: [(key: String, title: String)])]
     private let hotkeyName: String
-    private var page = 0
 
     init(hotkeyName: String, connections: [(key: String, name: String)]) {
         self.sections = HotkeyCheatSheetView.buildSections(connections)
@@ -174,54 +173,56 @@ final class HotkeysModuleView: NotchModuleView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Two columns of sections per page — the sheet is far taller than the
-    /// notch may ever be, so it pages rather than scrolls.
-    private var pages: [[(title: String, rows: [(key: String, title: String)])]] {
-        stride(from: 0, to: sections.count, by: 4).map {
-            Array(sections[$0..<Swift.min($0 + 4, sections.count)])
+    private static let cols = 3
+    private static let top: CGFloat = 34
+    private static let titleH: CGFloat = 15
+    private static let rowH: CGFloat = 18
+    private static let gap: CGFloat = 10
+
+    /// Every chord on ONE page: each section drops, in order, into whichever
+    /// column is shortest so far. It used to page four sections at a time and
+    /// cap each at six rows, which silently hid the tail of any longer one.
+    private var columns: [[(title: String, rows: [(key: String, title: String)])]] {
+        var cols = Array(repeating: [(title: String, rows: [(key: String, title: String)])](), count: Self.cols)
+        var heights = Array(repeating: CGFloat(0), count: Self.cols)
+        for section in sections {
+            let i = heights.indices.min { heights[$0] < heights[$1] } ?? 0
+            cols[i].append(section)
+            heights[i] += Self.titleH + CGFloat(section.rows.count) * Self.rowH + Self.gap
         }
+        return cols
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let all = pages
-        guard !all.isEmpty else { return }
-        page = Swift.min(page, all.count - 1)
         ("Hold \(hotkeyName), then…" as NSString)
             .draw(at: NSPoint(x: 16, y: 10), withAttributes: NotchTheme.title())
-        if all.count > 1 {
-            let p = "\(page + 1)/\(all.count)  ›" as NSString
-            p.draw(at: NSPoint(x: bounds.width - 16 - p.size(withAttributes: NotchTheme.small()).width, y: 12),
-                   withAttributes: NotchTheme.small())
-        }
-        let colW = (bounds.width - 32) / 2
-        for (i, section) in all[page].enumerated() {
-            let x = 16 + CGFloat(i % 2) * colW
-            var y: CGFloat = 34 + CGFloat(i / 2) * 140
-            (section.title as NSString).draw(at: NSPoint(x: x, y: y),
-                                             withAttributes: NotchTheme.small(9))
-            y += 15
-            for row in section.rows.prefix(6) {
-                guard y < bounds.height - 14 else { break }
-                let key = row.key as NSString
-                let kw = Swift.max(key.size(withAttributes: NotchTheme.title(10)).width + 10, 24)
-                let box = NSRect(x: x, y: y, width: kw, height: 15)
-                NotchTheme.faint.setFill()
-                NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3).fill()
-                key.draw(at: NSPoint(x: box.midX - key.size(withAttributes: NotchTheme.title(10)).width / 2,
-                                     y: y + 1), withAttributes: NotchTheme.title(10))
-                let p = NSMutableParagraphStyle(); p.lineBreakMode = .byTruncatingTail
-                var attrs = NotchTheme.small(10); attrs[.paragraphStyle] = p
-                (row.title as NSString).draw(
-                    in: NSRect(x: x + kw + 6, y: y + 1, width: colW - kw - 14, height: 14),
-                    withAttributes: attrs)
-                y += 18
+        let colW = (bounds.width - 32) / CGFloat(Self.cols)
+        for (i, column) in columns.enumerated() {
+            let x = 16 + CGFloat(i) * colW
+            var y = Self.top
+            for section in column {
+                (section.title as NSString).draw(at: NSPoint(x: x, y: y),
+                                                 withAttributes: NotchTheme.small(9))
+                y += Self.titleH
+                for row in section.rows {
+                    guard y < bounds.height - 14 else { break }
+                    let key = row.key as NSString
+                    let kw = Swift.max(key.size(withAttributes: NotchTheme.title(10)).width + 10, 24)
+                    let box = NSRect(x: x, y: y, width: kw, height: 15)
+                    NotchTheme.faint.setFill()
+                    NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3).fill()
+                    key.draw(at: NSPoint(x: box.midX - key.size(withAttributes: NotchTheme.title(10)).width / 2,
+                                         y: y + 1), withAttributes: NotchTheme.title(10))
+                    let p = NSMutableParagraphStyle(); p.lineBreakMode = .byTruncatingTail
+                    var attrs = NotchTheme.small(10); attrs[.paragraphStyle] = p
+                    (row.title as NSString).draw(
+                        in: NSRect(x: x + kw + 6, y: y + 1, width: colW - kw - 14, height: 14),
+                        withAttributes: attrs)
+                    y += Self.rowH
+                }
+                y += Self.gap
             }
         }
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        page = (page + 1) % Swift.max(pages.count, 1)
-        needsDisplay = true
     }
 }
 

@@ -1725,6 +1725,22 @@ case "camera-test":
         exit(fails == 0 ? 0 : 1)
     }
 
+case "notchhotkeys-preview":
+    // Offscreen render of the notch's Hotkeys module, at the size it is hosted.
+    let out = args.count >= 2 ? args[1] : "notchhotkeys-preview.png"
+    MainActor.assumeIsolated {
+        let host = NotchPreviewPlate(frame: NSRect(x: 0, y: 0, width: 660, height: 300))
+        let v = HotkeysModuleView(hotkeyName: "Option + Shift", connections: [(key: "N", name: "Todo")])
+        v.frame = host.bounds
+        host.addSubview(v)
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out))
+            print("wrote \(out) — hotkeys 660x300")
+        }
+    }
+
 case "notchtimers-preview":
     // "running" plants a countdown so the bar and the controls render.
     let out = args.count >= 2 ? args[1] : "notchtimers-preview.png"
