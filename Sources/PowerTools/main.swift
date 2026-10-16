@@ -511,6 +511,15 @@ case "whiteboard-live-test":
         view.finishPolygon()
         check(!view.isDrawingPolygon && view.strokeCount == 4, "2-vertex polygon dropped on finish")
 
+        // Line: a drag commits one stroke; a bare click (<3pt) doesn't.
+        view.selectTool(.line)
+        view.mouseDown(with: mouse(.leftMouseDown, NSPoint(x: box.minX + 40, y: box.minY + 240)))
+        view.mouseDragged(with: mouse(.leftMouseDragged, NSPoint(x: box.minX + 200, y: box.minY + 250)))
+        view.mouseUp(with: mouse(.leftMouseUp, NSPoint(x: box.minX + 200, y: box.minY + 250)))
+        view.mouseDown(with: mouse(.leftMouseDown, NSPoint(x: box.minX + 300, y: box.minY + 240)))
+        view.mouseUp(with: mouse(.leftMouseUp, NSPoint(x: box.minX + 301, y: box.minY + 240)))
+        check(view.strokeCount == 5, "line drag committed one stroke, bare click none")
+
         // Save composites at the source's pixel size and dismisses.
         view.save()
         pump()

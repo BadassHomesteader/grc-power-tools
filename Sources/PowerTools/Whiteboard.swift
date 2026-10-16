@@ -2,7 +2,7 @@ import Cocoa
 
 /// Annotation whiteboard (hold hotkey + E): a full-screen dimmed overlay showing
 /// the clipboard image (typically the hold + S shot just taken), centered at its
-/// physical size. Draw pen / arrow / rect / text / circle / polygon over it; ⏎ composites the ink at
+/// physical size. Draw pen / arrow / rect / text / circle / polygon / line over it; ⏎ composites the ink at
 /// the image's FULL original pixel resolution and copies the result to the
 /// clipboard; Esc cancels. Same KeyableWindow + local-monitor recipe as the grid
 /// and Quick Capture, because the text tool puts a field editor in play.
@@ -88,8 +88,8 @@ final class Whiteboard {
 
 /// Raw value + 1 is the digit shortcut, so new tools append (keeps 1–4 stable).
 enum WBTool: Int, CaseIterable {
-    case pen = 0, arrow, rect, text, circle, polygon
-    var label: String { ["Pen 1", "Arrow 2", "Rect 3", "Text 4", "Circle 5", "Polygon 6"][rawValue] }
+    case pen = 0, arrow, rect, text, circle, polygon, line
+    var label: String { ["Pen 1", "Arrow 2", "Rect 3", "Text 4", "Circle 5", "Polygon 6", "Line 7"][rawValue] }
 }
 
 /// One annotation, in IMAGE-LOCAL VIEW POINTS: relative to imageRect.origin,
@@ -99,7 +99,7 @@ struct WBStroke {
     var tool: WBTool
     var color: NSColor
     var width: CGFloat = 3          // line width in image-local view points
-    var points: [NSPoint]           // pen: full path; arrow/rect/circle: [start, end]; polygon: vertices; text: [origin]
+    var points: [NSPoint]           // pen: full path; arrow/rect/circle/line: [start, end]; polygon: vertices; text: [origin]
     var text: String = ""           // text tool only
     var fontSize: CGFloat = 18      // text tool only, image-local view points
 }
@@ -284,11 +284,11 @@ final class WhiteboardView: NSView, NSTextFieldDelegate {
     override func mouseUp(with event: NSEvent) {
         guard let s = current else { return }
         current = nil
-        // Drop degenerates: a bare click with pen, or a <3pt arrow/rect/circle.
+        // Drop degenerates: a bare click with pen, or a <3pt arrow/rect/circle/line.
         switch s.tool {
         case .pen:
             if s.points.count >= 2 { strokes.append(s) }
-        case .arrow, .rect, .circle:
+        case .arrow, .rect, .circle, .line:
             if hypot(s.points[1].x - s.points[0].x, s.points[1].y - s.points[0].y) >= 3 { strokes.append(s) }
         case .text, .polygon:
             break
@@ -579,6 +579,14 @@ final class WhiteboardView: NSView, NSTextFieldDelegate {
             path.lineWidth = s.width
             path.lineJoinStyle = .round
             path.stroke()
+        case .line:
+            guard s.points.count >= 2 else { return }
+            let path = NSBezierPath()
+            path.lineWidth = s.width
+            path.lineCapStyle = .round
+            path.move(to: s.points[0])
+            path.line(to: s.points[1])
+            path.stroke()
         case .circle:
             guard s.points.count >= 2 else { return }
             let r = NSRect(x: min(s.points[0].x, s.points[1].x), y: min(s.points[0].y, s.points[1].y),
@@ -687,6 +695,8 @@ extension WhiteboardView {
             WBStroke(tool: .polygon, color: palette[3],
                      points: [NSPoint(x: w * 0.79, y: h * 0.6), NSPoint(x: w * 0.95, y: h * 0.68),
                               NSPoint(x: w * 0.91, y: h * 0.9), NSPoint(x: w * 0.77, y: h * 0.84)]),
+            WBStroke(tool: .line, color: palette[0],
+                     points: [NSPoint(x: w * 0.55, y: h * 0.06), NSPoint(x: w * 0.72, y: h * 0.22)]),
         ]
     }
 
