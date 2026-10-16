@@ -2,7 +2,7 @@ import Cocoa
 
 /// Annotation whiteboard (hold hotkey + E): a full-screen dimmed overlay showing
 /// the clipboard image (typically the hold + S shot just taken), centered at its
-/// physical size. Draw pen / arrow / rect / text over it; ⏎ composites the ink at
+/// physical size. Draw pen / arrow / rect / text / circle / polygon over it; ⏎ composites the ink at
 /// the image's FULL original pixel resolution and copies the result to the
 /// clipboard; Esc cancels. Same KeyableWindow + local-monitor recipe as the grid
 /// and Quick Capture, because the text tool puts a field editor in play.
@@ -54,8 +54,11 @@ final class Whiteboard {
                 default: return event
                 }
             }
-            if event.keyCode == 36 || event.keyCode == 76 { view.save(); return nil }  // ⏎ / keypad enter
-            if let n = Int(event.charactersIgnoringModifiers ?? ""), (1...4).contains(n) {
+            if event.keyCode == 36 || event.keyCode == 76 {  // ⏎ / keypad enter
+                if view.isDrawingPolygon { view.finishPolygon() } else { view.save() }
+                return nil
+            }
+            if let n = Int(event.charactersIgnoringModifiers ?? ""), (1...WBTool.allCases.count).contains(n) {
                 view.selectTool(WBTool(rawValue: n - 1)!)
                 return nil
             }
@@ -64,10 +67,13 @@ final class Whiteboard {
     }
 
     /// Every Esc path (tap dispatch, local monitor, field editor) funnels here:
-    /// a live text entry is cancelled first; the next Esc closes the board.
+    /// a live text entry or half-drawn polygon is cancelled first; the next Esc
+    /// closes the board.
     func handleEscape() {
         guard let view = window?.contentView as? WhiteboardView else { return }
-        if view.isEditingText { view.cancelActiveText() } else { view.onCancel?() }
+        if view.isEditingText { view.cancelActiveText() }
+        else if view.isDrawingPolygon { view.cancelPolygon() }
+        else { view.onCancel?() }
     }
 
     func dismiss() {
@@ -80,9 +86,10 @@ final class Whiteboard {
     }
 }
 
+/// Raw value + 1 is the digit shortcut, so new tools append (keeps 1–4 stable).
 enum WBTool: Int, CaseIterable {
-    case pen = 0, arrow, rect, text
-    var label: String { ["Pen 1", "Arrow 2", "Rect 3", "Text 4"][rawValue] }
+    case pen = 0, arrow, rect, text, circle, polygon
+    var label: String { ["Pen 1", "Arrow 2", "Rect 3", "Text 4", "Circle 5", "Polygon 6"][rawValue] }
 }
 
 /// One annotation, in IMAGE-LOCAL VIEW POINTS: relative to imageRect.origin,
@@ -92,7 +99,7 @@ struct WBStroke {
     var tool: WBTool
     var color: NSColor
     var width: CGFloat = 3          // line width in image-local view points
-    var points: [NSPoint]           // pen: full path; arrow/rect: [start, end]; text: [origin]
+    var points: [NSPoint]           // pen: full path; arrow/rect/circle: [start, end]; polygon: vertices; text: [origin]
     var text: String = ""           // text tool only
     var fontSize: CGFloat = 18      // text tool only, image-local view points
 }
@@ -107,6 +114,9 @@ final class WhiteboardView: NSView, NSTextFieldDelegate {
     private let dark: Bool
     private var strokes: [WBStroke] = []
     private var current: WBStroke?         // in-progress drag
+    private var polygon: WBStroke?         // in-progress polygon: vertices placed so far
+    private var polygonCursor: NSPoint?    // image-local; rubber-band edge to the next vertex
+    private static let closeRadius: CGFloat = 8  // click this close to vertex 1 to close
     private var tool: WBTool = .pen
     private var colorIndex = 0
     private var activeText: NSTextField?
@@ -142,16 +152,21 @@ final class WhiteboardView: NSView, NSTextFieldDelegate {
     override var isFlipped: Bool { false }  // y up — matches strokes, bitmap contexts, NSString.draw
 
     var isEditingText: Bool { activeText != nil }
+    var isDrawingPolygon: Bool { polygon != nil }
     /// Committed annotation count — the `whiteboard-live-test` harness asserts on it.
     var strokeCount: Int { strokes.count }
     /// The live text entry, for the harness to type into.
     var activeTextField: NSTextField? { activeText }
 
     /// For the offscreen `whiteboard-preview` / `whiteboard-export-test` checks.
-    func previewSeed(strokes: [WBStroke], tool: WBTool, colorIndex: Int) {
+    func previewSeed(strokes: [WBStroke], tool: WBTool, colorIndex: Int,
+                     pendingPolygon: [NSPoint] = [], cursor: NSPoint? = nil) {
         self.strokes = strokes
         self.tool = tool
         self.colorIndex = colorIndex
+        polygon = pendingPolygon.isEmpty ? nil
+            : WBStroke(tool: .polygon, color: Self.palette[colorIndex], points: pendingPolygon)
+        polygonCursor = cursor
         needsDisplay = true
     }
 
@@ -237,8 +252,10 @@ final class WhiteboardView: NSView, NSTextFieldDelegate {
         if let hit = toolbarItems.first(where: { $0.rect.insetBy(dx: -4, dy: -4).contains(p) }) {
             commitActiveText()
             switch hit.item {
-            case .tool(let t): tool = t
-            case .color(let i): colorIndex = i
+            case .tool(let t): selectTool(t)  // finishes a pending polygon
+            case .color(let i):
+                colorIndex = i
+                polygon?.color = Self.palette[i]  // recolor the shape being drawn
             case .undo: undo()
             case .save: save()
             case .cancel: onCancel?()
@@ -251,11 +268,13 @@ final class WhiteboardView: NSView, NSTextFieldDelegate {
         commitActiveText()
         let ip = toImageLocal(p)
         if tool == .text { beginText(at: ip); return }
+        if tool == .polygon { placeVertex(at: ip, clickCount: event.clickCount); return }
         current = WBStroke(tool: tool, color: Self.palette[colorIndex],
                            points: tool == .pen ? [ip] : [ip, ip])
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if polygon != nil { trackPolygonCursor(event); return }
         guard current != nil else { return }
         let ip = clampedImageLocal(convert(event.locationInWindow, from: nil))
         if current!.tool == .pen { current!.points.append(ip) } else { current!.points[1] = ip }
@@ -265,39 +284,113 @@ final class WhiteboardView: NSView, NSTextFieldDelegate {
     override func mouseUp(with event: NSEvent) {
         guard let s = current else { return }
         current = nil
-        // Drop degenerates: a bare click with pen, or a <3pt arrow/rect.
+        // Drop degenerates: a bare click with pen, or a <3pt arrow/rect/circle.
         switch s.tool {
         case .pen:
             if s.points.count >= 2 { strokes.append(s) }
-        case .arrow, .rect:
+        case .arrow, .rect, .circle:
             if hypot(s.points[1].x - s.points[0].x, s.points[1].y - s.points[0].y) >= 3 { strokes.append(s) }
-        case .text:
+        case .text, .polygon:
             break
         }
         needsDisplay = true
     }
 
+    override func mouseMoved(with event: NSEvent) {
+        if polygon != nil { trackPolygonCursor(event) }
+    }
+
+    /// Mouse-moved events drive the polygon's rubber-band edge. activeAlways:
+    /// the board may not be the key window (activation can lose to the app below).
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { onCancel?() }  // Esc — normally handled upstream; belt and braces
+        if event.keyCode == 53 {  // Esc — normally handled upstream; belt and braces
+            if polygon != nil { cancelPolygon() } else { onCancel?() }
+        }
     }
 
     // MARK: - Actions
 
     func selectTool(_ t: WBTool) {
         commitActiveText()
+        finishPolygon()
         tool = t
         needsDisplay = true
     }
 
+    /// Mid-polygon, undo takes back the last vertex; otherwise the last stroke.
     func undo() {
         commitActiveText()
-        _ = strokes.popLast()
+        if var poly = polygon {
+            poly.points.removeLast()
+            polygon = poly.points.isEmpty ? nil : poly
+        } else {
+            _ = strokes.popLast()
+        }
         needsDisplay = true
     }
 
     func save() {
         commitActiveText()
+        finishPolygon()
         onSave?(renderAnnotatedPNG() ?? pngOriginal)
+    }
+
+    // MARK: - Polygon tool
+
+    /// Each click places a vertex. Clicking back on vertex 1 or double-clicking
+    /// closes the shape (⏎ too, via the key monitor).
+    private func placeVertex(at ip: NSPoint, clickCount: Int) {
+        guard var poly = polygon else {
+            // The 2nd click of a double-click that just closed a shape — not a new start.
+            guard clickCount == 1 else { return }
+            polygon = WBStroke(tool: .polygon, color: Self.palette[colorIndex], points: [ip])
+            polygonCursor = ip
+            needsDisplay = true
+            return
+        }
+        // The double-click's first click already placed this vertex.
+        if clickCount >= 2 { finishPolygon(); return }
+        if poly.points.count >= 3,
+           hypot(ip.x - poly.points[0].x, ip.y - poly.points[0].y) <= Self.closeRadius {
+            finishPolygon()
+            return
+        }
+        poly.points.append(ip)
+        polygon = poly
+        needsDisplay = true
+    }
+
+    private func trackPolygonCursor(_ event: NSEvent) {
+        recalcIfNeeded()
+        polygonCursor = clampedImageLocal(convert(event.locationInWindow, from: nil))
+        needsDisplay = true
+    }
+
+    /// Closes and commits the in-progress polygon; fewer than 3 vertices (or a
+    /// shape under 3pt across) isn't a polygon and is dropped.
+    func finishPolygon() {
+        guard let poly = polygon else { return }
+        polygon = nil
+        polygonCursor = nil
+        let xs = poly.points.map(\.x), ys = poly.points.map(\.y)
+        if poly.points.count >= 3,
+           max(xs.max()! - xs.min()!, ys.max()! - ys.min()!) >= 3 {
+            strokes.append(poly)
+        }
+        needsDisplay = true
+    }
+
+    func cancelPolygon() {
+        polygon = nil
+        polygonCursor = nil
+        needsDisplay = true
     }
 
     // MARK: - Text tool
@@ -374,14 +467,47 @@ final class WhiteboardView: NSView, NSTextFieldDelegate {
         t.concat()
         for s in strokes { Self.drawStroke(s) }
         if let current { Self.drawStroke(current) }
+        if let polygon { drawPendingPolygon(polygon) }
         NSGraphicsContext.current?.restoreGraphicsState()
 
         drawToolbar()
     }
 
+    /// The open polyline so far, a rubber-band edge to the cursor, and a ring
+    /// on vertex 1 marking where to click to close. Screen-only — never exported.
+    private func drawPendingPolygon(_ poly: WBStroke) {
+        guard let first = poly.points.first else { return }
+        poly.color.set()
+        let path = NSBezierPath()
+        path.lineWidth = poly.width
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        path.move(to: first)
+        for p in poly.points.dropFirst() { path.line(to: p) }
+        if let polygonCursor { path.line(to: polygonCursor) }
+        path.stroke()
+        let r = Self.closeRadius
+        let ring = NSBezierPath(ovalIn: NSRect(x: first.x - r, y: first.y - r, width: r * 2, height: r * 2))
+        ring.lineWidth = 1.5
+        ring.stroke()
+    }
+
     private func drawToolbar() {
         NSColor.black.withAlphaComponent(0.55).setFill()
         NSBezierPath(roundedRect: toolbarFrame, xRadius: 14, yRadius: 14).fill()
+
+        if polygon != nil {
+            let hint = "Click the first point, double-click, or ⏎ to close · ⌘Z removes a point · esc discards"
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.9),
+            ]
+            let size = (hint as NSString).size(withAttributes: attrs)
+            let pill = NSRect(x: bounds.midX - size.width / 2 - 10, y: toolbarFrame.maxY + 6,
+                              width: size.width + 20, height: size.height + 8)
+            NSBezierPath(roundedRect: pill, xRadius: pill.height / 2, yRadius: pill.height / 2).fill()
+            (hint as NSString).draw(at: NSPoint(x: pill.minX + 10, y: pill.minY + 4), withAttributes: attrs)
+        }
 
         let chipFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
         for (item, rect) in toolbarItems {
@@ -452,6 +578,22 @@ final class WhiteboardView: NSView, NSTextFieldDelegate {
             let path = NSBezierPath(roundedRect: r, xRadius: 2, yRadius: 2)
             path.lineWidth = s.width
             path.lineJoinStyle = .round
+            path.stroke()
+        case .circle:
+            guard s.points.count >= 2 else { return }
+            let r = NSRect(x: min(s.points[0].x, s.points[1].x), y: min(s.points[0].y, s.points[1].y),
+                           width: abs(s.points[1].x - s.points[0].x), height: abs(s.points[1].y - s.points[0].y))
+            let path = NSBezierPath(ovalIn: r)
+            path.lineWidth = s.width
+            path.stroke()
+        case .polygon:
+            guard s.points.count >= 3 else { return }
+            let path = NSBezierPath()
+            path.lineWidth = s.width
+            path.lineJoinStyle = .round
+            path.move(to: s.points[0])
+            for p in s.points.dropFirst() { path.line(to: p) }
+            path.close()
             path.stroke()
         case .arrow:
             guard s.points.count >= 2 else { return }
@@ -540,6 +682,11 @@ extension WhiteboardView {
                      points: [NSPoint(x: w * 0.12, y: h * 0.55), NSPoint(x: w * 0.4, y: h * 0.82)]),
             WBStroke(tool: .text, color: palette[0],
                      points: [NSPoint(x: w * 0.52, y: h * 0.72)], text: "wrong value"),
+            WBStroke(tool: .circle, color: palette[2],
+                     points: [NSPoint(x: w * 0.76, y: h * 0.1), NSPoint(x: w * 0.94, y: h * 0.4)]),
+            WBStroke(tool: .polygon, color: palette[3],
+                     points: [NSPoint(x: w * 0.79, y: h * 0.6), NSPoint(x: w * 0.95, y: h * 0.68),
+                              NSPoint(x: w * 0.91, y: h * 0.9), NSPoint(x: w * 0.77, y: h * 0.84)]),
         ]
     }
 

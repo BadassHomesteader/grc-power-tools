@@ -330,15 +330,22 @@ case "grid-preview":
 
 case "whiteboard-preview":
     // Offscreen render of the annotation whiteboard: a synthetic "screenshot"
-    // with one seeded stroke per tool, for design checks. `light` = light dim.
+    // with one seeded stroke per tool, for design checks. `light` = light dim;
+    // `polygon` adds a half-drawn polygon (rubber band, close ring, hint).
     let out = args.count >= 2 ? args[1] : "whiteboard-preview.png"
     let dark = !args.contains("light")
+    let pending = args.contains("polygon")
     MainActor.assumeIsolated {
         guard let png = WhiteboardView.syntheticShot(),
               let v = WhiteboardView(png: png, dark: dark) else { exit(1) }
         v.frame = NSRect(x: 0, y: 0, width: 1200, height: 760)
-        v.previewSeed(strokes: WhiteboardView.sampleStrokes(in: v.previewCanvasSize()),
-                      tool: .arrow, colorIndex: 0)
+        let c = v.previewCanvasSize()
+        v.previewSeed(strokes: WhiteboardView.sampleStrokes(in: c),
+                      tool: pending ? .polygon : .arrow, colorIndex: 0,
+                      pendingPolygon: pending ? [NSPoint(x: c.width * 0.45, y: c.height * 0.08),
+                                                 NSPoint(x: c.width * 0.62, y: c.height * 0.12),
+                                                 NSPoint(x: c.width * 0.6, y: c.height * 0.28)] : [],
+                      cursor: pending ? NSPoint(x: c.width * 0.5, y: c.height * 0.3) : nil)
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
         v.cacheDisplay(in: v.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {
@@ -415,10 +422,10 @@ case "whiteboard-live-test":
 
         // Synthesized pen drag across the image (window coords == view coords:
         // the view is the contentView at the origin).
-        func mouse(_ type: NSEvent.EventType, _ p: NSPoint) -> NSEvent {
+        func mouse(_ type: NSEvent.EventType, _ p: NSPoint, clicks: Int = 1) -> NSEvent {
             NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: 0,
                                windowNumber: win.windowNumber, context: nil,
-                               eventNumber: 0, clickCount: 1, pressure: 1)!
+                               eventNumber: 0, clickCount: clicks, pressure: 1)!
         }
         let box = view.imageRect
         view.mouseDown(with: mouse(.leftMouseDown, NSPoint(x: box.minX + 40, y: box.minY + 40)))
@@ -452,6 +459,57 @@ case "whiteboard-live-test":
         // Undo drops the last committed stroke.
         view.undo()
         check(view.strokeCount == 1, "undo popped the text stroke")
+
+        // Circle: a drag commits one shape, like rect.
+        view.selectTool(.circle)
+        view.mouseDown(with: mouse(.leftMouseDown, NSPoint(x: box.minX + 200, y: box.minY + 40)))
+        view.mouseDragged(with: mouse(.leftMouseDragged, NSPoint(x: box.minX + 260, y: box.minY + 90)))
+        view.mouseUp(with: mouse(.leftMouseUp, NSPoint(x: box.minX + 260, y: box.minY + 90)))
+        check(view.strokeCount == 2, "circle drag committed one stroke")
+
+        // Polygon: clicks place vertices; clicking back on vertex 1 closes it.
+        view.selectTool(.polygon)
+        let tri = [NSPoint(x: box.minX + 60, y: box.minY + 150), NSPoint(x: box.minX + 160, y: box.minY + 150),
+                   NSPoint(x: box.minX + 110, y: box.minY + 220)]
+        for p in tri {
+            view.mouseDown(with: mouse(.leftMouseDown, p)); view.mouseUp(with: mouse(.leftMouseUp, p))
+        }
+        view.mouseMoved(with: mouse(.mouseMoved, NSPoint(x: box.minX + 80, y: box.minY + 180)))
+        check(view.isDrawingPolygon && view.strokeCount == 2, "polygon in progress, nothing committed yet")
+        let near1 = NSPoint(x: tri[0].x + 3, y: tri[0].y - 2)
+        view.mouseDown(with: mouse(.leftMouseDown, near1)); view.mouseUp(with: mouse(.leftMouseUp, near1))
+        check(!view.isDrawingPolygon && view.strokeCount == 3, "click on vertex 1 closed the polygon")
+        // …and if that close was a double-click, its 2nd click starts nothing.
+        view.mouseDown(with: mouse(.leftMouseDown, near1, clicks: 2)); view.mouseUp(with: mouse(.leftMouseUp, near1, clicks: 2))
+        check(!view.isDrawingPolygon, "double-click on vertex 1 didn't start a stray polygon")
+
+        // Double-click closes too (its first click places the last vertex).
+        let quad = [NSPoint(x: box.minX + 220, y: box.minY + 150), NSPoint(x: box.minX + 300, y: box.minY + 150),
+                    NSPoint(x: box.minX + 300, y: box.minY + 220)]
+        for p in quad {
+            view.mouseDown(with: mouse(.leftMouseDown, p)); view.mouseUp(with: mouse(.leftMouseUp, p))
+        }
+        let last = NSPoint(x: box.minX + 220, y: box.minY + 220)
+        view.mouseDown(with: mouse(.leftMouseDown, last)); view.mouseUp(with: mouse(.leftMouseUp, last))
+        view.mouseDown(with: mouse(.leftMouseDown, last, clicks: 2)); view.mouseUp(with: mouse(.leftMouseUp, last, clicks: 2))
+        check(!view.isDrawingPolygon && view.strokeCount == 4, "double-click closed the polygon")
+
+        // Mid-polygon: ⌘Z takes back a vertex, Esc discards the shape but keeps the board.
+        for p in tri {
+            view.mouseDown(with: mouse(.leftMouseDown, p)); view.mouseUp(with: mouse(.leftMouseUp, p))
+        }
+        view.undo(); view.undo()
+        check(view.isDrawingPolygon && view.strokeCount == 4, "undo removed vertices, not strokes")
+        wb.handleEscape()
+        check(!view.isDrawingPolygon && view.strokeCount == 4, "esc discarded the half-drawn polygon")
+        check(wb.isVisible && !cancelled, "whiteboard still up after polygon-cancel")
+
+        // Two vertices then ⏎-equivalent: not a polygon, dropped.
+        for p in tri.prefix(2) {
+            view.mouseDown(with: mouse(.leftMouseDown, p)); view.mouseUp(with: mouse(.leftMouseUp, p))
+        }
+        view.finishPolygon()
+        check(!view.isDrawingPolygon && view.strokeCount == 4, "2-vertex polygon dropped on finish")
 
         // Save composites at the source's pixel size and dismisses.
         view.save()
