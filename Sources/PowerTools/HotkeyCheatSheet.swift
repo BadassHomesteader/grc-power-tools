@@ -83,6 +83,10 @@ final class HotkeyCheatSheetView: NSView {
                 ("3", "draw a grid to place"),
                 ("W", "snap palette"),
             ]),
+            ("Chords", [
+                ("Space", "chord mode · type a code"),
+                ("⌫ · esc", "back up · leave"),
+            ]),
             ("Pads & panels", [
                 ("B", "Macro Pad"),
                 ("3-finger tap", "Macro Pad here · one shot"),

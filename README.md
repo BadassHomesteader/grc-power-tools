@@ -8,7 +8,7 @@
 
 Power Tools puts a suite of power-user utilities behind a single hotkey. **Hold Option + Shift**, then speak or tap a letter/arrow: dictate into any app, open a Claude chat, snap and tile windows, OCR the screen, grab a screenshot, cut & paste files, transform your clipboard, or spotlight your cursor. If you've missed Windows PowerToys on the Mac, this is that — FancyZones-style snapping, Advanced Paste, Text Extractor, Color Picker, and Find My Mouse — plus on-device dictation and AI chat.
 
-**In the box:** 🎙 Dictation · 💬 AI chat · 🔀 ⌘Tab like Windows Alt-Tab · 🪟 Window snapping + Snap Assist · 🖐 Grab & Move (hold ⌃⌘, drag anywhere on a window) · 🎛 Snap palette (Moom-style) · 🗔 Saved layouts · ▦ Grid placement · 📋 Clipboard history (Win+V-style, text + images) · ⚡ Quick Capture → your own endpoints · 🔤 OCR (Text Extractor) · 🔊 Read Aloud · 📸 Screenshots · 🎥 Screen recording · 🔎 Google Lens · 🎨 Color Picker · 🗂 File cut/paste · 📝 Advanced Paste · 🖱 Find My Mouse · 🔇 Call-safe dictation
+**In the box:** 🎙 Dictation · 💬 AI chat · ⌨️ Chord mode (multi-letter shortcuts, every menu item) · 🔀 ⌘Tab like Windows Alt-Tab · 🪟 Window snapping + Snap Assist · 🖐 Grab & Move (hold ⌃⌘, drag anywhere on a window) · 🎛 Snap palette (Moom-style) · 🗔 Saved layouts · ▦ Grid placement · 📋 Clipboard history (Win+V-style, text + images) · ⚡ Quick Capture → your own endpoints · 🔤 OCR (Text Extractor) · 🔊 Read Aloud · 📸 Screenshots · 🎥 Screen recording · 🔎 Google Lens · 🎨 Color Picker · 🗂 File cut/paste · 📝 Advanced Paste · 🖱 Find My Mouse · 🔇 Call-safe dictation
 
 **The app bundle and data folder are still named `GRC Whisper` / bundle ID `com.grc.whisper`** so macOS permissions and saved keys survive the rename.
 
@@ -87,6 +87,8 @@ grc-whisper doctor                       # permission / model status
 grc-whisper dict add KYAW "K Y A W,kayak"   # term + comma-separated misheard variants
 grc-whisper dict list
 grc-whisper history 20
+grc-whisper menu-chords com.apple.finder   # chord codes for a running app's menus
+grc-whisper chord-codes-test               # chord code generation self-test
 ```
 
 The personal dictionary does two jobs: deterministic replacement of misheard variants (Tier-0, works even with polish off) and a spelling authority passed to the LLM for phonetically-near matches.
@@ -164,6 +166,17 @@ Your hotkey doubles as a *leader* — hold **Option + Shift** and the overlay sh
 - **Inline fields, parsed as you type**: `call Rhett tomorrow p1 @calls` → title "call Rhett" with priority 1, tomorrow's due date, and context "calls" — the panel shows what it parsed before you send. Natural-language dates ("friday", "july 12") via Apple's on-device date detector.
 - **Template placeholders**: `%TEXT%` (the captured line, JSON-escaped), `%TODAY%` (today as a Unix-seconds due date), `%PRIORITY%` (p0–p3, defaults 0), `%DUE%` (yyyy-mm-dd), `%DUE_TS%` (parsed due date in Unix seconds, today when absent), `%CONTEXT%` (@word). Example: `{"title":"%TEXT%","priority":%PRIORITY%,"duedate":%DUE_TS%,"context":"%CONTEXT%"}`.
 - If a POST fails, the panel re-opens pre-filled so the text is never lost.
+
+**Chord mode** (multi-letter shortcuts, in the spirit of [KeyChord](https://github.com/KeyChord/Chord))
+- **hold + Space**, then type a short code and **release** → it runs. A panel down the left edge lists every code for the app in front and narrows as you type; the typed part is dimmed, the letters still to type are in the accent, and an exact match is highlighted. **⌫** backs up a letter, **Esc** leaves without running anything. Nothing you type in chord mode ever reaches the app.
+- **Menu chords**: every menu item of the front app gets a code from its title's initials — *Show Sidebar* → `ss`, *New Tab* → `nt`, *Copy* → `co` (one-word titles take two letters). No setup, every app. Clashes are settled in reading order: the first item keeps the code, later ones add the next letter of their last word (*Show Snapshots* → `ssn`). The same menus always give the same codes, greyed-out items keep theirs (shown dimmed), and a quoted selection in a title (*Compress “Report.xlsx”*) never changes a code. The menus are read fresh each time — tens of milliseconds — so what you see is the menu as it is now.
+- **Your own chords** live in `config.json` under `chords`: `global` codes start with a symbol (`/f`) and work everywhere; `apps` is keyed by bundle ID. Each sets a `shortcut` (`"opt+cmd+l"`), a `menu` path (`"View,Show Sidebar"`) or a `shell` command (run with `zsh -lc`). Your code wins over a menu item that wanted the same letters; that item moves to its next free code. A starter set ships for Finder (`gd` Downloads, `gh` Home, `up` enclosing folder, `nf` new folder…) and everywhere (`/f` Finder, `/t` Terminal, `/d` Downloads…).
+  ```json
+  "chords": { "enabled": true, "autoMenu": true,
+    "global": { "/f": { "name": "Finder", "shell": "open -a Finder" } },
+    "apps": { "com.apple.finder": { "gd": { "name": "Go to Downloads", "shortcut": "opt+cmd+l" } } } }
+  ```
+  Quit Power Tools before editing (a Settings change writes the in-memory list back); edits load on the next launch. Toggles in Settings ▸ Keys ▸ Chord mode. Check what an app's menus turn into with `grc-whisper menu-chords <bundle-id>`.
 
 T / R / S / G / F need Screen Recording permission the first time (System Settings ▸ Privacy & Security ▸ Screen Recording, then quit & reopen). OCR is also on the menu-bar mic ▸ Capture Text from Screen.
 

@@ -39,6 +39,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let backspaceUpCheck = NSButton(checkboxWithTitle: "Backspace (Delete ⌫) goes up to the enclosing folder", target: nil, action: nil)
     private let deleteTrashCheck = NSButton(checkboxWithTitle: "Forward Delete (⌦) moves the selection to Trash", target: nil, action: nil)
     private let taskMgrCheck = NSButton(checkboxWithTitle: "Control + Shift + Escape (⌃⇧⎋) opens Activity Monitor (Task Manager)", target: nil, action: nil)
+    private let chordsCheck = NSButton(checkboxWithTitle: "Chord mode — hold hotkey + Space, type a code, release to run it", target: nil, action: nil)
+    private let autoMenuCheck = NSButton(checkboxWithTitle: "Menu chords — every menu item of the front app gets a code from its initials", target: nil, action: nil)
     private var sidebarRows: [SidebarRow] = []
     private var sectionViews: [NSView] = []
     private var contentHost: NSView?
@@ -268,7 +270,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         for (box, sel) in [(homeEndCheck, #selector(homeEndToggled)),
                            (backspaceUpCheck, #selector(backspaceUpToggled)),
                            (deleteTrashCheck, #selector(deleteTrashToggled)),
-                           (taskMgrCheck, #selector(taskMgrToggled))] {
+                           (taskMgrCheck, #selector(taskMgrToggled)),
+                           (chordsCheck, #selector(chordsToggled)),
+                           (autoMenuCheck, #selector(autoMenuToggled))] {
             box.target = self
             box.action = sel
         }
@@ -447,10 +451,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         for c in [finderEnterCheck, homeEndCheck, backspaceUpCheck, deleteTrashCheck, taskMgrCheck] {
             c.lineBreakMode = .byTruncatingTail
         }
+        let chordNote = NSTextField(wrappingLabelWithString: "Your own chords live in config.json under \"chords\": \"global\" codes start with a symbol (/f) and work everywhere; \"apps\" is keyed by bundle ID. Each chord sets a shortcut (\"opt+cmd+l\"), a menu path (\"View,Show Sidebar\") or a shell command. Quit Power Tools before editing — the next Settings change would write the old list back — and the edit loads on the next launch.")
+        chordNote.font = .systemFont(ofSize: 11)
+        chordNote.textColor = .secondaryLabelColor
+        chordNote.preferredMaxLayoutWidth = 540
+        let editBtn = NSButton(title: "Show config.json", target: self, action: #selector(revealChordConfig))
+        editBtn.bezelStyle = .rounded
         return vstack([
             section("Windows-style keys", [note, finderEnterCheck, homeEndCheck, backspaceUpCheck, deleteTrashCheck, taskMgrCheck], width: 590),
+            section("Chord mode", [chordsCheck, autoMenuCheck, chordNote, editBtn], width: 590),
         ])
     }
+
+    @objc private func chordsToggled() { config.chords.enabled = (chordsCheck.state == .on); config.save(); onConfigChange(config) }
+    @objc private func autoMenuToggled() { config.chords.autoMenu = (autoMenuCheck.state == .on); config.save(); onConfigChange(config) }
+    @objc private func revealChordConfig() { NSWorkspace.shared.activateFileViewerSelecting([Config.configURL]) }
 
     @objc private func homeEndToggled() { config.keyHomeEnd = (homeEndCheck.state == .on); config.save(); onConfigChange(config) }
     @objc private func backspaceUpToggled() { config.finderBackspaceUp = (backspaceUpCheck.state == .on); config.save(); onConfigChange(config) }
@@ -1570,6 +1585,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         backspaceUpCheck.state = config.finderBackspaceUp ? .on : .off
         deleteTrashCheck.state = config.finderDeleteTrash ? .on : .off
         taskMgrCheck.state = config.taskManagerShortcut ? .on : .off
+        chordsCheck.state = config.chords.enabled ? .on : .off
+        autoMenuCheck.state = config.chords.autoMenu ? .on : .off
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         restorePadsCheck.state = config.restorePads ? .on : .off

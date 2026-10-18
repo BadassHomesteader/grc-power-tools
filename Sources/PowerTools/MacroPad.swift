@@ -633,7 +633,8 @@ final class MacroPad {
     // MARK: Chords
 
     /// "cmd+shift+m" → keycode + flags. Last token is the key (letter, digit,
-    /// or return/enter/tab/space/esc/delete); the rest are modifiers.
+    /// return/enter/tab/space/esc/delete, an arrow, or one of , . / ; ' [ ] - = `);
+    /// the rest are modifiers.
     static func parseChord(_ chord: String) -> (key: CGKeyCode, flags: CGEventFlags)? {
         let parts = chord.lowercased().split(separator: "+").map { $0.trimmingCharacters(in: .whitespaces) }
         guard let keyToken = parts.last, !keyToken.isEmpty else { return nil }
@@ -650,6 +651,8 @@ final class MacroPad {
         let named: [String: Int64] = [
             "return": 36, "enter": 76, "tab": 48, "space": 49, "esc": 53, "escape": 53, "delete": 51,
             "0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25,
+            "up": 126, "down": 125, "left": 123, "right": 124,
+            ",": 43, ".": 47, "/": 44, ";": 41, "'": 39, "[": 33, "]": 30, "-": 27, "=": 24, "`": 50,
         ]
         if let kc = named[keyToken] { return (CGKeyCode(kc), flags) }
         if keyToken.count == 1, let kc = HotkeyMonitor.keyCode(forLetter: keyToken) { return (CGKeyCode(kc), flags) }

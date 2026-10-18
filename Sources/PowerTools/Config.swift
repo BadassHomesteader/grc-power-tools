@@ -340,6 +340,85 @@ struct Config: Codable {
         }
     }
 
+    /// What one chord does — exactly one of the three is meant to be set;
+    /// if several are, shortcut wins, then menu, then shell.
+    struct ChordAction: Codable, Equatable {
+        var name: String
+        /// "opt+cmd+l" — same syntax as a Macro Pad chord.
+        var shortcut: String
+        /// "View,Show Sidebar" — a menu bar path pressed through Accessibility.
+        var menu: String
+        /// Run with /bin/zsh -lc, detached.
+        var shell: String
+
+        init(name: String, shortcut: String = "", menu: String = "", shell: String = "") {
+            self.name = name; self.shortcut = shortcut; self.menu = menu; self.shell = shell
+        }
+
+        private enum CodingKeys: String, CodingKey { case name, shortcut, menu, shell }
+
+        // Field by field, like the rest of config.json: one bad value in a
+        // hand-edited chord must not take the whole chords block with it.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = ((try? c.decodeIfPresent(String.self, forKey: .name)) ?? nil) ?? ""
+            shortcut = ((try? c.decodeIfPresent(String.self, forKey: .shortcut)) ?? nil) ?? ""
+            menu = ((try? c.decodeIfPresent(String.self, forKey: .menu)) ?? nil) ?? ""
+            shell = ((try? c.decodeIfPresent(String.self, forKey: .shell)) ?? nil) ?? ""
+        }
+    }
+
+    /// Chord mode (hold hotkey + Space, type a code, release): multi-letter
+    /// shortcuts. `global` codes start with a symbol ("/f") and work in every
+    /// app; `apps` is keyed by bundle ID. With `autoMenu` on, every menu item
+    /// of the front app also gets a code from its initials (MenuChords).
+    struct ChordConfig: Codable, Equatable {
+        var enabled: Bool
+        var autoMenu: Bool
+        var global: [String: ChordAction]
+        var apps: [String: [String: ChordAction]]
+
+        init(enabled: Bool = true, autoMenu: Bool = true,
+             global: [String: ChordAction] = ChordConfig.starterGlobal,
+             apps: [String: [String: ChordAction]] = ChordConfig.starterApps) {
+            self.enabled = enabled; self.autoMenu = autoMenu; self.global = global; self.apps = apps
+        }
+
+        private enum CodingKeys: String, CodingKey { case enabled, autoMenu, global, apps }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            enabled = ((try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? nil) ?? true
+            autoMenu = ((try? c.decodeIfPresent(Bool.self, forKey: .autoMenu)) ?? nil) ?? true
+            global = ((try? c.decodeIfPresent([String: ChordAction].self, forKey: .global)) ?? nil) ?? Self.starterGlobal
+            apps = ((try? c.decodeIfPresent([String: [String: ChordAction]].self, forKey: .apps)) ?? nil) ?? Self.starterApps
+        }
+
+        /// The starter set — a few to show the shape; config.json is where
+        /// the real list grows.
+        static let starterGlobal: [String: ChordAction] = [
+            "/f": ChordAction(name: "Finder", shell: "open -a Finder"),
+            "/t": ChordAction(name: "Terminal", shell: "open -a Terminal"),
+            "/s": ChordAction(name: "System Settings", shell: "open -a 'System Settings'"),
+            "/a": ChordAction(name: "Activity Monitor", shell: "open -a 'Activity Monitor'"),
+            "/d": ChordAction(name: "Downloads folder", shell: "open ~/Downloads"),
+        ]
+        static let starterApps: [String: [String: ChordAction]] = [
+            "com.apple.finder": [
+                "gd": ChordAction(name: "Go to Downloads", shortcut: "opt+cmd+l"),
+                "gh": ChordAction(name: "Go to Home", shortcut: "shift+cmd+h"),
+                "ga": ChordAction(name: "Go to Applications", shortcut: "shift+cmd+a"),
+                "gdt": ChordAction(name: "Go to Desktop", shortcut: "shift+cmd+d"),
+                "up": ChordAction(name: "Enclosing folder", shortcut: "cmd+up"),
+                "nf": ChordAction(name: "New Folder", shortcut: "shift+cmd+n"),
+                "ts": ChordAction(name: "Toggle Sidebar", shortcut: "ctrl+cmd+s"),
+                "tp": ChordAction(name: "Toggle Preview", shortcut: "shift+cmd+p"),
+            ],
+        ]
+    }
+    /// Chord mode — see ChordConfig.
+    var chords = ChordConfig()
+
     /// Macro Pad (hold hotkey + B): floating per-app button panel.
     var macroPad: Bool = true
     var macroPadProfiles: [MacroProfile] = []
@@ -564,6 +643,7 @@ struct Config: Codable {
         case powerRing, powerRingSlots
         case whiteboard, screenRecording, recordingMic
         case pronunciations
+        case chords
     }
 
     // Lenient decode: any missing OR type-mismatched value falls back to its
@@ -678,6 +758,7 @@ struct Config: Codable {
         screenRecording = field(.screenRecording, true)
         recordingMic = field(.recordingMic, false)
         pronunciations = field(.pronunciations, [:])
+        chords = field(.chords, ChordConfig())
     }
 
     /// One-time migration: fold the pre-multi-connection single fields into

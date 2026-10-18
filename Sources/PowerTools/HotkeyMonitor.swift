@@ -64,6 +64,10 @@ final class HotkeyMonitor {
     /// hold + Y — the file/text/image shelf.
     case shelf
     case shelfClose              // Esc while the whiteboard is up — cancel text entry / close
+    case chordStart              // hold + Space — chord mode: show the panel for the front app
+    case chordUpdate(String)     // the code typed so far (after each key / ⌫)
+    case chordFire(String)       // hotkey released in chord mode — run this code
+    case chordCancel             // Esc in chord mode
     }
 
     var handler: ((Callback) -> Void)?
@@ -106,6 +110,9 @@ final class HotkeyMonitor {
     /// True while the clipboard drawer is out (same discipline). It never takes
     /// key, so its keys — Esc, ↵, ↑/↓, 1–9 — are routed from here instead.
     var clipboardDrawerVisible = false
+    /// Chord mode feature flag (same discipline) — when off, a leader-held
+    /// Space is an ordinary foreign key again.
+    var chordsEnabled = true
     /// Buttons in the pad's current profile — digits ≥ this pass through.
     var macroPadButtonCount = 0
     /// The ring, separately from the board — both can be on screen, and the
@@ -173,6 +180,28 @@ final class HotkeyMonitor {
     /// Set once an arrow/Return moves a window this hold, so release ends the
     /// window session instead of dispatching a dictation.
     private var windowMode = false
+    /// hold + Space entered chord mode: every key until release builds
+    /// `chordBuffer` instead of reaching the app or picking a leader action,
+    /// and release fires the code instead of dictating.
+    private var chordMode = false
+    private var chordBuffer = ""
+    /// keyCode → the character it adds to a chord code. Positional (ANSI),
+    /// like the rest of the leader — the held ⌥⇧ would turn the event's own
+    /// characters into symbols.
+    private static let chordKeys: [Int64: Character] = {
+        var m: [Int64: Character] = [:]
+        for ch in "abcdefghijklmnopqrstuvwxyz" {
+            if let kc = HotkeyMonitor.keyCode(forLetter: String(ch)) { m[kc] = ch }
+        }
+        let rest: [Int64: Character] = [
+            29: "0", 18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7", 28: "8", 25: "9",
+            44: "/", 47: ".", 43: ",", 41: ";", 39: "'", 33: "[", 30: "]", 27: "-", 24: "=",
+        ]
+        m.merge(rest) { a, _ in a }
+        return m
+    }()
+    private static let chordMaxLength = 8
+    private static let kVK_Space: Int64 = 49
     /// A leader right-click was swallowed for the Power Ring — its paired
     /// rightMouseUp must be swallowed too (apps must never see an orphan up).
     private var ringSwallowUp = false
@@ -579,6 +608,28 @@ final class HotkeyMonitor {
         // if text is selected, else route this dictation through the cloud AI).
         // Esc cancels; any other key means an unrelated combo (e.g. Fn+arrow).
         if held && type == .keyDown {
+            // Chord mode owns every key until the hotkey lifts: letters, digits
+            // and a few symbols build the code, ⌫ backs up, Esc leaves. All
+            // swallowed — a half-typed code must never leak into the app.
+            if chordMode {
+                swallowedKeyUps.insert(keyCode)
+                let repeatKey = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+                switch keyCode {
+                case Self.kVK_Escape:
+                    guard !repeatKey else { return nil }
+                    chordMode = false; chordBuffer = ""; interrupted = true
+                    log("hotkey: chord mode cancelled")
+                    dispatch(.chordCancel)
+                case Self.kVK_Backspace:
+                    if !chordBuffer.isEmpty { chordBuffer.removeLast(); dispatch(.chordUpdate(chordBuffer)) }
+                default:
+                    if !repeatKey, let ch = Self.chordKeys[keyCode], chordBuffer.count < Self.chordMaxLength {
+                        chordBuffer.append(ch)
+                        dispatch(.chordUpdate(chordBuffer))
+                    }
+                }
+                return nil
+            }
             // Macro pad digits: while the pad is shown, a digit that maps to a
             // real button fires it (shadowing 3 = grid only when a third button
             // exists); unmapped digits keep their normal meaning. Fires on
@@ -595,6 +646,15 @@ final class HotkeyMonitor {
                 return nil
             }
             switch keyCode {
+            case Self.kVK_Space where chordsEnabled && !interrupted && !regionPickerVisible:
+                // Chord mode. Any letter armed before Space is dropped — the
+                // session is chord mode now, and release fires the code.
+                swallowedKeyUps.insert(keyCode)
+                guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return nil }
+                chordMode = true; chordBuffer = ""; pending = .none
+                log("hotkey: chord mode")
+                dispatch(.chordStart)
+                return nil
             case Self.kVK_Escape:
                 interrupted = true; swallowedKeyUps.insert(keyCode)
                 if cheatSheetVisible { dispatch(.cheatSheetClose) }
@@ -831,6 +891,7 @@ final class HotkeyMonitor {
             interrupted = false
             pending = .none
             windowMode = false
+            chordMode = false; chordBuffer = ""
             dispatch(.down)
         } else if !isDown && held {
             held = false
@@ -839,7 +900,13 @@ final class HotkeyMonitor {
             pending = .none
             let wasWindow = windowMode
             windowMode = false
-            if wasWindow {
+            let wasChord = chordMode
+            let code = chordBuffer
+            chordMode = false; chordBuffer = ""
+            if wasChord {
+                log("hotkey: chord released with “\(code)”")
+                dispatch(.chordFire(code))
+            } else if wasWindow {
                 dispatch(.windowEnd)  // window moves already fired on keydown
             } else if !interrupted {
                 switch p {

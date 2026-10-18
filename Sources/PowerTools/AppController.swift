@@ -33,6 +33,7 @@ final class AppController {
             macroPad.update(enabled: config.macroPad, profiles: config.macroPadProfiles,
                             dark: config.appearance.isDark)
             hotkey?.powerRingEnabled = config.powerRing
+            hotkey?.chordsEnabled = config.chords.enabled
             hotkey?.macroPadSummonEnabled = config.macroPad && config.macroPadThreeFingerTap
             hotkey?.bareSummonFingers = config.bareSummonFingers
             trackpadTap.setTapCounts(config.tapCounts)
@@ -68,6 +69,7 @@ final class AppController {
     lazy var shelf = ShelfPad(store: shelfStore)
     private let trackpadTap = TrackpadTapDetector()
     private let cheatSheet = HotkeyCheatSheet()
+    private let chordMode = ChordMode()
     private let powerRing = PowerRing()
     private let whiteboard = Whiteboard()
     private let recorder = ScreenRecorder()
@@ -284,6 +286,15 @@ final class AppController {
                 self.recorder.stop()   // during a pick this just closes the picker
             case .screenRecordWhole:
                 self.recorder.pickWholeDisplay()
+            case .chordStart:
+                self.startChordMode()
+            case .chordUpdate(let code):
+                self.chordMode.update(code)
+            case .chordFire(let code):
+                self.overlay.hideUnlessToast()
+                self.chordMode.finish(code) { [weak self] entry, app in self?.runChord(entry, in: app) }
+            case .chordCancel:
+                self.chordMode.close()
             }
         }
         guard monitor.start() else {
@@ -299,6 +310,7 @@ final class AppController {
         monitor.finderDeleteTrash = config.finderDeleteTrash
         monitor.taskManagerShortcut = config.taskManagerShortcut
         monitor.powerRingEnabled = config.powerRing
+        monitor.chordsEnabled = config.chords.enabled
         monitor.macroPadSummonEnabled = config.macroPad && config.macroPadThreeFingerTap
         monitor.finderFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
         recorder.recoverOrphan()   // a recorder the last instance left running
@@ -1083,6 +1095,55 @@ final class AppController {
             .map { (key: $0.leaderKey, name: $0.name) }
         cheatSheet.toggle(dark: config.appearance.isDark, screen: screen,
                           hotkeyName: config.hotkey.displayName, connections: conns)
+    }
+
+    /// hold + Space: chord mode for the app in front. The panel opens on the
+    /// screen under the cursor, like the cheat sheet.
+    private func startChordMode() {
+        interruptDictation()
+        overlay.hide()
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        chordMode.start(config: config.chords, app: NSWorkspace.shared.frontmostApplication,
+                        dark: config.appearance.isDark, screen: screen)
+    }
+
+    /// Run a chord the user released on. Shortcuts wait for the hotkey's
+    /// modifiers to lift (a held ⌥ would turn ⌘↑ into ⌥⌘↑); menu presses and
+    /// shell commands don't care about the keyboard and go at once.
+    private func runChord(_ entry: ChordEntry, in app: NSRunningApplication?) {
+        log("chord: “\(entry.code)” → \(entry.name) (\(entry.source)) in \(app?.localizedName ?? "?")")
+        switch entry.action {
+        case .shortcut(let shortcut):
+            guard let key = MacroPad.parseChord(shortcut) else {
+                overlay.showError("Chord “\(entry.code)” has an unrecognized shortcut “\(shortcut)” — fix it in config.json")
+                return
+            }
+            Task { @MainActor in
+                guard await self.modifiersCleared(timeout: 8) else {
+                    self.overlay.showError("“\(entry.name)” skipped — a modifier key never released")
+                    return
+                }
+                if let app, NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
+                    app.activate()
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                }
+                Inserter.postKey(key.key, flags: key.flags)
+            }
+        case .menu(let path):
+            guard let pid = app?.processIdentifier else { return }
+            Task.detached(priority: .userInitiated) {
+                let ok = Inserter.clickMenuItem(pid: pid, path: path)
+                if !ok {
+                    await MainActor.run {
+                        self.overlay.showError("“\(entry.name)” didn't run — \(path.joined(separator: " ▸ ")) is greyed out or gone")
+                    }
+                }
+            }
+        case .shell(let command):
+            ChordMode.runShell(command)
+        }
     }
 
     /// hold + right-click: the Power Ring at the cursor, slots from config

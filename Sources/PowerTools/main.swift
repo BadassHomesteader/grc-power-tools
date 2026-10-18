@@ -67,6 +67,7 @@ func usage() -> Never {
       grc-whisper dict rm <term>
       grc-whisper dict list
       grc-whisper history [n]         show recent transcriptions
+      grc-whisper menu-chords <bundle-id>   walk a running app's menu bar, print its chord codes
     """)
     exit(1)
 }
@@ -327,6 +328,99 @@ case "grid-preview":
             try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
         }
     }
+
+case "chord-codes-test":
+    // Code generation without the hotkey or Accessibility: initials, the
+    // collision ladder, reserved codes, determinism, and the catalog merge.
+    MainActor.assumeIsolated {
+        var failures = 0
+        func check(_ ok: Bool, _ what: String) {
+            print("\(ok ? "PASS" : "FAIL")  \(what)")
+            if !ok { failures += 1 }
+        }
+        check(MenuChords.baseCode("Copy") == "co", "one word → first two letters (Copy → co)")
+        check(MenuChords.baseCode("Show Sidebar") == "ss", "initials (Show Sidebar → ss)")
+        check(MenuChords.baseCode("New Tab") == "nt", "initials (New Tab → nt)")
+        check(MenuChords.baseCode("Save As…") == "sa", "filler and ellipsis dropped (Save As… → sa)")
+        check(MenuChords.baseCode("Don’t Save") == "ds", "apostrophes folded (Don’t Save → ds)")
+        check(MenuChords.baseCode("Café Crème") == "cc", "diacritics folded (Café Crème → cc)")
+        check(MenuChords.baseCode("⌘") == nil, "no typable letters → no code")
+        check(MenuChords.baseCode("Compress “Q3 Report.xlsx”") == "co", "the quoted selection is ignored (Compress “…” → co)")
+        let items = MenuChords.previewItems
+        let a = MenuChords.assignCodes(items, taken: ["nf"])
+        let b = MenuChords.assignCodes(items, taken: ["nf"])
+        check(a == b, "same menus → same codes")
+        let codes = a.compactMap { $0 }
+        check(Set(codes).count == codes.count, "every code unique (\(codes.count) codes)")
+        check(!codes.contains("nf"), "a reserved code is never handed to a menu item")
+        func code(_ title: String) -> String? { items.firstIndex { $0.path.last == title }.flatMap { a[$0] } }
+        check(code("Show Sidebar") == "ss", "first in reading order keeps the code (Show Sidebar → ss)")
+        check(code("Show Snapshots") == "ssn", "a later clash takes its last word's next letter (Show Snapshots → ssn)")
+        check(code("New Folder") == "nfo", "a reserved clash moves the menu item over (New Folder → nfo)")
+        check(code("Save As…") == "sa" && code("Select All") == "sal", "File comes before Edit: Save As… keeps sa, Select All → sal")
+        for (item, c) in zip(items, a) { print("        \(c ?? "—")\t\(item.path.joined(separator: " ▸ "))\(item.enabled ? "" : "  (disabled)")") }
+        let entries = ChordCatalog.entries(config: Config.ChordConfig(), bundleID: "com.apple.finder", menu: items)
+        check(ChordCatalog.exact("gd", in: entries)?.source == .app, "user app chord resolves (gd)")
+        check(ChordCatalog.exact("/f", in: entries)?.source == .global, "global chord resolves (/f)")
+        check(ChordCatalog.exact("ss", in: entries)?.source == .menu, "menu chord resolves (ss)")
+        check(ChordCatalog.exact("ts", in: entries)?.name == "Toggle Sidebar", "user chord shadows the menu's ts")
+        check(ChordCatalog.glyphs("opt+cmd+l") == "⌥⌘L" && ChordCatalog.glyphs("cmd+up") == "⌘↑", "shortcut glyphs")
+        check(MacroPad.parseChord("cmd+up") != nil && MacroPad.parseChord("shift+cmd+.") != nil, "arrows and punctuation parse")
+        for (code, a) in Config.ChordConfig.starterGlobal.merging(Config.ChordConfig.starterApps.values.reduce([:]) { $0.merging($1) { x, _ in x } }) { x, _ in x }
+        where !a.shortcut.isEmpty {
+            check(MacroPad.parseChord(a.shortcut) != nil, "starter \(code) shortcut parses (\(a.shortcut))")
+        }
+        // A hand-edited config with one bad value keeps the rest.
+        let json = #"{"chords":{"enabled":false,"global":{"/x":{"name":"X","shell":42}},"apps":{"com.x":{"ab":{"name":"AB","shortcut":"cmd+b"}}}}}"#
+        if let cfg = try? JSONDecoder().decode(Config.self, from: Data(json.utf8)) {
+            check(!cfg.chords.enabled && cfg.chords.autoMenu, "chords block decodes leniently (enabled false, autoMenu default)")
+            check(cfg.chords.apps["com.x"]?["ab"]?.shortcut == "cmd+b", "app chord survives a bad sibling value")
+            check(cfg.chords.global["/x"]?.shell == "", "a mistyped field falls back to empty")
+        } else { check(false, "config with a chords block decodes") }
+        print(failures == 0 ? "all passed" : "\(failures) failed")
+        exit(failures == 0 ? 0 : 1)
+    }
+
+case "chord-preview":
+    // Offscreen render of the chord panel: `chord-preview [out.png] [light] [code=gd] [loading] [miss]`.
+    let out = args.count >= 2 && args[1].hasSuffix(".png") ? args[1] : "chord-preview.png"
+    let dark = !args.contains("light")
+    let code = args.first { $0.hasPrefix("code=") }.map { String($0.dropFirst(5)) } ?? ""
+    MainActor.assumeIsolated {
+        let entries = ChordCatalog.entries(config: Config.ChordConfig(), bundleID: "com.apple.finder",
+                                           menu: MenuChords.previewItems)
+        guard let png = ChordPanelView.previewPNG(dark: dark, buffer: code, entries: entries, appName: "Finder",
+                                                  loading: args.contains("loading"),
+                                                  miss: args.contains("miss") ? "No chord “\(code)”" : nil) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+    }
+
+case "menu-chords":
+    // The real walk against a running app — needs Accessibility for whatever
+    // runs this (the terminal, or the app bundle's binary).
+    guard args.count >= 2 else { print("usage: menu-chords <bundle-id>"); exit(1) }
+    guard AXIsProcessTrusted() else { print("not trusted for Accessibility — grant it to the app running this command"); exit(2) }
+    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: args[1]).first else {
+        print("\(args[1]) isn't running"); exit(1)
+    }
+    // `--budget <s>` lifts the time budget (and the item cap) to measure a
+    // slow app's full menu cost.
+    let budgetArg = args.firstIndex(of: "--budget").flatMap { i in i + 1 < args.count ? Double(args[i + 1]) : nil }
+    let budget = budgetArg ?? MenuChords.budget
+    let cap = budgetArg == nil ? MenuChords.maxItems : 10_000
+    let first = MenuChords.walk(pid: app.processIdentifier, budget: budget, maxItems: cap)
+    let walk = MenuChords.walk(pid: app.processIdentifier, budget: budget, maxItems: cap)
+    let entries = ChordCatalog.entries(config: Config.load().chords, bundleID: args[1], menu: walk.items)
+    for e in entries {
+        let what: String
+        switch e.action {
+        case .menu(let path): what = path.joined(separator: " ▸ ")
+        case .shortcut(let s): what = "\(e.name)  [\(s)]"
+        case .shell(let c): what = "\(e.name)  [shell: \(c)]"
+        }
+        print("\(e.code.padding(toLength: 6, withPad: " ", startingAt: 0)) \(what)\(e.enabled ? "" : "  (disabled)")")
+    }
+    print("— \(first.items.count) menu items in \(first.ms) ms\(first.truncated ? " (truncated at the cap)" : ""); a second walk took \(walk.ms) ms")
 
 case "whiteboard-preview":
     // Offscreen render of the annotation whiteboard: a synthetic "screenshot"

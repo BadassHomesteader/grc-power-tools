@@ -283,14 +283,14 @@ enum Inserter {
         return .notFound
     }
 
-    private static func axChildren(of element: AXUIElement) -> [AXUIElement] {
+    static func axChildren(of element: AXUIElement) -> [AXUIElement] {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success,
               let children = value as? [AXUIElement] else { return [] }
         return children
     }
 
-    private static func axTitle(_ element: AXUIElement) -> String? {
+    static func axTitle(_ element: AXUIElement) -> String? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &value) == .success else { return nil }
         return value as? String
