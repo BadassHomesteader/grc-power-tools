@@ -84,7 +84,7 @@ final class HotkeyCheatSheetView: NSView {
                 ("W", "snap palette"),
             ]),
             ("Chords", [
-                ("Space", "chord mode · type a code"),
+                ("Space", "chord mode · hold Space, type"),
                 ("⌫ · esc", "back up · leave"),
             ]),
             ("Pads & panels", [

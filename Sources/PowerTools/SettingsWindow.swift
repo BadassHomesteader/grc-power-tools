@@ -39,7 +39,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let backspaceUpCheck = NSButton(checkboxWithTitle: "Backspace (Delete ⌫) goes up to the enclosing folder", target: nil, action: nil)
     private let deleteTrashCheck = NSButton(checkboxWithTitle: "Forward Delete (⌦) moves the selection to Trash", target: nil, action: nil)
     private let taskMgrCheck = NSButton(checkboxWithTitle: "Control + Shift + Escape (⌃⇧⎋) opens Activity Monitor (Task Manager)", target: nil, action: nil)
-    private let chordsCheck = NSButton(checkboxWithTitle: "Chord mode — hold hotkey + Space, type a code, release to run it", target: nil, action: nil)
+    private let chordsCheck = NSButton(checkboxWithTitle: "Chord mode — hotkey + Space, then just hold Space while you type a code; let go to run it", target: nil, action: nil)
     private let autoMenuCheck = NSButton(checkboxWithTitle: "Menu chords — every menu item of the front app gets a code from its initials", target: nil, action: nil)
     private var sidebarRows: [SidebarRow] = []
     private var sectionViews: [NSView] = []

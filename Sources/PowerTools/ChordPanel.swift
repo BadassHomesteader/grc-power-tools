@@ -259,7 +259,7 @@ final class ChordPanelView: NSView {
             draw(missMessage, in: NSRect(x: x, y: lineY + 4, width: innerW, height: 20),
                  font: .systemFont(ofSize: 13, weight: .semibold), color: miss)
         } else if buffer.isEmpty {
-            draw("type a code · release to run · esc", in: NSRect(x: x, y: lineY + 4, width: innerW, height: 20),
+            draw("hold Space · type a code · let go to run · esc", in: NSRect(x: x, y: lineY + 4, width: innerW, height: 20),
                  font: .systemFont(ofSize: 13), color: dim)
         } else {
             draw(buffer + "▏", in: NSRect(x: x, y: lineY, width: innerW, height: 26),

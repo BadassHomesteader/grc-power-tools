@@ -185,6 +185,14 @@ final class HotkeyMonitor {
     /// and release fires the code instead of dictating.
     private var chordMode = false
     private var chordBuffer = ""
+    /// Space is still physically down. Chord mode lasts while Space OR the
+    /// hotkey is held, so the hotkey can be let go and only Space kept down
+    /// while typing (KeyChord-style); the code runs when the last one lifts.
+    private var chordSpaceDown = false
+    /// Last key event chord mode saw (Space's auto-repeat included) — see the
+    /// stale-session guard in handle().
+    private var chordLastActivity: CFAbsoluteTime = 0
+    private static let chordIdleLimit: CFAbsoluteTime = 15
     /// keyCode → the character it adds to a chord code. Positional (ANSI),
     /// like the rest of the leader — the held ⌥⇧ would turn the event's own
     /// characters into symbols.
@@ -422,6 +430,60 @@ final class HotkeyMonitor {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
+        // Chord mode owns every key until both Space and the hotkey are up:
+        // letters, digits and a few symbols build the code, ⌫ backs up, Esc
+        // leaves. All swallowed — a half-typed code must never leak into the
+        // app. First in line because the hotkey may already be released, and
+        // nothing below (drawer, ⌘Tab, Finder keys) may act on these keys.
+        if chordMode, type == .keyDown || type == .keyUp {
+            // A Space keyUp that never arrived (the tap was disabled for a
+            // moment) must not leave chord mode eating every key: with the
+            // hotkey up and nothing heard for a while, end it and let the key
+            // through. (Asking CGEventSource whether Space is down doesn't
+            // work — it reports synthesized presses as up.)
+            let now = CFAbsoluteTimeGetCurrent()
+            if !held, now - chordLastActivity > Self.chordIdleLimit {
+                log("hotkey: chord mode dropped — nothing typed for \(Int(Self.chordIdleLimit)) s with the hotkey up")
+                chordMode = false; chordBuffer = ""; chordSpaceDown = false
+                dispatch(.chordCancel)
+                return Unmanaged.passUnretained(event)
+            }
+            chordLastActivity = now
+            if keyCode == Self.kVK_Space {
+                if type == .keyUp {
+                    swallowedKeyUps.remove(keyCode)
+                    chordSpaceDown = false
+                    if !held { finishChord() }   // Space was the last key down
+                }
+                return nil   // Space's own auto-repeat while held
+            }
+            if type == .keyUp {
+                swallowedKeyUps.remove(keyCode)
+                return nil
+            }
+            swallowedKeyUps.insert(keyCode)
+            let repeatKey = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            switch keyCode {
+            case Self.kVK_Escape:
+                guard !repeatKey else { return nil }
+                chordMode = false; chordBuffer = ""
+                if held { interrupted = true }
+                // Space may still be down: its keyUp must not reach the app.
+                if chordSpaceDown { swallowedKeyUps.insert(Self.kVK_Space) }
+                chordSpaceDown = false
+                log("hotkey: chord mode cancelled")
+                dispatch(.chordCancel)
+            case Self.kVK_Backspace:
+                if !chordBuffer.isEmpty { chordBuffer.removeLast(); dispatch(.chordUpdate(chordBuffer)) }
+            default:
+                if !repeatKey, let ch = Self.chordKeys[keyCode], chordBuffer.count < Self.chordMaxLength {
+                    chordBuffer.append(ch)
+                    dispatch(.chordUpdate(chordBuffer))
+                }
+            }
+            return nil
+        }
+
         // While the clipboard drawer is out, its keys come through here. The
         // drawer never activates Power Tools (activating raised the app's other
         // windows over your work), so the app you are in keeps focus and these
@@ -608,28 +670,6 @@ final class HotkeyMonitor {
         // if text is selected, else route this dictation through the cloud AI).
         // Esc cancels; any other key means an unrelated combo (e.g. Fn+arrow).
         if held && type == .keyDown {
-            // Chord mode owns every key until the hotkey lifts: letters, digits
-            // and a few symbols build the code, ⌫ backs up, Esc leaves. All
-            // swallowed — a half-typed code must never leak into the app.
-            if chordMode {
-                swallowedKeyUps.insert(keyCode)
-                let repeatKey = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-                switch keyCode {
-                case Self.kVK_Escape:
-                    guard !repeatKey else { return nil }
-                    chordMode = false; chordBuffer = ""; interrupted = true
-                    log("hotkey: chord mode cancelled")
-                    dispatch(.chordCancel)
-                case Self.kVK_Backspace:
-                    if !chordBuffer.isEmpty { chordBuffer.removeLast(); dispatch(.chordUpdate(chordBuffer)) }
-                default:
-                    if !repeatKey, let ch = Self.chordKeys[keyCode], chordBuffer.count < Self.chordMaxLength {
-                        chordBuffer.append(ch)
-                        dispatch(.chordUpdate(chordBuffer))
-                    }
-                }
-                return nil
-            }
             // Macro pad digits: while the pad is shown, a digit that maps to a
             // real button fires it (shadowing 3 = grid only when a third button
             // exists); unmapped digits keep their normal meaning. Fires on
@@ -648,10 +688,12 @@ final class HotkeyMonitor {
             switch keyCode {
             case Self.kVK_Space where chordsEnabled && !interrupted && !regionPickerVisible:
                 // Chord mode. Any letter armed before Space is dropped — the
-                // session is chord mode now, and release fires the code.
+                // session is chord mode now, and the code fires once Space
+                // and the hotkey are both up (handled at the top of handle).
                 swallowedKeyUps.insert(keyCode)
                 guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return nil }
-                chordMode = true; chordBuffer = ""; pending = .none
+                chordMode = true; chordBuffer = ""; chordSpaceDown = true; pending = .none
+                chordLastActivity = CFAbsoluteTimeGetCurrent()
                 log("hotkey: chord mode")
                 dispatch(.chordStart)
                 return nil
@@ -884,15 +926,38 @@ final class HotkeyMonitor {
         return Unmanaged.passUnretained(event)
     }
 
+    /// The last of Space and the hotkey lifted: run what was typed.
+    private func finishChord() {
+        let code = chordBuffer
+        chordMode = false; chordBuffer = ""; chordSpaceDown = false
+        log("hotkey: chord released with “\(code)”")
+        dispatch(.chordFire(code))
+    }
+
     private func handleHotkeyFlag(isDown: Bool, event: CGEvent, suppress: Bool) -> Unmanaged<CGEvent>? {
-        if isDown && !held {
+        if isDown && !held && chordMode {
+            // The hotkey went down again mid-chord (Space still held) — it
+            // just extends the session; no dictation starts.
+            held = true
+            heldSince = Date()
+        } else if isDown && !held {
             held = true
             heldSince = Date()
             interrupted = false
             pending = .none
             windowMode = false
-            chordMode = false; chordBuffer = ""
+            chordMode = false; chordBuffer = ""; chordSpaceDown = false
             dispatch(.down)
+        } else if !isDown && held && chordMode {
+            held = false
+            heldSince = nil
+            pending = .none
+            windowMode = false
+            interrupted = false
+            // Space still down → keep typing with just Space; else this was
+            // the last key up and the code runs now.
+            if chordSpaceDown { log("hotkey: released — chord mode stays open while Space is held") }
+            else { finishChord() }
         } else if !isDown && held {
             held = false
             heldSince = nil
@@ -900,13 +965,7 @@ final class HotkeyMonitor {
             pending = .none
             let wasWindow = windowMode
             windowMode = false
-            let wasChord = chordMode
-            let code = chordBuffer
-            chordMode = false; chordBuffer = ""
-            if wasChord {
-                log("hotkey: chord released with “\(code)”")
-                dispatch(.chordFire(code))
-            } else if wasWindow {
+            if wasWindow {
                 dispatch(.windowEnd)  // window moves already fired on keydown
             } else if !interrupted {
                 switch p {
