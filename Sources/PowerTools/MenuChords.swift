@@ -143,7 +143,7 @@ enum MenuChords {
     static func words(_ title: String) -> [String] {
         // A quoted part is the selection ("Compress “Report.xlsx”") — the
         // code must not change every time something else is selected.
-        let unquoted = title.replacingOccurrences(of: #"[“"][^”"]*[”"]"#, with: " ", options: .regularExpression)
+        let unquoted = splitJoined(title).replacingOccurrences(of: #"[“"][^”"]*[”"]"#, with: " ", options: .regularExpression)
         let folded = unquoted
             .replacingOccurrences(of: "'", with: "")
             .replacingOccurrences(of: "’", with: "")
@@ -152,6 +152,13 @@ enum MenuChords {
         let parts = folded.split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }.map(String.init)
         let kept = parts.filter { !fillerWords.contains($0) }
         return kept.isEmpty ? parts : kept
+    }
+
+    /// "AutoFilter" → "Auto Filter", "PivotTable" → "Pivot Table": a capital
+    /// after a lowercase letter starts a new word, so joined-up titles get
+    /// initials (af) instead of their first two letters (au).
+    static func splitJoined(_ title: String) -> String {
+        title.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression)
     }
 
     /// Initials of up to four words; a one-word title takes its first two
@@ -246,6 +253,31 @@ enum ChordCatalog {
     /// so the order only matters for a hand-written duplicate).
     static func exact(_ code: String, in entries: [ChordEntry]) -> ChordEntry? {
         entries.first { $0.code == code }
+    }
+
+    /// Chords whose NAME contains `query` — for big apps, where nobody
+    /// remembers `aut`, typing "filt" finds AutoFilter, Advanced Filter and
+    /// Clear Filters. Best first: name starts with it, then a word does,
+    /// then anywhere (also across joined words: "autofilt"); greyed-out
+    /// items after the rest; ties keep panel order. Only letters and digits,
+    /// two or more — one letter would match half the menu bar.
+    static func nameMatches(_ query: String, in entries: [ChordEntry]) -> [ChordEntry] {
+        guard query.count >= 2, query.allSatisfy({ $0.isLetter || $0.isNumber }) else { return [] }
+        var scored: [(score: Int, index: Int, entry: ChordEntry)] = []
+        for (i, e) in entries.enumerated() {
+            let spaced = MenuChords.splitJoined(e.name)
+                .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased()
+            let compact = spaced.filter { $0.isLetter || $0.isNumber }
+            var score: Int
+            if spaced.hasPrefix(query) { score = 0 }
+            else if spaced.range(of: #"[^a-z0-9]"# + NSRegularExpression.escapedPattern(for: query),
+                                 options: .regularExpression) != nil { score = 1 }
+            else if spaced.contains(query) || compact.contains(query) { score = 2 }
+            else { continue }
+            if !e.enabled { score += 3 }
+            scored.append((score, i, e))
+        }
+        return scored.sorted { ($0.score, $0.index) < ($1.score, $1.index) }.map(\.entry)
     }
 
     /// "opt+cmd+l" → "⌥⌘L", modifiers in the order macOS menus print them.

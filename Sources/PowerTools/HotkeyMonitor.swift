@@ -208,7 +208,8 @@ final class HotkeyMonitor {
         m.merge(rest) { a, _ in a }
         return m
     }()
-    private static let chordMaxLength = 8
+    /// Long enough to type part of a name ("advanced"), not just a code.
+    private static let chordMaxLength = 16
     private static let kVK_Space: Int64 = 49
     /// A leader right-click was swallowed for the Power Ring — its paired
     /// rightMouseUp must be swallowed too (apps must never see an orphan up).

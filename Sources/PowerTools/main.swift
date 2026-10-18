@@ -346,6 +346,11 @@ case "chord-codes-test":
         check(MenuChords.baseCode("Café Crème") == "cc", "diacritics folded (Café Crème → cc)")
         check(MenuChords.baseCode("⌘") == nil, "no typable letters → no code")
         check(MenuChords.baseCode("Compress “Q3 Report.xlsx”") == "co", "the quoted selection is ignored (Compress “…” → co)")
+    check(MenuChords.baseCode("AutoFilter") == "af" && MenuChords.baseCode("PivotTable") == "pt", "joined-up words split (AutoFilter → af, PivotTable → pt)")
+    check(MenuChords.baseCode("iCloud Drive") == "icd", "a lowercase-first brand still splits (iCloud Drive → icd)")
+    let xl = MenuChords.assignCodes([.init(path: ["Format", "Row", "AutoFit"], enabled: true),
+                                     .init(path: ["Data", "AutoFilter"], enabled: true)], taken: [])
+    check(xl == ["af", "afi"], "AutoFit keeps af, AutoFilter → afi (got \(xl))")
         let items = MenuChords.previewItems
         let a = MenuChords.assignCodes(items, taken: ["nf"])
         let b = MenuChords.assignCodes(items, taken: ["nf"])
@@ -366,6 +371,14 @@ case "chord-codes-test":
         check(ChordCatalog.exact("ts", in: entries)?.name == "Toggle Sidebar", "user chord shadows the menu's ts")
         check(ChordCatalog.glyphs("opt+cmd+l") == "⌥⌘L" && ChordCatalog.glyphs("cmd+up") == "⌘↑", "shortcut glyphs")
         check(MacroPad.parseChord("cmd+up") != nil && MacroPad.parseChord("shift+cmd+.") != nil, "arrows and punctuation parse")
+    let byName = ChordCatalog.nameMatches("fold", in: entries).map(\.name)
+    check(byName.first == "New Folder", "name search ranks a word-start match, panel order breaks ties (got \(byName.prefix(3)))")
+    check(ChordCatalog.nameMatches("ndfold", in: entries).isEmpty, "name search needs the letters in a row")
+    check(ChordCatalog.nameMatches("sidebar", in: entries).map(\.name).contains("Show Sidebar"), "name search finds a menu item (sidebar → Show Sidebar)")
+    check(ChordCatalog.nameMatches("pa", in: entries).last?.name == "Paste", "greyed-out name matches sort last")
+    check(ChordCatalog.nameMatches("s", in: entries).isEmpty && ChordCatalog.nameMatches("/f", in: entries).isEmpty, "one letter or a symbol never searches names")
+    let autoName = ChordCatalog.nameMatches("autofilt", in: [ChordEntry(code: "af", name: "AutoFilter", detail: "", group: "Data", source: .menu, action: .menu(["Data", "AutoFilter"]), enabled: true)])
+    check(autoName.count == 1, "name search reads across joined words (autofilt → AutoFilter)")
         for (code, a) in Config.ChordConfig.starterGlobal.merging(Config.ChordConfig.starterApps.values.reduce([:]) { $0.merging($1) { x, _ in x } }) { x, _ in x }
         where !a.shortcut.isEmpty {
             check(MacroPad.parseChord(a.shortcut) != nil, "starter \(code) shortcut parses (\(a.shortcut))")
@@ -386,10 +399,16 @@ case "chord-preview":
     let out = args.count >= 2 && args[1].hasSuffix(".png") ? args[1] : "chord-preview.png"
     let dark = !args.contains("light")
     let code = args.first { $0.hasPrefix("code=") }.map { String($0.dropFirst(5)) } ?? ""
+    // `app=<bundle-id>`: the real menus of a running app (needs Accessibility).
+    let liveApp = args.first { $0.hasPrefix("app=") }.flatMap {
+        NSRunningApplication.runningApplications(withBundleIdentifier: String($0.dropFirst(4))).first
+    }
     MainActor.assumeIsolated {
-        let entries = ChordCatalog.entries(config: Config.ChordConfig(), bundleID: "com.apple.finder",
-                                           menu: MenuChords.previewItems)
-        guard let png = ChordPanelView.previewPNG(dark: dark, buffer: code, entries: entries, appName: "Finder",
+        let menu = liveApp.map { MenuChords.walk(pid: $0.processIdentifier).items } ?? MenuChords.previewItems
+        let bundle = liveApp?.bundleIdentifier ?? "com.apple.finder"
+        let entries = ChordCatalog.entries(config: Config.ChordConfig(), bundleID: bundle, menu: menu)
+        guard let png = ChordPanelView.previewPNG(dark: dark, buffer: code, entries: entries,
+                                                  appName: liveApp?.localizedName ?? "Finder",
                                                   loading: args.contains("loading"),
                                                   miss: args.contains("miss") ? "No chord “\(code)”" : nil) else { exit(1) }
         try? png.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
