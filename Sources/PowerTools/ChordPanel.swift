@@ -108,11 +108,15 @@ final class ChordMode {
             render()
             return
         }
-        if let e = ChordCatalog.nameMatches(code, in: entries).first {
-            log("chord: “\(code)” matched by name → \(e.name)")
+        if let e = ChordCatalog.resolve(code, in: entries) {
+            log("chord: “\(code)” matched by name → \(e.group.isEmpty ? "" : e.group + " ▸ ")\(e.name)")
             let app = targetApp
             close()
             run(e, app)
+            return
+        }
+        if let mq = ChordCatalog.menuQuery(code, in: entries), mq.whole, mq.rest.isEmpty {
+            flash("That's the \(mq.menu) menu — keep typing to pick an item")
             return
         }
         flash("No chord or name matches “\(code)”")
@@ -223,10 +227,41 @@ final class ChordPanelView: NSView {
     func setContent(buffer: String, entries: [ChordEntry], loading: Bool, maxSize: NSSize) {
         self.buffer = buffer
         let exact = buffer.isEmpty ? nil : ChordCatalog.exact(buffer, in: entries)
-        let byName = ChordCatalog.nameMatches(buffer, in: entries)
-        let nameCodes = Set(byName.map(\.code))
-        let byCode = entries.filter { $0.code.hasPrefix(buffer) && !nameCodes.contains($0.code) }
-        let runs = exact ?? byName.first
+        let runs = ChordCatalog.resolve(buffer, in: entries)
+        // Each entry shows once, in the first section that claims it.
+        var claimed: Set<String> = []
+        func claim(_ list: [ChordEntry]) -> [ChordEntry] {
+            let fresh = list.filter { !claimed.contains($0.code) }
+            claimed.formUnion(fresh.map(\.code))
+            return fresh
+        }
+        func listed(_ e: ChordEntry) -> ChordEntry {
+            let where_ = e.source == .menu ? e.group : (e.source == .app ? appName : "Everywhere")
+            return ChordEntry(code: e.code, name: e.name, detail: e.detail.isEmpty ? where_ : "\(where_) ▸ \(e.detail)",
+                              group: e.group, source: e.source, action: e.action, enabled: e.enabled)
+        }
+        // A typed menu name: that menu's items (narrowed by what follows the
+        // name), ahead of everything but an exact code.
+        var menuRows: [Row] = []
+        if let mq = ChordCatalog.menuQuery(buffer, in: entries) {
+            let items = mq.whole && !mq.rest.isEmpty
+                ? ChordCatalog.scopedMatches(mq, in: entries)
+                : entries.filter { $0.source == .menu && $0.group == mq.menu }
+            let title = mq.rest.isEmpty ? "\(mq.menu) menu" : "\(mq.menu) menu ▸ “\(mq.rest)”"
+            if exact != nil { claimed.insert(exact!.code) }
+            let fresh = claim(items)
+            if !fresh.isEmpty {
+                menuRows.append(.header(title))
+                for e in fresh {
+                    let shown = ChordEntry(code: e.code, name: e.name, detail: e.detail, group: e.group,
+                                           source: e.source, action: e.action, enabled: e.enabled)
+                    menuRows.append(.entry(shown, highlighted: runs?.code == e.code, typed: 0))
+                }
+            }
+            if exact != nil { claimed.remove(exact!.code) }
+        }
+        let byName = claim(ChordCatalog.nameMatches(buffer, in: entries))
+        let byCode = entries.filter { $0.code.hasPrefix(buffer) && !claimed.contains($0.code) }
 
         var codeRows: [Row] = []
         var lastGroup: String?
@@ -244,14 +279,11 @@ final class ChordPanelView: NSView {
         if !byName.isEmpty {
             nameRows.append(.header("Names containing “\(buffer)”"))
             for e in byName {
-                let where_ = e.source == .menu ? e.group : (e.source == .app ? appName : "Everywhere")
-                let shown = ChordEntry(code: e.code, name: e.name, detail: e.detail.isEmpty ? where_ : "\(where_) ▸ \(e.detail)",
-                                       group: e.group, source: e.source, action: e.action, enabled: e.enabled)
-                nameRows.append(.entry(shown, highlighted: runs?.code == e.code, typed: 0))
+                nameRows.append(.entry(listed(e), highlighted: runs?.code == e.code, typed: 0))
             }
         }
-        var rows = exact == nil ? nameRows + codeRows : codeRows + nameRows
-        if byCode.isEmpty, byName.isEmpty, !buffer.isEmpty, !loading, missMessage == nil {
+        var rows = exact == nil ? menuRows + nameRows + codeRows : codeRows + menuRows + nameRows
+        if byCode.isEmpty, byName.isEmpty, menuRows.isEmpty, !buffer.isEmpty, !loading, missMessage == nil {
             rows.append(.note("Nothing matches “\(buffer)” · ⌫ backs up"))
         }
         if loading { rows.append(.note("Reading menus…")) }

@@ -261,8 +261,8 @@ enum ChordCatalog {
     /// then anywhere (also across joined words: "autofilt"); greyed-out
     /// items after the rest; ties keep panel order. Only letters and digits,
     /// two or more — one letter would match half the menu bar.
-    static func nameMatches(_ query: String, in entries: [ChordEntry]) -> [ChordEntry] {
-        guard query.count >= 2, query.allSatisfy({ $0.isLetter || $0.isNumber }) else { return [] }
+    static func nameMatches(_ query: String, in entries: [ChordEntry], minLength: Int = 2) -> [ChordEntry] {
+        guard query.count >= minLength, query.allSatisfy({ $0.isLetter || $0.isNumber }) else { return [] }
         var scored: [(score: Int, index: Int, entry: ChordEntry)] = []
         for (i, e) in entries.enumerated() {
             let spaced = MenuChords.splitJoined(e.name)
@@ -278,6 +278,53 @@ enum ChordCatalog {
             scored.append((score, i, e))
         }
         return scored.sorted { ($0.score, $0.index) < ($1.score, $1.index) }.map(\.entry)
+    }
+
+    /// A typed menu name: "view" (the whole name — browsing that menu),
+    /// "viewfo" (the name, then letters that narrow inside it), or "vie"
+    /// (three or more letters of a name — that menu is shown, nothing more).
+    struct MenuQuery {
+        let menu: String
+        let rest: String
+        /// The whole menu name was typed (as opposed to a start of it).
+        let whole: Bool
+    }
+
+    static func compact(_ s: String) -> String {
+        s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+    }
+
+    /// The top menu `query` names, if any. A whole name beats a start of
+    /// one, and the longest whole name wins ("format" over "for…").
+    static func menuQuery(_ query: String, in entries: [ChordEntry]) -> MenuQuery? {
+        guard query.count >= 3, query.allSatisfy({ $0.isLetter || $0.isNumber }) else { return nil }
+        var menus: [String] = []
+        for e in entries where e.source == .menu && !menus.contains(e.group) { menus.append(e.group) }
+        let whole = menus.filter { query.hasPrefix(compact($0)) && !compact($0).isEmpty }
+            .max { compact($0).count < compact($1).count }
+        if let m = whole { return MenuQuery(menu: m, rest: String(query.dropFirst(compact(m).count)), whole: true) }
+        if let m = menus.first(where: { compact($0).hasPrefix(query) }) { return MenuQuery(menu: m, rest: "", whole: false) }
+        return nil
+    }
+
+    /// Items of `q.menu` narrowed by what was typed after its name.
+    static func scopedMatches(_ q: MenuQuery, in entries: [ChordEntry]) -> [ChordEntry] {
+        guard !q.rest.isEmpty else { return [] }
+        return nameMatches(q.rest, in: entries.filter { $0.source == .menu && $0.group == q.menu }, minLength: 1)
+    }
+
+    /// What letting go runs: the exact code; else, after a menu name, the
+    /// best item inside that menu; else the best name match. Nothing when
+    /// exactly a menu name was typed — that is browsing, not choosing.
+    static func resolve(_ query: String, in entries: [ChordEntry]) -> ChordEntry? {
+        guard !query.isEmpty else { return nil }
+        if let e = exact(query, in: entries) { return e }
+        if let mq = menuQuery(query, in: entries), mq.whole {
+            if mq.rest.isEmpty { return nil }
+            if let e = scopedMatches(mq, in: entries).first { return e }
+        }
+        return nameMatches(query, in: entries).first
     }
 
     /// "opt+cmd+l" → "⌥⌘L", modifiers in the order macOS menus print them.

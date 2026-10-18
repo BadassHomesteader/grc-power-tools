@@ -377,6 +377,15 @@ case "chord-codes-test":
     check(ChordCatalog.nameMatches("sidebar", in: entries).map(\.name).contains("Show Sidebar"), "name search finds a menu item (sidebar → Show Sidebar)")
     check(ChordCatalog.nameMatches("pa", in: entries).last?.name == "Paste", "greyed-out name matches sort last")
     check(ChordCatalog.nameMatches("s", in: entries).isEmpty && ChordCatalog.nameMatches("/f", in: entries).isEmpty, "one letter or a symbol never searches names")
+    // Menu names: "view" browses, "viewsh" narrows inside View, "vie" shows it.
+    let viewQ = ChordCatalog.menuQuery("view", in: entries)
+    check(viewQ?.menu == "View" && viewQ?.whole == true && viewQ?.rest == "", "a typed menu name is recognised (view → View menu)")
+    check(ChordCatalog.resolve("view", in: entries) == nil, "exactly a menu name runs nothing (browsing)")
+    let narrowed = ChordCatalog.resolve("viewsta", in: entries)
+    check(narrowed?.name == "Show Status Bar" && narrowed?.group == "View", "menu name + letters narrows inside it (viewsta → View ▸ Show Status Bar)")
+    check(ChordCatalog.resolve("windowmin", in: entries)?.name == "Minimize", "works for any menu (windowmin → Minimize)")
+    check(ChordCatalog.menuQuery("vie", in: entries)?.whole == false, "three letters of a menu name show it without choosing")
+    check(ChordCatalog.resolve("ss", in: entries)?.name == "Show Sidebar", "an exact code still wins")
     let autoName = ChordCatalog.nameMatches("autofilt", in: [ChordEntry(code: "af", name: "AutoFilter", detail: "", group: "Data", source: .menu, action: .menu(["Data", "AutoFilter"]), enabled: true)])
     check(autoName.count == 1, "name search reads across joined words (autofilt → AutoFilter)")
         for (code, a) in Config.ChordConfig.starterGlobal.merging(Config.ChordConfig.starterApps.values.reduce([:]) { $0.merging($1) { x, _ in x } }) { x, _ in x }
