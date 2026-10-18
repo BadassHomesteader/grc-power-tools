@@ -4,8 +4,16 @@ import Cocoa
 /// it runs. Built by ChordCatalog from config.json chords plus the front
 /// app's menu bar.
 struct ChordEntry {
-    enum Source { case app, global, menu }
-    enum Action { case shortcut(String), menu([String]), shell(String) }
+    enum Source { case app, global, menu, ribbonTab, ribbon }
+    enum Action {
+        case shortcut(String), menu([String]), shell(String)
+        /// Open an Office ribbon tab (and stay there).
+        case ribbonTab(String)
+        /// Press a command on a ribbon tab.
+        case ribbon(tab: String, title: String)
+        /// Open every ribbon tab once and remember what each holds.
+        case ribbonLearn
+    }
     let code: String
     let name: String
     /// Dim right-hand text: the shortcut as glyphs, "shell", or a submenu.
@@ -35,7 +43,10 @@ enum MenuChords {
         let truncated: Bool
     }
 
-    static let maxItems = 400
+    /// Every menu item, not a sample: Excel's whole menu bar is ~300. The
+    /// cap only guards against an app whose menus list thousands of
+    /// documents or bookmarks.
+    static let maxItems = 2000
     /// A warm walk of a big menu bar (Chrome, Outlook) takes ~130 ms; the
     /// first one after an app launches can take 300+ ms while the app builds
     /// its menus. The panel shows the user's own chords meanwhile.
@@ -45,10 +56,6 @@ enum MenuChords {
     /// Submenus that are the system's or change on every use; their items
     /// would only shift everyone else's codes.
     static let skippedSubmenus: Set<String> = ["Services", "Open Recent", "Recent Items"]
-    /// Items per top menu. A browser's Bookmarks or History can hold
-    /// hundreds of user entries; without a per-menu cap one of them would
-    /// spend the whole budget and leave Window and Help without codes.
-    static let perMenuCap = 60
 
     /// Off the main thread only — every attribute read is a round trip to the app.
     static func walk(pid: pid_t, budget: CFAbsoluteTime = MenuChords.budget, maxItems: Int = MenuChords.maxItems) -> Walk {
@@ -59,7 +66,6 @@ enum MenuChords {
         guard let bar = menuBar(app) else { return Walk(items: [], ms: 0, truncated: false) }
         var items: [Item] = []
         var truncated = false
-        var inThisMenu = 0
 
         func visit(menu: AXUIElement, path: [String]) {
             // Hidden alternates (Finder's three Ejects, ⌥'s "Empty Trash"
@@ -71,7 +77,6 @@ enum MenuChords {
                     truncated = true
                     return
                 }
-                if inThisMenu >= perMenuCap { return }
                 let (title, enabled, children) = attributes(el)
                 guard let title, !title.isEmpty else { continue }   // separators have no title
                 guard seen.insert(title.trimmingCharacters(in: CharacterSet(charactersIn: "…. ")).lowercased()).inserted else { continue }
@@ -83,7 +88,6 @@ enum MenuChords {
                     }
                 } else {
                     items.append(Item(path: itemPath, enabled: enabled))
-                    inThisMenu += 1
                 }
             }
         }
@@ -92,7 +96,6 @@ enum MenuChords {
         for top in Inserter.axChildren(of: bar).dropFirst() {
             guard let title = Inserter.axTitle(top), !title.isEmpty,
                   let menu = Inserter.axChildren(of: top).first else { continue }
-            inThisMenu = 0
             visit(menu: menu, path: [title])
             if truncated { break }
         }
@@ -180,27 +183,43 @@ enum MenuChords {
     static func assignCodes(_ items: [Item], taken reserved: Set<String>) -> [String?] {
         var taken = reserved
         return items.map { item in
-            guard let title = item.path.last, let base = baseCode(title) else { return nil }
-            let w = words(title)
-            var candidates = [base]
-            if let last = w.last {
-                let rest = w.count == 1 ? last.dropFirst(2) : last.dropFirst(1)
-                candidates += rest.map { base + String($0) }
-            }
-            if let top = item.path.first, let initial = words(top).first?.first {
-                candidates.append(String(initial) + base)
-            }
-            candidates += (2...9).map { base + String($0) }
-            guard let code = candidates.first(where: { !taken.contains($0) }) else { return nil }
+            guard let code = candidates(for: item).first(where: { !taken.contains($0) }) else { return nil }
             taken.insert(code)
             return code
         }
+    }
+
+    /// The codes an item would take, in order of preference (see assignCodes).
+    static func candidates(for item: Item) -> [String] {
+        guard let title = item.path.last, let base = baseCode(title) else { return [] }
+        let w = words(title)
+        var out = [base]
+        if let last = w.last {
+            let rest = w.count == 1 ? last.dropFirst(2) : last.dropFirst(1)
+            out += rest.map { base + String($0) }
+        }
+        if let top = item.path.first, let initial = words(top).first?.first {
+            out.append(String(initial) + base)
+        }
+        out += (2...9).map { base + String($0) }
+        return out
     }
 }
 
 /// Turns config + menu walk into the rows chord mode shows and fires.
 enum ChordCatalog {
-    static func entries(config: Config.ChordConfig, bundleID: String?, menu: [MenuChords.Item]) -> [ChordEntry] {
+    /// The Office ribbon as chord mode knows it: the tabs, what each tab
+    /// held when last seen (live for the selected one), and which live
+    /// commands are greyed out.
+    struct RibbonInput {
+        let tabs: [String]
+        let commands: [String: [RibbonChords.Command]]
+        let liveTab: String?
+        let disabled: Set<String>
+    }
+
+    static func entries(config: Config.ChordConfig, bundleID: String?, menu: [MenuChords.Item],
+                        ribbon: RibbonInput? = nil) -> [ChordEntry] {
         var out: [ChordEntry] = []
         let appChords = bundleID.flatMap { id in
             config.apps.first { $0.key.caseInsensitiveCompare(id) == .orderedSame }?.value
@@ -218,6 +237,48 @@ enum ChordCatalog {
             out.append(ChordEntry(code: code, name: item.path.last ?? "", detail: middle,
                                   group: item.path.first ?? "", source: .menu,
                                   action: .menu(item.path), enabled: item.enabled))
+        }
+        if let ribbon { out += ribbonEntries(ribbon, taken: Set(out.map(\.code))) }
+        return out
+    }
+
+    /// Windows-Alt-style codes: each tab a dot and a letter or two (.h Home,
+    /// .v View, .da Data), each command its tab's code plus its own initials
+    /// (.vgr Gridlines) — so typing a tab's code lists exactly that tab. `..`
+    /// is the sweep that learns every tab.
+    static func ribbonEntries(_ r: RibbonInput, taken reserved: Set<String>) -> [ChordEntry] {
+        var taken = reserved.union([".."])
+        var out: [ChordEntry] = []
+        var tabCodes: [String: String] = [:]
+        for tab in r.tabs {
+            let c = compact(tab)
+            guard let first = c.first else { continue }
+            let initials = String(MenuChords.words(tab).compactMap(\.first))
+            var options: [String] = [String(first), String(c.prefix(2)), initials, String(c.prefix(3)), c]
+            for d in 2...9 { options.append(String(first) + String(d)) }
+            let dotted: [String] = options.map { "." + $0 }
+            guard let code = dotted.first(where: { !taken.contains($0) }) else { continue }
+            taken.insert(code)
+            tabCodes[tab] = code
+            let n = r.commands[tab]?.count
+            out.append(ChordEntry(code: code, name: tab, detail: n.map { "\($0) commands" } ?? "not opened yet",
+                                  group: "", source: .ribbonTab, action: .ribbonTab(tab), enabled: true))
+        }
+        let learned = r.tabs.filter { r.commands[$0] != nil }.count
+        out.append(ChordEntry(code: "..", name: "Learn the whole ribbon — opens every tab once",
+                              detail: "\(learned)/\(r.tabs.count) tabs known", group: "",
+                              source: .ribbonTab, action: .ribbonLearn, enabled: true))
+        for tab in r.tabs {
+            guard let tabCode = tabCodes[tab], let cmds = r.commands[tab] else { continue }
+            for c in cmds {
+                let item = MenuChords.Item(path: [tab, c.title], enabled: true)
+                guard let code = MenuChords.candidates(for: item).map({ tabCode + $0 })
+                    .first(where: { !taken.contains($0) }) else { continue }
+                taken.insert(code)
+                let greyed = r.liveTab == tab && r.disabled.contains(c.title)
+                out.append(ChordEntry(code: code, name: c.title, detail: "ribbon", group: tab, source: .ribbon,
+                                      action: .ribbon(tab: tab, title: c.title), enabled: !greyed))
+            }
         }
         return out
     }
@@ -299,8 +360,18 @@ enum ChordCatalog {
     /// one, and the longest whole name wins ("format" over "for…").
     static func menuQuery(_ query: String, in entries: [ChordEntry]) -> MenuQuery? {
         guard query.count >= 3, query.allSatisfy({ $0.isLetter || $0.isNumber }) else { return nil }
+        // Menu-bar menus and ribbon tabs alike: "view" is Excel's View menu
+        // AND its View tab.
         var menus: [String] = []
-        for e in entries where e.source == .menu && !menus.contains(e.group) { menus.append(e.group) }
+        for e in entries {
+            var name: String?
+            switch (e.source, e.action) {
+            case (.menu, _), (.ribbon, _): name = e.group
+            case (.ribbonTab, .ribbonTab(let t)): name = t
+            default: break
+            }
+            if let name, !name.isEmpty, !menus.contains(name) { menus.append(name) }
+        }
         let whole = menus.filter { query.hasPrefix(compact($0)) && !compact($0).isEmpty }
             .max { compact($0).count < compact($1).count }
         if let m = whole { return MenuQuery(menu: m, rest: String(query.dropFirst(compact(m).count)), whole: true) }
@@ -311,7 +382,12 @@ enum ChordCatalog {
     /// Items of `q.menu` narrowed by what was typed after its name.
     static func scopedMatches(_ q: MenuQuery, in entries: [ChordEntry]) -> [ChordEntry] {
         guard !q.rest.isEmpty else { return [] }
-        return nameMatches(q.rest, in: entries.filter { $0.source == .menu && $0.group == q.menu }, minLength: 1)
+        return nameMatches(q.rest, in: inMenu(q.menu, entries), minLength: 1)
+    }
+
+    /// A menu's items and the same-named ribbon tab's commands.
+    static func inMenu(_ menu: String, _ entries: [ChordEntry]) -> [ChordEntry] {
+        entries.filter { ($0.source == .menu || $0.source == .ribbon) && $0.group == menu }
     }
 
     /// What letting go runs: the exact code; else, after a menu name, the

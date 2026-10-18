@@ -375,21 +375,24 @@ struct Config: Codable {
     struct ChordConfig: Codable, Equatable {
         var enabled: Bool
         var autoMenu: Bool
+        /// Office ribbon tabs and commands (Excel, Word, PowerPoint, Outlook).
+        var ribbon: Bool
         var global: [String: ChordAction]
         var apps: [String: [String: ChordAction]]
 
-        init(enabled: Bool = true, autoMenu: Bool = true,
+        init(enabled: Bool = true, autoMenu: Bool = true, ribbon: Bool = true,
              global: [String: ChordAction] = ChordConfig.starterGlobal,
              apps: [String: [String: ChordAction]] = ChordConfig.starterApps) {
-            self.enabled = enabled; self.autoMenu = autoMenu; self.global = global; self.apps = apps
+            self.enabled = enabled; self.autoMenu = autoMenu; self.ribbon = ribbon; self.global = global; self.apps = apps
         }
 
-        private enum CodingKeys: String, CodingKey { case enabled, autoMenu, global, apps }
+        private enum CodingKeys: String, CodingKey { case enabled, autoMenu, ribbon, global, apps }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             enabled = ((try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? nil) ?? true
             autoMenu = ((try? c.decodeIfPresent(Bool.self, forKey: .autoMenu)) ?? nil) ?? true
+            ribbon = ((try? c.decodeIfPresent(Bool.self, forKey: .ribbon)) ?? nil) ?? true
             global = ((try? c.decodeIfPresent([String: ChordAction].self, forKey: .global)) ?? nil) ?? Self.starterGlobal
             apps = ((try? c.decodeIfPresent([String: [String: ChordAction]].self, forKey: .apps)) ?? nil) ?? Self.starterApps
         }

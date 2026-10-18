@@ -6,21 +6,47 @@ import Cocoa
 /// it never takes key or mouse; HotkeyMonitor feeds it the keys.
 @MainActor
 final class ChordMode {
+    /// Runs a chosen chord. The third value is the ribbon tab that was
+    /// selected when chord mode opened — a ribbon press goes back to it.
+    typealias Run = (ChordEntry, NSRunningApplication?, String?) -> Void
+
     private var panel: NSPanel?
     private var view: ChordPanelView?
     private var screen: NSScreen?
     /// The app in front when chord mode opened — the one the chord runs in.
     private(set) var targetApp: NSRunningApplication?
+    private var config = Config.ChordConfig()
+    private var bundleID: String?
+    private var menuItems: [MenuChords.Item] = []
     private var entries: [ChordEntry] = []
     private var menuLoaded = true
     private var buffer = ""
     /// Bumped on every open and close, so a menu walk that lands late never
     /// touches a session it didn't start.
     private var gen = 0
-    /// A release that came before the menu walk finished — resolved the
-    /// moment it lands (or once the walk's budget is long past, with what there is).
-    private var pendingFire: (code: String, run: (ChordEntry, NSRunningApplication?) -> Void)?
+    /// A release that came before the menus (or a ribbon tab) were read —
+    /// resolved the moment they land, or after a timeout with what there is.
+    private var pendingFire: (code: String, run: Run)?
 
+    /// The Office ribbon, when the app has one: its tabs, the tab selected
+    /// when chord mode opened (put back unless a ribbon chord ran), the tab
+    /// selected now, and the now-selected tab's commands read live.
+    private struct RibbonState {
+        var tabs: [String]
+        var original: String?
+        var current: String?
+        var live: [RibbonChords.Command]
+        var disabled: Set<String>
+    }
+    private var ribbon: RibbonState?
+    /// The tab being opened right now (typing a tab's code or name opens it).
+    private var ribbonOpening: String?
+    private var drillToken = 0
+    /// A session that closed while a tab was still opening: once that open
+    /// lands, put the ribbon back on this tab. Keyed by the session's gen.
+    private var lateRestore: [Int: String] = [:]
+
+    private var loading: Bool { !menuLoaded || ribbonOpening != nil }
     var isVisible: Bool { panel != nil }
 
     func start(config: Config.ChordConfig, app: NSRunningApplication?, dark: Bool, screen: NSScreen) {
@@ -29,11 +55,16 @@ final class ChordMode {
         let g = gen
         targetApp = app
         self.screen = screen
+        self.config = config
         buffer = ""
-        let bundleID = app?.bundleIdentifier
-        entries = ChordCatalog.entries(config: config, bundleID: bundleID, menu: [])
+        bundleID = app?.bundleIdentifier
+        menuItems = []
+        ribbon = nil
+        ribbonOpening = nil
+        rebuild()
         let pid = app?.processIdentifier
-        menuLoaded = !(config.autoMenu && pid != nil)
+        let wantsRibbon = config.ribbon
+        menuLoaded = !((config.autoMenu || wantsRibbon) && pid != nil)
 
         let v = ChordPanelView(dark: dark, appName: app?.localizedName ?? "")
         view = v
@@ -53,22 +84,29 @@ final class ChordMode {
 
         guard !menuLoaded, let pid else { return }
         let appName = app?.localizedName ?? "?"
+        let autoMenu = config.autoMenu
+        let bundleID = bundleID
         Task.detached(priority: .userInitiated) {
             // Walked fresh every time, never cached: which items are greyed
             // out, and titles that name the selection, change from one
             // second to the next — and a walk is tens of milliseconds.
-            let walk = MenuChords.walk(pid: pid)
+            let walk = autoMenu ? MenuChords.walk(pid: pid) : MenuChords.Walk(items: [], ms: 0, truncated: false)
+            let snap = wantsRibbon ? RibbonChords.snapshot(pid: pid) : nil
+            if let snap, let bundleID, let sel = snap.selected, !snap.live.isEmpty {
+                RibbonCache.shared.update(bundleID: bundleID, [sel: snap.live])
+            }
             await MainActor.run { [weak self] in
                 guard let self, self.gen == g else { return }
-                log("chord: \(appName) menus — \(walk.items.count) items in \(walk.ms) ms\(walk.truncated ? ", truncated at the cap" : "")")
-                self.entries = ChordCatalog.entries(config: config, bundleID: bundleID, menu: walk.items)
-                self.menuLoaded = true
-                if let p = self.pendingFire {
-                    self.pendingFire = nil
-                    self.finish(p.code, run: p.run)
-                } else {
-                    self.render()
+                log("chord: \(appName) menus — \(walk.items.count) items in \(walk.ms) ms\(walk.truncated ? ", truncated at the cap" : "")"
+                    + (snap.map { ", ribbon \($0.tabs.count) tabs (on \($0.selected ?? "?"), \($0.live.count) commands)" } ?? ""))
+                self.menuItems = walk.items
+                if let snap {
+                    self.ribbon = RibbonState(tabs: snap.tabs, original: snap.selected, current: snap.selected,
+                                              live: snap.live, disabled: snap.disabled)
                 }
+                self.menuLoaded = true
+                self.rebuild()
+                self.settle()
             }
         }
     }
@@ -77,12 +115,13 @@ final class ChordMode {
         guard isVisible else { return }
         buffer = code
         render()
+        scheduleDrill()
     }
 
     /// The hotkey was released with `code` typed: run the exact code, else
     /// the best name match (the row the panel highlights), or say why
     /// nothing ran. `run` is called at most once.
-    func finish(_ code: String, run: @escaping (ChordEntry, NSRunningApplication?) -> Void) {
+    func finish(_ code: String, run: @escaping Run) {
         guard isVisible else { return }
         buffer = code
         if code.isEmpty { close(); return }
@@ -90,19 +129,19 @@ final class ChordMode {
             // A dimmed item is still tried: what Accessibility reports as
             // greyed out can lag the app's own state, and a failed press
             // says so anyway.
-            let app = targetApp
-            close()
-            run(e, app)
+            runAndClose(e, run)
             return
         }
-        if !menuLoaded {
-            // Typed faster than the menus could be read — wait for them.
+        if loading {
+            // Typed faster than the menus (or a ribbon tab) could be read —
+            // wait for them.
             pendingFire = (code, run)
             let g = gen
-            DispatchQueue.main.asyncAfter(deadline: .now() + MenuChords.budget + 0.4) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + MenuChords.budget + 1.4) { [weak self] in
                 guard let self, self.gen == g, let p = self.pendingFire else { return }
                 self.pendingFire = nil
                 self.menuLoaded = true   // give up waiting; resolve with what there is
+                self.ribbonOpening = nil
                 self.finish(p.code, run: p.run)
             }
             render()
@@ -110,25 +149,134 @@ final class ChordMode {
         }
         if let e = ChordCatalog.resolve(code, in: entries) {
             log("chord: “\(code)” matched by name → \(e.group.isEmpty ? "" : e.group + " ▸ ")\(e.name)")
-            let app = targetApp
-            close()
-            run(e, app)
+            runAndClose(e, run)
             return
         }
         if let mq = ChordCatalog.menuQuery(code, in: entries), mq.whole, mq.rest.isEmpty {
-            flash("That's the \(mq.menu) menu — keep typing to pick an item")
+            flash("That's \(mq.menu) — keep typing to pick an item")
             return
         }
         flash("No chord or name matches “\(code)”")
     }
 
-    /// Esc, or anything else that ends the session without running a chord.
-    func close() {
+    private func runAndClose(_ e: ChordEntry, _ run: Run) {
+        let app = targetApp
+        let original = ribbon?.original
+        let ribbonRun: Bool
+        switch e.action {
+        case .ribbon, .ribbonTab, .ribbonLearn: ribbonRun = true
+        default: ribbonRun = false
+        }
+        // A ribbon chord decides where the ribbon ends up itself; anything
+        // else leaves the ribbon on the tab it was on before chord mode.
+        close(restoreRibbon: !ribbonRun)
+        run(e, app, original)
+    }
+
+    /// Esc, a miss, or anything else that ends the session without running
+    /// a chord. Puts the ribbon back if typing a tab's name opened another.
+    func close(restoreRibbon: Bool = true) {
+        let ended = gen
         gen += 1
         pendingFire = nil
+        drillToken += 1
+        if restoreRibbon, let r = ribbon, let original = r.original, let pid = targetApp?.processIdentifier {
+            if ribbonOpening != nil {
+                lateRestore[ended] = original
+            } else if r.current != original {
+                log("chord: ribbon back to \(original)")
+                Task.detached(priority: .userInitiated) { RibbonChords.openTab(pid: pid, tab: original, timeout: 0.6) }
+            }
+        }
+        ribbon = nil
+        ribbonOpening = nil
         panel?.orderOut(nil)
         panel = nil
         view = nil
+    }
+
+    // MARK: Ribbon tabs
+
+    private func rebuild() {
+        var input: ChordCatalog.RibbonInput?
+        if let r = ribbon {
+            var commands = bundleID.map { RibbonCache.shared.tabs(bundleID: $0) } ?? [:]
+            if let cur = r.current, !r.live.isEmpty { commands[cur] = r.live }
+            input = ChordCatalog.RibbonInput(tabs: r.tabs, commands: commands, liveTab: r.current, disabled: r.disabled)
+        }
+        entries = ChordCatalog.entries(config: config, bundleID: bundleID, menu: menuItems, ribbon: input)
+    }
+
+    /// Something finished loading: fire a waiting release, else redraw and
+    /// open whatever tab the buffer now names.
+    private func settle() {
+        if let p = pendingFire, !loading {
+            pendingFire = nil
+            finish(p.code, run: p.run)
+            return
+        }
+        render()
+        drill()
+    }
+
+    /// The tab the buffer names: a tab code it starts with (".v", ".vgr" →
+    /// View; the longest wins), or a whole tab name ("view", "viewgr").
+    private func ribbonTarget(_ code: String) -> String? {
+        guard let r = ribbon else { return nil }
+        var best: (code: String, tab: String)?
+        for e in entries where e.source == .ribbonTab {
+            guard case .ribbonTab(let t) = e.action, code.hasPrefix(e.code) else { continue }
+            if e.code.count > (best?.code.count ?? 0) { best = (e.code, t) }
+        }
+        if let best { return best.tab }
+        if let mq = ChordCatalog.menuQuery(code, in: entries), mq.whole, r.tabs.contains(mq.menu) { return mq.menu }
+        return nil
+    }
+
+    /// Typing pauses for a quarter second before a tab opens, so passing
+    /// through ".d" on the way to ".da" doesn't flick the ribbon to Draw.
+    private func scheduleDrill() {
+        drillToken += 1
+        let t = drillToken
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard let self, self.drillToken == t else { return }
+            self.drill()
+        }
+    }
+
+    /// Open the tab the buffer names (like Alt+W opening View), read its
+    /// commands, remember them, and list them.
+    private func drill() {
+        guard let r = ribbon, ribbonOpening == nil, let pid = targetApp?.processIdentifier,
+              let tab = ribbonTarget(buffer), tab != r.current else { return }
+        ribbonOpening = tab
+        render()
+        let g = gen
+        let bundleID = bundleID
+        Task.detached(priority: .userInitiated) {
+            let cmds = RibbonChords.openTab(pid: pid, tab: tab)
+            if let cmds, let bundleID { RibbonCache.shared.update(bundleID: bundleID, [tab: cmds]) }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                guard self.gen == g else {
+                    // The session ended while this tab was opening.
+                    if let back = self.lateRestore.removeValue(forKey: g), back != tab {
+                        Task.detached(priority: .userInitiated) { RibbonChords.openTab(pid: pid, tab: back, timeout: 0.6) }
+                    }
+                    return
+                }
+                log("chord: opened ribbon tab \(tab) — \(cmds?.count ?? 0) commands")
+                self.ribbonOpening = nil
+                if let cmds {
+                    self.ribbon?.current = tab
+                    self.ribbon?.live = cmds
+                    self.ribbon?.disabled = []
+                }
+                self.rebuild()
+                self.settle()
+            }
+        }
     }
 
     /// The miss state — red edge and the reason — then gone.
@@ -150,7 +298,7 @@ final class ChordMode {
         // take the rest of the screen: a big app (Excel, ~270 menu items)
         // flows into columns so everything is visible before typing.
         let top = vf.maxY - 48
-        view.setContent(buffer: buffer, entries: entries, loading: !menuLoaded,
+        view.setContent(buffer: buffer, entries: entries, loading: loading,
                         maxSize: NSSize(width: vf.width - 28, height: top - (vf.minY + 14)))
         let size = view.fittingSize
         panel.setFrame(NSRect(x: vf.minX + 14, y: top - size.height, width: size.width, height: size.height),
@@ -236,8 +384,16 @@ final class ChordPanelView: NSView {
             return fresh
         }
         func listed(_ e: ChordEntry) -> ChordEntry {
-            let where_ = e.source == .menu ? e.group : (e.source == .app ? appName : "Everywhere")
-            return ChordEntry(code: e.code, name: e.name, detail: e.detail.isEmpty ? where_ : "\(where_) ▸ \(e.detail)",
+            let where_: String
+            switch e.source {
+            case .menu: where_ = e.group
+            case .ribbon: where_ = "\(e.group) tab"
+            case .ribbonTab: where_ = "Ribbon"
+            case .app: where_ = appName
+            case .global: where_ = "Everywhere"
+            }
+            let detail = e.source == .ribbon || e.detail.isEmpty ? where_ : "\(where_) ▸ \(e.detail)"
+            return ChordEntry(code: e.code, name: e.name, detail: detail,
                               group: e.group, source: e.source, action: e.action, enabled: e.enabled)
         }
         // A typed menu name: that menu's items (narrowed by what follows the
@@ -246,7 +402,7 @@ final class ChordPanelView: NSView {
         if let mq = ChordCatalog.menuQuery(buffer, in: entries) {
             let items = mq.whole && !mq.rest.isEmpty
                 ? ChordCatalog.scopedMatches(mq, in: entries)
-                : entries.filter { $0.source == .menu && $0.group == mq.menu }
+                : ChordCatalog.inMenu(mq.menu, entries)
             let title = mq.rest.isEmpty ? "\(mq.menu) menu" : "\(mq.menu) menu ▸ “\(mq.rest)”"
             if exact != nil { claimed.insert(exact!.code) }
             let fresh = claim(items)
@@ -271,6 +427,8 @@ final class ChordPanelView: NSView {
             case .app: group = appName.isEmpty ? "This app" : appName
             case .global: group = "Everywhere"
             case .menu: group = "Menu · \(e.group)"
+            case .ribbonTab: group = "Ribbon tabs"
+            case .ribbon: group = "Ribbon · \(e.group)"
             }
             if group != lastGroup { codeRows.append(.header(group)); lastGroup = group }
             codeRows.append(.entry(e, highlighted: runs?.code == e.code, typed: buffer.count))
@@ -286,7 +444,7 @@ final class ChordPanelView: NSView {
         if byCode.isEmpty, byName.isEmpty, menuRows.isEmpty, !buffer.isEmpty, !loading, missMessage == nil {
             rows.append(.note("Nothing matches “\(buffer)” · ⌫ backs up"))
         }
-        if loading { rows.append(.note("Reading menus…")) }
+        if loading { rows.append(.note("Reading menus and ribbon…")) }
         if entries.isEmpty, !loading { rows.append(.note("No chords for this app yet — add some in config.json")) }
         columns = Self.flow(rows, maxSize: maxSize)
     }

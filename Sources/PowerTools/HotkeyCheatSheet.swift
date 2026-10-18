@@ -85,6 +85,7 @@ final class HotkeyCheatSheetView: NSView {
             ]),
             ("Chords", [
                 ("Space", "chord mode · hold Space, type"),
+                (".v  ..", "ribbon tab · learn all tabs"),
                 ("⌫ · esc", "back up · leave"),
             ]),
             ("Pads & panels", [

@@ -386,6 +386,28 @@ case "chord-codes-test":
     check(ChordCatalog.resolve("windowmin", in: entries)?.name == "Minimize", "works for any menu (windowmin → Minimize)")
     check(ChordCatalog.menuQuery("vie", in: entries)?.whole == false, "three letters of a menu name show it without choosing")
     check(ChordCatalog.resolve("ss", in: entries)?.name == "Show Sidebar", "an exact code still wins")
+    // Ribbon: dot codes per tab, tab code + initials per command, unique.
+    let rib = ChordCatalog.RibbonInput(
+        tabs: ["Home", "Insert", "Draw", "Page Layout", "Formulas", "Data", "Review", "View"],
+        commands: ["View": [.init(title: "Gridlines", role: "AXCheckBox"), .init(title: "Zoom to Selection", role: "AXCheckBox"),
+                            .init(title: "Freeze Panes", role: "AXMenuButton")],
+                   "Draw": [.init(title: "Add", role: "AXButton")], "Data": [.init(title: "Advanced", role: "AXButton")]],
+        liveTab: "View", disabled: [])
+    let withRibbon = ChordCatalog.entries(config: Config.ChordConfig(), bundleID: "com.apple.finder", menu: items, ribbon: rib)
+    let tabCodes = Dictionary(uniqueKeysWithValues: withRibbon.compactMap { e -> (String, String)? in
+        if case .ribbonTab(let t) = e.action { return (t, e.code) }
+        return nil
+    })
+    check(tabCodes["Home"] == ".h" && tabCodes["View"] == ".v" && tabCodes["Draw"] == ".d" && tabCodes["Data"] == ".da",
+          "tab codes Windows-style (.h .v .d .da — got \(tabCodes))")
+    check(ChordCatalog.exact(".vgr", in: withRibbon)?.name == "Gridlines", "ribbon command = tab code + initials (.vgr Gridlines)")
+    check(ChordCatalog.exact(".vzs", in: withRibbon)?.name == "Zoom to Selection", ".vzs Zoom to Selection")
+    let allCodes = withRibbon.map(\.code)
+    check(Set(allCodes).count == allCodes.count, "every code unique with the ribbon in (\(allCodes.count))")
+    check(ChordCatalog.exact("..", in: withRibbon).map { if case .ribbonLearn = $0.action { return true }; return false } == true, ".. is the learn sweep")
+    check(ChordCatalog.nameMatches("gridl", in: withRibbon).first?.name == "Gridlines", "name search reaches remembered ribbon commands")
+    check(ChordCatalog.resolve("viewgr", in: withRibbon)?.name == "Gridlines", "a menu name narrows into the same-named ribbon tab (viewgr → Gridlines)")
+    check(ChordCatalog.menuQuery("data", in: withRibbon)?.menu == "Data", "an unopened ribbon tab's name is recognised (data)")
     let autoName = ChordCatalog.nameMatches("autofilt", in: [ChordEntry(code: "af", name: "AutoFilter", detail: "", group: "Data", source: .menu, action: .menu(["Data", "AutoFilter"]), enabled: true)])
     check(autoName.count == 1, "name search reads across joined words (autofilt → AutoFilter)")
         for (code, a) in Config.ChordConfig.starterGlobal.merging(Config.ChordConfig.starterApps.values.reduce([:]) { $0.merging($1) { x, _ in x } }) { x, _ in x }
@@ -402,6 +424,20 @@ case "chord-codes-test":
         print(failures == 0 ? "all passed" : "\(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }
+
+case "ribbon-learn":
+    // The `..` sweep from the command line: open every ribbon tab of a
+    // running Office app, remember what each holds, go back.
+    guard args.count >= 2 else { print("usage: ribbon-learn <bundle-id>"); exit(1) }
+    guard AXIsProcessTrusted() else { print("not trusted for Accessibility"); exit(2) }
+    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: args[1]).first else {
+        print("\(args[1]) isn't running"); exit(1)
+    }
+    let t0 = CFAbsoluteTimeGetCurrent()
+    let tabs = RibbonChords.learnAll(pid: app.processIdentifier)
+    RibbonCache.shared.update(bundleID: args[1], tabs)
+    for (tab, cmds) in tabs.sorted(by: { $0.key < $1.key }) { print("\(tab): \(cmds.count)") }
+    print("— \(tabs.values.reduce(0) { $0 + $1.count }) commands in \(tabs.count) tabs, \(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)) ms")
 
 case "chord-preview":
     // Offscreen render of the chord panel: `chord-preview [out.png] [light] [code=gd] [loading] [miss]`.
@@ -438,13 +474,23 @@ case "menu-chords":
     let cap = budgetArg == nil ? MenuChords.maxItems : 10_000
     let first = MenuChords.walk(pid: app.processIdentifier, budget: budget, maxItems: cap)
     let walk = MenuChords.walk(pid: app.processIdentifier, budget: budget, maxItems: cap)
-    let entries = ChordCatalog.entries(config: Config.load().chords, bundleID: args[1], menu: walk.items)
+    // The ribbon as chord mode would see it: live tab + what's remembered.
+    var ribbonInput: ChordCatalog.RibbonInput?
+    if let snap = RibbonChords.snapshot(pid: app.processIdentifier) {
+        var cmds = RibbonCache.shared.tabs(bundleID: args[1])
+        if let sel = snap.selected { cmds[sel] = snap.live }
+        ribbonInput = .init(tabs: snap.tabs, commands: cmds, liveTab: snap.selected, disabled: snap.disabled)
+    }
+    let entries = ChordCatalog.entries(config: Config.load().chords, bundleID: args[1], menu: walk.items, ribbon: ribbonInput)
     for e in entries {
         let what: String
         switch e.action {
         case .menu(let path): what = path.joined(separator: " ▸ ")
         case .shortcut(let s): what = "\(e.name)  [\(s)]"
         case .shell(let c): what = "\(e.name)  [shell: \(c)]"
+        case .ribbonTab(let t): what = "Ribbon tab \(t)  (\(e.detail))"
+        case .ribbon(let t, let title): what = "Ribbon \(t) ▸ \(title)"
+        case .ribbonLearn: what = e.name
         }
         print("\(e.code.padding(toLength: 6, withPad: " ", startingAt: 0)) \(what)\(e.enabled ? "" : "  (disabled)")")
     }

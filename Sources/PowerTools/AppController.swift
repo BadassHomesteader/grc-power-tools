@@ -292,7 +292,9 @@ final class AppController {
                 self.chordMode.update(code)
             case .chordFire(let code):
                 self.overlay.hideUnlessToast()
-                self.chordMode.finish(code) { [weak self] entry, app in self?.runChord(entry, in: app) }
+                self.chordMode.finish(code) { [weak self] entry, app, ribbonTab in
+                    self?.runChord(entry, in: app, ribbonOriginal: ribbonTab)
+                }
             case .chordCancel:
                 self.chordMode.close()
             }
@@ -1112,7 +1114,7 @@ final class AppController {
     /// Run a chord the user released on. Shortcuts wait for the hotkey's
     /// modifiers to lift (a held ⌥ would turn ⌘↑ into ⌥⌘↑); menu presses and
     /// shell commands don't care about the keyboard and go at once.
-    private func runChord(_ entry: ChordEntry, in app: NSRunningApplication?) {
+    private func runChord(_ entry: ChordEntry, in app: NSRunningApplication?, ribbonOriginal: String?) {
         log("chord: “\(entry.code)” → \(entry.name) (\(entry.source)) in \(app?.localizedName ?? "?")")
         switch entry.action {
         case .shortcut(let shortcut):
@@ -1143,6 +1145,37 @@ final class AppController {
             }
         case .shell(let command):
             ChordMode.runShell(command)
+        case .ribbonTab(let tab):
+            // Like Alt+W on Windows: go to the tab and stay there.
+            guard let pid = app?.processIdentifier else { return }
+            Task.detached(priority: .userInitiated) { RibbonChords.openTab(pid: pid, tab: tab) }
+        case .ribbon(let tab, let title):
+            guard let pid = app?.processIdentifier else { return }
+            Task.detached(priority: .userInitiated) {
+                let result = RibbonChords.press(pid: pid, tab: tab, title: title, restoreTo: ribbonOriginal)
+                log("chord: ribbon \(tab) ▸ \(title) → \(result)")
+                guard result != .pressed else { return }
+                await MainActor.run {
+                    switch result {
+                    case .noTab: self.overlay.showError("“\(title)” didn't run — the \(tab) tab isn't showing right now")
+                    case .noControl: self.overlay.showError("“\(title)” isn't on the \(tab) tab right now")
+                    default: self.overlay.showError("“\(title)” didn't run — no ribbon in this window")
+                    }
+                }
+            }
+        case .ribbonLearn:
+            guard let pid = app?.processIdentifier, let bundleID = app?.bundleIdentifier else { return }
+            overlay.showSuccess("Learning the ribbon — opening every tab…")
+            Task.detached(priority: .userInitiated) {
+                let t0 = CFAbsoluteTimeGetCurrent()
+                let tabs = RibbonChords.learnAll(pid: pid, restoreTo: ribbonOriginal)
+                RibbonCache.shared.update(bundleID: bundleID, tabs)
+                let n = tabs.values.reduce(0) { $0 + $1.count }
+                log("chord: learned ribbon — \(n) commands in \(tabs.count) tabs, \(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)) ms")
+                await MainActor.run {
+                    self.overlay.showSuccess("Ribbon learned — \(n) commands across \(tabs.count) tabs")
+                }
+            }
         }
     }
 

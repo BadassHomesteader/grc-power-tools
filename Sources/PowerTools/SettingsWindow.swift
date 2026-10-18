@@ -41,6 +41,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let taskMgrCheck = NSButton(checkboxWithTitle: "Control + Shift + Escape (⌃⇧⎋) opens Activity Monitor (Task Manager)", target: nil, action: nil)
     private let chordsCheck = NSButton(checkboxWithTitle: "Chord mode — hotkey + Space, then just hold Space while you type a code; let go to run it", target: nil, action: nil)
     private let autoMenuCheck = NSButton(checkboxWithTitle: "Menu chords — every menu item of the front app gets a code from its initials", target: nil, action: nil)
+    private let ribbonCheck = NSButton(checkboxWithTitle: "Ribbon chords — Excel, Word, PowerPoint, Outlook: .v opens View, .vgr Gridlines; .. learns every tab", target: nil, action: nil)
     private var sidebarRows: [SidebarRow] = []
     private var sectionViews: [NSView] = []
     private var contentHost: NSView?
@@ -272,7 +273,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
                            (deleteTrashCheck, #selector(deleteTrashToggled)),
                            (taskMgrCheck, #selector(taskMgrToggled)),
                            (chordsCheck, #selector(chordsToggled)),
-                           (autoMenuCheck, #selector(autoMenuToggled))] {
+                           (autoMenuCheck, #selector(autoMenuToggled)),
+                           (ribbonCheck, #selector(ribbonToggled))] {
             box.target = self
             box.action = sel
         }
@@ -459,12 +461,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         editBtn.bezelStyle = .rounded
         return vstack([
             section("Windows-style keys", [note, finderEnterCheck, homeEndCheck, backspaceUpCheck, deleteTrashCheck, taskMgrCheck], width: 590),
-            section("Chord mode", [chordsCheck, autoMenuCheck, chordNote, editBtn], width: 590),
+            section("Chord mode", [chordsCheck, autoMenuCheck, ribbonCheck, chordNote, editBtn], width: 590),
         ])
     }
 
     @objc private func chordsToggled() { config.chords.enabled = (chordsCheck.state == .on); config.save(); onConfigChange(config) }
     @objc private func autoMenuToggled() { config.chords.autoMenu = (autoMenuCheck.state == .on); config.save(); onConfigChange(config) }
+    @objc private func ribbonToggled() { config.chords.ribbon = (ribbonCheck.state == .on); config.save(); onConfigChange(config) }
     @objc private func revealChordConfig() { NSWorkspace.shared.activateFileViewerSelecting([Config.configURL]) }
 
     @objc private func homeEndToggled() { config.keyHomeEnd = (homeEndCheck.state == .on); config.save(); onConfigChange(config) }
@@ -1587,6 +1590,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         taskMgrCheck.state = config.taskManagerShortcut ? .on : .off
         chordsCheck.state = config.chords.enabled ? .on : .off
         autoMenuCheck.state = config.chords.autoMenu ? .on : .off
+        ribbonCheck.state = config.chords.ribbon ? .on : .off
         applyWindowAppearance()
         launchLoginCheck.state = SMAppService.mainApp.status == .enabled ? .on : .off
         restorePadsCheck.state = config.restorePads ? .on : .off
