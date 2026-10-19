@@ -1248,7 +1248,71 @@ final class AppController {
     /// The enrichment step was missing here once, and every notch row drew its
     /// model chip, branch and spend as empty.
     private var stripSessions: [ClaudeSession] {
-        AgentPad.triageSorted(AgentPad.visible(claudeRegistry.ordered)).map(AgentPad.enriched)
+        AgentPad.triageSorted(AgentPad.visible(claudeRegistry.ordered).filter(notchShows)).map(AgentPad.enriched)
+    }
+
+    /// The platforms the notch's Agents ▾ menu can tick, in menu order.
+    static let notchAgentKinds: [(id: String, name: String)] = [
+        ("claude", "Claude"), ("codex", "Codex"), ("cursor", "Cursor"), ("grok", "Grok")]
+    /// Platforms unticked there — a focus filter for the notch only; the pad
+    /// and the watchers are untouched. Its own file, not config.json: Settings
+    /// edits a private copy of Config, and its next save would re-tick them.
+    private var notchHiddenKinds: Set<String> = AppController.loadNotchHiddenKinds()
+    private static var notchFilterURL: URL {
+        Config.appSupportDir.appendingPathComponent("notch-agent-filter.json")
+    }
+    private static func loadNotchHiddenKinds() -> Set<String> {
+        guard let data = try? Data(contentsOf: notchFilterURL),
+              let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Set(list)
+    }
+    private func notchShows(_ s: ClaudeSession) -> Bool { !notchHiddenKinds.contains(s.kindID) }
+
+    private func setNotchHiddenKinds(_ hidden: Set<String>) {
+        notchHiddenKinds = hidden
+        if let data = try? JSONEncoder().encode(hidden.sorted()) {
+            try? data.write(to: Self.notchFilterURL, options: .atomic)
+        }
+        log("notch: agent filter hides [\(hidden.sorted().joined(separator: ", "))]")
+        notchStrip.refresh()
+    }
+
+    /// Agents ▾ — one checkbox per platform; each click flips one and closes,
+    /// like the ✱ row menu.
+    private func popNotchAgentFilter() {
+        let menu = NSMenu()
+        let head = NSMenuItem(title: "Show in the notch", action: nil, keyEquivalent: "")
+        head.isEnabled = false
+        menu.addItem(head)
+        for k in Self.notchAgentKinds {
+            let item = NSMenuItem(title: k.name, action: #selector(NotchMenuTarget.fire(_:)), keyEquivalent: "")
+            item.representedObject = k.id
+            item.state = notchHiddenKinds.contains(k.id) ? .off : .on
+            menu.addItem(item)
+        }
+        if !notchHiddenKinds.isEmpty {
+            menu.addItem(.separator())
+            let all = NSMenuItem(title: "Show All", action: #selector(NotchMenuTarget.fire(_:)), keyEquivalent: "")
+            all.representedObject = "*"
+            menu.addItem(all)
+        }
+        let target = NotchMenuTarget { [weak self] key in
+            guard let self else { return }
+            var hidden = self.notchHiddenKinds
+            if key == "*" { hidden.removeAll() }
+            else if hidden.contains(key) { hidden.remove(key) } else { hidden.insert(key) }
+            self.setNotchHiddenKinds(hidden)
+        }
+        notchMenuTarget = target   // menus don't retain their target
+        for item in menu.items where item.action != nil { item.target = target }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    /// Rows the filter is hiding right now, live and finished alike.
+    private var notchHiddenCount: Int {
+        guard !notchHiddenKinds.isEmpty else { return 0 }
+        return AgentPad.visible(claudeRegistry.ordered).filter { !notchShows($0) }.count
+            + claudeRegistry.recentEnded.filter { !notchShows($0) }.count
     }
     /// Only the LIVE rows earn a dot in the collapsed strip and a live card in
     /// the list — the folded ones (idle-long, or an autonomous Grok bot merely
@@ -1373,14 +1437,18 @@ final class AppController {
                 let active = (self?.stripLive ?? []).filter {
                     $0.state == .busy || $0.state == .needsPermission || $0.state == .needsInput
                 }.count
-                return (title: "Agents", active: active)
+                // Filtered, the title names what is shown ("Claude ▾").
+                let hidden = self?.notchHiddenKinds ?? []
+                let shown = Self.notchAgentKinds.filter { !hidden.contains($0.id) }.map(\.name)
+                let title = hidden.isEmpty ? "Agents" : shown.isEmpty ? "None" : shown.joined(separator: ", ")
+                return (title: title + " ▾", active: active)
             },
             // Under the Recent divider: the folded rows (idle-long, and Grok bots
             // merely running) first, then finished sessions (tombstones).
             recent: { [weak self] in
                 guard let self else { return [] }
                 let folded = self.stripRecent.map { self.agentCard(for: $0) }
-                let ended = self.claudeRegistry.recentEnded.map { s -> NotchStrip.Card in
+                let ended = self.claudeRegistry.recentEnded.filter(self.notchShows).map { s -> NotchStrip.Card in
                     var card = NotchStrip.Card(
                         title: s.label, subtitle: "", accent: NSColor(white: 0.55, alpha: 1),
                         repo: s.projectName, state: "", model: s.model, branch: s.branch,
@@ -1392,6 +1460,15 @@ final class AppController {
                     card.actions = [("✕", nil, { [weak self] in self?.claudeRegistry.dismissSession(s.id) })]
                     return card
                 }
+                // Everything filtered out: one row saying so, so the list (and
+                // its Agents ▾ header) stays reachable instead of folding away.
+                if folded.isEmpty, ended.isEmpty, self.stripLive.isEmpty, self.notchHiddenCount > 0 {
+                    let n = self.notchHiddenCount
+                    return [NotchStrip.Card(
+                        title: "Click the header to change what shows", subtitle: "",
+                        accent: NSColor(white: 0.55, alpha: 1),
+                        repo: "\(n) hidden by the filter")]
+                }
                 return folded + ended
             },
             // The ↻ in the band: drop dead rows, catch sessions the hooks missed.
@@ -1399,7 +1476,8 @@ final class AppController {
                 self?.claudeRegistry.pruneDead()
                 self?.claudeRegistry.refreshDiscovered()
                 self?.refreshWatchers()
-            }))
+            },
+            headerClick: { [weak self] in self?.popNotchAgentFilter() }))
 
         notchStrip.register(NotchStrip.Source(
             id: "quota", priority: 10, maxMarks: 1,

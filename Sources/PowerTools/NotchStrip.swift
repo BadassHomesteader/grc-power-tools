@@ -101,6 +101,8 @@ final class NotchStrip {
         var recent: (() -> [Card])? = nil
         /// The ↻ in the band was clicked: re-sweep before the strip redraws.
         var refresh: (() -> Void)? = nil
+        /// The band header was clicked (the agents' platform filter menu).
+        var headerClick: (() -> Void)? = nil
     }
 
     // Geometry, lifted from the pads so the pixels do not move. `pad` is
@@ -498,6 +500,7 @@ final class NotchStrip {
         v.onTabHover = { [weak self] i in self?.hoverModule(i) }
         v.onGridHover = { [weak self] open in self?.hoverGrid(open) }
         v.onRefresh = { [weak self] in self?.refreshRequested() }
+        v.onHeaderClick = { [weak self] in self?.headerClicked() }
         let win = NotchPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                              backing: .buffered, defer: false)
         win.isOpaque = false
@@ -791,6 +794,15 @@ final class NotchStrip {
         refresh()
     }
 
+    /// The header opens the source's own menu. Pinned first: the menu takes
+    /// the cursor out of the panel, and a hover list would fold under it.
+    private func headerClicked() {
+        guard case let .list(si) = mode, si < activeSources.count,
+              let click = activeSources[si].headerClick else { return }
+        pinned = true
+        click()
+    }
+
     /// Hovering the in-list launcher opens the module row.
     private func hoverGrid(_ open: Bool) {
         guard open else { cancelHover(); return }
@@ -863,6 +875,8 @@ final class NotchStripView: NSView {
     var onGridHover: ((Bool) -> Void)?
     /// The ↻ in the band while a list is open.
     var onRefresh: (() -> Void)?
+    /// The header text in the band was clicked.
+    var onHeaderClick: (() -> Void)?
     /// The band header for the open list: a title and how many rows are live.
     var listHeader: (title: String, active: Int)?
 
@@ -1883,6 +1897,7 @@ final class NotchStripView: NSView {
             // The launcher, up in the band, opens the module row; ↻ re-sweeps.
             if listGridRect.insetBy(dx: -6, dy: -5).contains(p) { onGridHover?(true); return }
             if refreshRect.insetBy(dx: -6, dy: -5).contains(p) { onRefresh?(); return }
+            if listHeader != nil, headerRect.contains(p) { onHeaderClick?(); return }
             // A ✓/✕ answers in place; anywhere else on the row focuses it.
             if let hit = rowActionRects.first(where: { $0.rect.insetBy(dx: -3, dy: -3).contains(p) }),
                hit.row < cards.count, hit.index < cards[hit.row].actions.count {

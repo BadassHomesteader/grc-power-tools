@@ -118,6 +118,8 @@ struct ClaudeSession: Codable {
     var isCodex: Bool { kind == "codex" }
     var isCursor: Bool { kind == "cursor" }
     var isGrok: Bool { kind == "grok" }
+    /// The platform as one id — "claude" for nil — for the notch's filter.
+    var kindID: String { kind ?? "claude" }
     /// No injection channel (Electron hosts): row = presence + state + focus.
     var isWatchOnly: Bool { isCodex || isCursor || isGrok }
     /// Hosted by an IDE extension rather than a terminal.

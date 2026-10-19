@@ -2153,7 +2153,8 @@ case "notchstrip-preview":
     // waiting permission, two Recent rows); "wide=N" sets the list width
     // factor (default 3); "hover=N" lights row N's controls; "guides" strokes
     // the cutout (red), the band rects (yellow) and the content rects (green)
-    // so the eye can check what the harness asserts.
+    // so the eye can check what the harness asserts. "title=…" sets the band
+    // header, as the agents' platform filter renames it ("Claude ▾").
     let out = args.count >= 2 ? args[1] : "notchstrip-preview.png"
     let shape = args.contains("list") ? "list"
         : (args.contains("card") ? "card" : (args.contains("picker") ? "picker"
@@ -2162,6 +2163,7 @@ case "notchstrip-preview":
     let guides = args.contains("guides")
     let hoverRow = args.first(where: { $0.hasPrefix("hover=") }).flatMap { Int($0.dropFirst(6)) }
     let wide = args.first(where: { $0.hasPrefix("wide=") }).flatMap { Double($0.dropFirst(5)) }
+    let titleArg = args.first(where: { $0.hasPrefix("title=") }).map { String($0.dropFirst(6)) }
     MainActor.assumeIsolated {
         if let wide { NotchStrip.listWidthFactor = CGFloat(wide) }
         let field = PadDock.Field(visible: NSRect(x: 0, y: 0, width: 1800, height: 1130),
@@ -2214,7 +2216,7 @@ case "notchstrip-preview":
             cards[1].actionsAlways = true
             cards[1].actions = [("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1), {}),
                                 ("✕", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1), {})]
-            header = (title: "Agents", active: 3)
+            header = (title: titleArg ?? "Agents ▾", active: 3)
         }
         let v = NotchStripView()
         v.showGuides = guides
