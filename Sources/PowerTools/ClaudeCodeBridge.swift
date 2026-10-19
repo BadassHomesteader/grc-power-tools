@@ -118,8 +118,17 @@ struct ClaudeSession: Codable {
     var isCodex: Bool { kind == "codex" }
     var isCursor: Bool { kind == "cursor" }
     var isGrok: Bool { kind == "grok" }
-    /// The platform as one id — "claude" for nil — for the notch's filter.
-    var kindID: String { kind ?? "claude" }
+    /// Where the agent runs, for the notch's platform filter: the watch-only
+    /// kinds as-is, Claude Code split by host app (terminal = "claude").
+    var platformID: String {
+        if let kind { return kind }
+        switch hostBundleID {
+        case "com.google.antigravity-ide": return "antigravity"
+        case "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders": return "vscode"
+        case "com.todesktop.230313mzl4w4u92": return "cursor"
+        default: return (entrypoint ?? "").contains("vscode") ? "vscode" : "claude"
+        }
+    }
     /// No injection channel (Electron hosts): row = presence + state + focus.
     var isWatchOnly: Bool { isCodex || isCursor || isGrok }
     /// Hosted by an IDE extension rather than a terminal.

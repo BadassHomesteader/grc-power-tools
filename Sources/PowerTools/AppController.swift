@@ -1251,9 +1251,11 @@ final class AppController {
         AgentPad.triageSorted(AgentPad.visible(claudeRegistry.ordered).filter(notchShows)).map(AgentPad.enriched)
     }
 
-    /// The platforms the notch's Agents ▾ menu can tick, in menu order.
-    static let notchAgentKinds: [(id: String, name: String)] = [
-        ("claude", "Claude"), ("codex", "Codex"), ("cursor", "Cursor"), ("grok", "Grok")]
+    /// The platforms the notch's filter chips offer, in row order. Claude Code
+    /// is split by where it runs; Claude inside Cursor counts as Cursor.
+    static let notchPlatforms: [(id: String, name: String)] = [
+        ("claude", "Claude CLI"), ("vscode", "VS Code"), ("antigravity", "Antigravity"),
+        ("codex", "Codex"), ("cursor", "Cursor"), ("grok", "Grok")]
     /// Platforms unticked there — a focus filter for the notch only; the pad
     /// and the watchers are untouched. Its own file, not config.json: Settings
     /// edits a private copy of Config, and its next save would re-tick them.
@@ -1266,46 +1268,24 @@ final class AppController {
               let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
         return Set(list)
     }
-    private func notchShows(_ s: ClaudeSession) -> Bool { !notchHiddenKinds.contains(s.kindID) }
+    private func notchShows(_ s: ClaudeSession) -> Bool { !notchHiddenKinds.contains(s.platformID) }
 
-    private func setNotchHiddenKinds(_ hidden: Set<String>) {
-        notchHiddenKinds = hidden
-        if let data = try? JSONEncoder().encode(hidden.sorted()) {
+    private func toggleNotchPlatform(_ id: String) {
+        if notchHiddenKinds.contains(id) { notchHiddenKinds.remove(id) } else { notchHiddenKinds.insert(id) }
+        if let data = try? JSONEncoder().encode(notchHiddenKinds.sorted()) {
             try? data.write(to: Self.notchFilterURL, options: .atomic)
         }
-        log("notch: agent filter hides [\(hidden.sorted().joined(separator: ", "))]")
-        notchStrip.refresh()
+        log("notch: agent filter hides [\(notchHiddenKinds.sorted().joined(separator: ", "))]")
     }
 
-    /// Agents ▾ — one checkbox per platform; each click flips one and closes,
-    /// like the ✱ row menu.
-    private func popNotchAgentFilter() {
-        let menu = NSMenu()
-        let head = NSMenuItem(title: "Show in the notch", action: nil, keyEquivalent: "")
-        head.isEnabled = false
-        menu.addItem(head)
-        for k in Self.notchAgentKinds {
-            let item = NSMenuItem(title: k.name, action: #selector(NotchMenuTarget.fire(_:)), keyEquivalent: "")
-            item.representedObject = k.id
-            item.state = notchHiddenKinds.contains(k.id) ? .off : .on
-            menu.addItem(item)
+    /// One chip per platform, with how many rows (live and finished) it has.
+    private var notchPlatformFilters: [NotchStrip.Filter] {
+        let all = AgentPad.visible(claudeRegistry.ordered) + claudeRegistry.recentEnded
+        let counts = Dictionary(grouping: all, by: \.platformID).mapValues(\.count)
+        return Self.notchPlatforms.map {
+            NotchStrip.Filter(id: $0.id, title: $0.name, on: !notchHiddenKinds.contains($0.id),
+                              count: counts[$0.id] ?? 0)
         }
-        if !notchHiddenKinds.isEmpty {
-            menu.addItem(.separator())
-            let all = NSMenuItem(title: "Show All", action: #selector(NotchMenuTarget.fire(_:)), keyEquivalent: "")
-            all.representedObject = "*"
-            menu.addItem(all)
-        }
-        let target = NotchMenuTarget { [weak self] key in
-            guard let self else { return }
-            var hidden = self.notchHiddenKinds
-            if key == "*" { hidden.removeAll() }
-            else if hidden.contains(key) { hidden.remove(key) } else { hidden.insert(key) }
-            self.setNotchHiddenKinds(hidden)
-        }
-        notchMenuTarget = target   // menus don't retain their target
-        for item in menu.items where item.action != nil { item.target = target }
-        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     /// Rows the filter is hiding right now, live and finished alike.
@@ -1437,11 +1417,7 @@ final class AppController {
                 let active = (self?.stripLive ?? []).filter {
                     $0.state == .busy || $0.state == .needsPermission || $0.state == .needsInput
                 }.count
-                // Filtered, the title names what is shown ("Claude ▾").
-                let hidden = self?.notchHiddenKinds ?? []
-                let shown = Self.notchAgentKinds.filter { !hidden.contains($0.id) }.map(\.name)
-                let title = hidden.isEmpty ? "Agents" : shown.isEmpty ? "None" : shown.joined(separator: ", ")
-                return (title: title + " ▾", active: active)
+                return (title: "Agents", active: active)
             },
             // Under the Recent divider: the folded rows (idle-long, and Grok bots
             // merely running) first, then finished sessions (tombstones).
@@ -1461,11 +1437,11 @@ final class AppController {
                     return card
                 }
                 // Everything filtered out: one row saying so, so the list (and
-                // its Agents ▾ header) stays reachable instead of folding away.
+                // its filter chips) stays reachable instead of folding away.
                 if folded.isEmpty, ended.isEmpty, self.stripLive.isEmpty, self.notchHiddenCount > 0 {
                     let n = self.notchHiddenCount
                     return [NotchStrip.Card(
-                        title: "Click the header to change what shows", subtitle: "",
+                        title: "Tick a platform above to show it", subtitle: "",
                         accent: NSColor(white: 0.55, alpha: 1),
                         repo: "\(n) hidden by the filter")]
                 }
@@ -1477,7 +1453,8 @@ final class AppController {
                 self?.claudeRegistry.refreshDiscovered()
                 self?.refreshWatchers()
             },
-            headerClick: { [weak self] in self?.popNotchAgentFilter() }))
+            filters: { [weak self] in self?.notchPlatformFilters ?? [] },
+            toggleFilter: { [weak self] id in self?.toggleNotchPlatform(id) }))
 
         notchStrip.register(NotchStrip.Source(
             id: "quota", priority: 10, maxMarks: 1,

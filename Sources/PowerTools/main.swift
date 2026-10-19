@@ -2154,7 +2154,7 @@ case "notchstrip-preview":
     // factor (default 3); "hover=N" lights row N's controls; "guides" strokes
     // the cutout (red), the band rects (yellow) and the content rects (green)
     // so the eye can check what the harness asserts. "title=…" sets the band
-    // header, as the agents' platform filter renames it ("Claude ▾").
+    // header; "rich" also draws the platform filter chips ("off=a,b" unticks).
     let out = args.count >= 2 ? args[1] : "notchstrip-preview.png"
     let shape = args.contains("list") ? "list"
         : (args.contains("card") ? "card" : (args.contains("picker") ? "picker"
@@ -2216,7 +2216,7 @@ case "notchstrip-preview":
             cards[1].actionsAlways = true
             cards[1].actions = [("✓", NSColor(srgbRed: 0.35, green: 0.75, blue: 0.45, alpha: 1), {}),
                                 ("✕", NSColor(srgbRed: 0.95, green: 0.3, blue: 0.3, alpha: 1), {})]
-            header = (title: titleArg ?? "Agents ▾", active: 3)
+            header = (title: titleArg ?? "Agents", active: 3)
         }
         let v = NotchStripView()
         v.showGuides = guides
@@ -2233,6 +2233,14 @@ case "notchstrip-preview":
         switch shape {
         case "list":
             v.listHeader = header
+            if rich {
+                let off = Set((args.first { $0.hasPrefix("off=") }?.dropFirst(4) ?? "")
+                    .split(separator: ",").map(String.init))
+                let counts = ["claude": 2, "vscode": 0, "antigravity": 1, "codex": 2, "cursor": 0, "grok": 0]
+                v.filters = AppController.notchPlatforms.map {
+                    NotchStrip.Filter(id: $0.id, title: $0.name, on: !off.contains($0.id), count: counts[$0.id] ?? 0)
+                }
+            }
             // The agent list carries the module row too, so the preview has to
             // pass it or it renders a shape the app no longer draws. Agent Pad
             // is the active tile — the list IS its content.

@@ -101,8 +101,17 @@ final class NotchStrip {
         var recent: (() -> [Card])? = nil
         /// The ↻ in the band was clicked: re-sweep before the strip redraws.
         var refresh: (() -> Void)? = nil
-        /// The band header was clicked (the agents' platform filter menu).
-        var headerClick: (() -> Void)? = nil
+        /// Checkbox chips in a row under the module row while this list is
+        /// open — the agents' platform filter. Clicking one calls `toggleFilter`.
+        var filters: (() -> [Filter])? = nil
+        var toggleFilter: ((String) -> Void)? = nil
+    }
+
+    struct Filter {
+        let id: String
+        let title: String
+        var on: Bool
+        var count: Int
     }
 
     // Geometry, lifted from the pads so the pixels do not move. `pad` is
@@ -231,6 +240,8 @@ final class NotchStrip {
     /// Finished rows under Recent are two lines, dimmed.
     static let recentRow: CGFloat = 52
     static let recentHeaderH: CGFloat = 18
+    /// The filter chip row between the module row and the list.
+    static let filterRow: CGFloat = 32
     static let maxRecentRows = 5
     /// The list's content ceiling below the housing, the way `maxModuleContent`
     /// caps a module: five live rows, the Recent divider, and the folded rows.
@@ -392,8 +403,10 @@ final class NotchStrip {
         if case let .list(si) = mode, si < activeSources.count {
             view?.listSource = si
             view?.listHeader = activeSources[si].header?()
+            view?.filters = activeSources[si].filters?() ?? []
         } else {
             view?.listHeader = nil
+            view?.filters = []
         }
         view?.configure(groups: live, cards: cards, listMode: listMode, field: field,
                         picker: pickerEntries, moduleHeight: hostedHeight, tabs: moduleTabs,
@@ -500,7 +513,7 @@ final class NotchStrip {
         v.onTabHover = { [weak self] i in self?.hoverModule(i) }
         v.onGridHover = { [weak self] open in self?.hoverGrid(open) }
         v.onRefresh = { [weak self] in self?.refreshRequested() }
-        v.onHeaderClick = { [weak self] in self?.headerClicked() }
+        v.onFilterToggle = { [weak self] id in self?.filterToggled(id) }
         let win = NotchPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                              backing: .buffered, defer: false)
         win.isOpaque = false
@@ -794,13 +807,12 @@ final class NotchStrip {
         refresh()
     }
 
-    /// The header opens the source's own menu. Pinned first: the menu takes
-    /// the cursor out of the panel, and a hover list would fold under it.
-    private func headerClicked() {
-        guard case let .list(si) = mode, si < activeSources.count,
-              let click = activeSources[si].headerClick else { return }
+    /// A filter chip was clicked. Pins the list: a click is a decision to stay.
+    private func filterToggled(_ id: String) {
+        guard case let .list(si) = mode, si < activeSources.count else { return }
         pinned = true
-        click()
+        activeSources[si].toggleFilter?(id)
+        refresh()
     }
 
     /// Hovering the in-list launcher opens the module row.
@@ -875,8 +887,11 @@ final class NotchStripView: NSView {
     var onGridHover: ((Bool) -> Void)?
     /// The ↻ in the band while a list is open.
     var onRefresh: (() -> Void)?
-    /// The header text in the band was clicked.
-    var onHeaderClick: (() -> Void)?
+    /// A filter chip under the module row was clicked.
+    var onFilterToggle: ((String) -> Void)?
+    /// The open list's filter chips (empty ⇒ no chip row).
+    var filters: [NotchStrip.Filter] = []
+    private var hoveredFilter: Int?
     /// The band header for the open list: a title and how many rows are live.
     var listHeader: (title: String, active: Int)?
 
@@ -933,6 +948,7 @@ final class NotchStripView: NSView {
         self.tabs = tabs
         hoveredTile = nil
         hoveredTab = nil
+        hoveredFilter = nil
         listGridHovered = false
         refreshHovered = false
         self.groups = groups
@@ -1007,8 +1023,41 @@ final class NotchStripView: NSView {
     /// as well as module mode, and every list rect hangs off this.
     var tabsOffset: CGFloat { tabs.isEmpty ? 0 : NotchStrip.moduleTabRow }
 
+    /// The filter chip row, when the open list has one.
+    var filterOffset: CGFloat { filters.isEmpty ? 0 : NotchStrip.filterRow }
+
     private var listHeight: CGFloat {
-        notchHeight + tabsOffset + NotchStrip.listPad * 2 + rowsHeight
+        notchHeight + tabsOffset + filterOffset + NotchStrip.listPad * 2 + rowsHeight
+    }
+
+    private static let filterFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+    private static let filterCountFont = NSFont.systemFont(ofSize: 10)
+    /// One chip per filter, left to right under the module row: box · title ·
+    /// count. A body too narrow for all of them drops the counts, then packs
+    /// the chips tighter (the 2× body on a small screen).
+    var filterRects: [NSRect] { filterFit.rects }
+    /// The chips as laid out, with whether counts fit and the inner padding the
+    /// drawing must use so box and text land where they were measured.
+    private var filterFit: (rects: [NSRect], counts: Bool, inset: CGFloat) {
+        guard listMode, !filters.isEmpty else { return ([], false, 8) }
+        let limit = contentDX + contentW - 12
+        for (counts, inset) in [(true, CGFloat(8)), (false, 8), (false, 5)] {
+            let rects = filterLayout(counts: counts, inset: inset)
+            if (rects.last?.maxX ?? 0) <= limit || inset == 5 { return (rects, counts, inset) }
+        }
+        return ([], false, 8)
+    }
+    private func filterLayout(counts: Bool, inset: CGFloat) -> [NSRect] {
+        var x = contentDX + 12
+        let y = notchHeight + tabsOffset + 6
+        let gap: CGFloat = inset < 8 ? 4 : 6
+        return filters.map { f in
+            let tw = (f.title as NSString).size(withAttributes: [.font: Self.filterFont]).width
+            let cw = counts ? 5 + ("\(f.count)" as NSString).size(withAttributes: [.font: Self.filterCountFont]).width : 0
+            let r = NSRect(x: x, y: y, width: inset + 12 + 6 + tw + cw + inset + 1, height: 24)
+            x = r.maxX + gap
+            return r
+        }
     }
     private var visibleRows: Int { min(cards.count, NotchStrip.maxListRows + NotchStrip.maxRecentRows) }
     private var firstRecent: Int? { (0..<visibleRows).first { cards[$0].isRecent } }
@@ -1020,7 +1069,7 @@ final class NotchStripView: NSView {
             + (firstRecent == nil ? 0 : NotchStrip.recentHeaderH)
     }
     private func rowRect(_ i: Int) -> NSRect {
-        var y = notchHeight + tabsOffset + NotchStrip.listPad
+        var y = notchHeight + tabsOffset + filterOffset + NotchStrip.listPad
         for j in 0..<i { y += rowHeight(j) }
         if let fr = firstRecent, i >= fr { y += NotchStrip.recentHeaderH }
         return NSRect(x: contentDX + 12, y: y, width: contentW - 24, height: rowHeight(i))
@@ -1205,7 +1254,7 @@ final class NotchStripView: NSView {
         if !picker.isEmpty { return picker.indices.map(tileRect) }
         if listMode, !cards.isEmpty {
             return (0..<visibleRows).map(rowRect) + (recentHeaderRect.map { [$0] } ?? [])
-                + (tabs.isEmpty ? [] : tabs.indices.map(tabRect))
+                + (tabs.isEmpty ? [] : tabs.indices.map(tabRect)) + filterRects
         }
         return card == nil ? placed.map(\.rect) : ([cardTextRect] + actionRects)
     }
@@ -1350,6 +1399,7 @@ final class NotchStripView: NSView {
         }
         if listMode, !cards.isEmpty {
             if !tabs.isEmpty { drawTabs(showClose: false) }
+            drawFilters()
             drawList()
             if showGuides { drawGuides() }
             return
@@ -1512,6 +1562,46 @@ final class NotchStripView: NSView {
     /// header cluster and the two glyphs, on the flanks, because there is no
     /// display behind the camera and anything drawn there never reaches the
     /// glass.
+    /// The filter chips: a ticked box and full-strength label when on, an
+    /// empty box and a dimmed label when off; the row count rides each one.
+    private func drawFilters() {
+        let white = NSColor.white
+        let blue = NSColor(srgbRed: 0.25, green: 0.55, blue: 0.95, alpha: 1)
+        let fit = filterFit
+        for (i, r) in fit.rects.enumerated() {
+            let f = filters[i]
+            let hot = hoveredFilter == i
+            white.withAlphaComponent(hot ? 0.16 : (f.on ? 0.09 : 0.04)).setFill()
+            NSBezierPath(roundedRect: r, xRadius: 7, yRadius: 7).fill()
+            let box = NSRect(x: r.minX + fit.inset, y: r.midY - 6, width: 12, height: 12)
+            let bp = NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3)
+            if f.on {
+                blue.setFill(); bp.fill()
+                let tick = NSBezierPath()
+                tick.move(to: NSPoint(x: box.minX + 2.8, y: box.midY))
+                tick.line(to: NSPoint(x: box.minX + 5.2, y: box.maxY - 3))
+                tick.line(to: NSPoint(x: box.maxX - 2.5, y: box.minY + 3))
+                tick.lineWidth = 1.8; tick.lineCapStyle = .round; tick.lineJoinStyle = .round
+                white.setStroke(); tick.stroke()
+            } else {
+                white.withAlphaComponent(0.45).setStroke(); bp.lineWidth = 1.2; bp.stroke()
+            }
+            var x = box.maxX + 6
+            let title = f.title as NSString
+            let tAttrs: [NSAttributedString.Key: Any] = [
+                .font: Self.filterFont, .foregroundColor: white.withAlphaComponent(f.on ? 0.95 : 0.45)]
+            let ts = title.size(withAttributes: tAttrs)
+            title.draw(at: NSPoint(x: x, y: r.midY - ts.height / 2), withAttributes: tAttrs)
+            guard fit.counts else { continue }
+            x += ts.width + 5
+            let count = "\(f.count)" as NSString
+            let cAttrs: [NSAttributedString.Key: Any] = [
+                .font: Self.filterCountFont, .foregroundColor: white.withAlphaComponent(f.on ? 0.55 : 0.3)]
+            let cs = count.size(withAttributes: cAttrs)
+            count.draw(at: NSPoint(x: x, y: r.midY - cs.height / 2), withAttributes: cAttrs)
+        }
+    }
+
     private func drawList() {
         let p = NSMutableParagraphStyle()
         p.lineBreakMode = .byTruncatingTail
@@ -1834,6 +1924,8 @@ final class NotchStripView: NSView {
                 return
             }
             if hoveredTab != nil { hoveredTab = nil; needsDisplay = true }
+            let hf = filterRects.firstIndex { $0.contains(p) }
+            if hf != hoveredFilter { hoveredFilter = hf; needsDisplay = true }
             let onGrid = listGridRect.insetBy(dx: -6, dy: -5).contains(p)
             if onGrid != listGridHovered { listGridHovered = onGrid; needsDisplay = true; onGridHover?(onGrid) }
             let onRefresh = refreshRect.insetBy(dx: -6, dy: -5).contains(p)
@@ -1897,7 +1989,10 @@ final class NotchStripView: NSView {
             // The launcher, up in the band, opens the module row; ↻ re-sweeps.
             if listGridRect.insetBy(dx: -6, dy: -5).contains(p) { onGridHover?(true); return }
             if refreshRect.insetBy(dx: -6, dy: -5).contains(p) { onRefresh?(); return }
-            if listHeader != nil, headerRect.contains(p) { onHeaderClick?(); return }
+            if let i = filterRects.firstIndex(where: { $0.contains(p) }) {
+                onFilterToggle?(filters[i].id)
+                return
+            }
             // A ✓/✕ answers in place; anywhere else on the row focuses it.
             if let hit = rowActionRects.first(where: { $0.rect.insetBy(dx: -3, dy: -3).contains(p) }),
                hit.row < cards.count, hit.index < cards[hit.row].actions.count {
