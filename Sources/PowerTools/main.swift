@@ -2709,6 +2709,15 @@ case "notchstrip-live-test":
                   "13p4: …at the same height it has over a module")
         }
         strip.collapse(); pump(0.3)
+        // 13p5: opened from its DOTS the list drops the row — the cursor comes
+        // down from the menu bar and would otherwise brush tiles on the way.
+        strip.openList(source: 0, fromDot: true); pump(0.4)
+        if let (_, view) = strip.testSurface {
+            check(view.tabsOffset == 0 && !view.listRowRects.isEmpty
+                  && !view.contentRects.contains { $0.minY < NotchStrip.moduleTabRow + 38 && $0.height == NotchStrip.moduleTabRow },
+                  "13p5: a dot-opened list has no module row (\(Int(view.tabsOffset))pt)")
+        }
+        strip.collapse(); pump(0.3)
 
         // 13q: files aimed at the housing. The drag itself is a modal AppKit
         // loop driven by the real mouse and cannot be simulated, but the two

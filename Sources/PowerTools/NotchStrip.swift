@@ -448,11 +448,19 @@ final class NotchStrip {
                          NotchStrip.maxModuleContent - NotchStrip.moduleTabRow)
     }
 
+    /// The open list came from its dots in the menu bar rather than from the
+    /// Agent Pad tile — it then shows without the module row (see moduleTabs).
+    private var listFromDot = false
     private var moduleTabs: [(glyph: String, symbol: String?, title: String, active: Bool)] {
         switch mode {
         case .module(let i):
             return modules.enumerated().map { ($1.glyph, $1.symbol, $1.title, $0 == i) }
         case .list(let si):
+            // Opened from its dots, the list has no row: the cursor comes down
+            // from the menu bar and has to cross it to reach the rows, and
+            // every tile it brushed on the way switched the panel. The band's
+            // launcher still opens the modules.
+            if listFromDot { return [] }
             // A list is a module's content too — the Agent Pad tile's. Without
             // the row here, opening the agent list was a dead end: every other
             // module vanished and the only way back was the 18pt mark in the
@@ -590,6 +598,7 @@ final class NotchStrip {
         }
         guard hit.source < activeSources.count else { return }
         if case .list(hit.source) = mode { return }   // already showing it
+        listFromDot = true
         mode = .list(source: hit.source)
         refresh()
         pinned = false
@@ -606,7 +615,7 @@ final class NotchStrip {
         case .min:
             if hit.source == moduleMarkGroup { openPicker(); return }
             pinned = true
-            openList(source: hit.source)
+            openList(source: hit.source, fromDot: true)
         case .list:
             // A finished row (mark -1) has nothing to focus; it only folds.
             if hit.mark >= 0 { activeSources[hit.source].activate(hit.mark) }
@@ -716,6 +725,7 @@ final class NotchStrip {
     /// reached from the module row. Tears down any hosted module first.
     private func showList(_ si: Int, pinned pin: Bool) {
         moduleView?.removeFromSuperview(); moduleView = nil
+        listFromDot = false
         mode = .list(source: si)
         pinned = pin
         refresh()
@@ -827,8 +837,10 @@ final class NotchStrip {
     // MARK: Test hooks
 
     /// Show a source's whole list — the hover shape, exposed for the harness.
-    func openList(source: Int) {
+    /// `fromDot` is how a dot click opens it: without the module row.
+    func openList(source: Int, fromDot: Bool = false) {
         guard source < activeSources.count else { return }
+        listFromDot = fromDot
         mode = .list(source: source)
         refresh()
     }
