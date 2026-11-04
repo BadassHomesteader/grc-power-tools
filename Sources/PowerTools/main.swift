@@ -773,6 +773,13 @@ case "meeting-preview":
         window.setContentSize(NSSize(width: 940, height: 640))
         mc.previewSeed()
         if args.contains("enhanced") { mc.previewTab(1) }
+        if args.contains("bycontext") { mc.previewGroup(.context) }
+        if args.contains("nogroup") { mc.previewGroup(.none) }
+        // Filters: ctx=Home|Work|none, date=0-4 (any/today/7d/30d/year), len=0-3 (any/<15/15-45/>45).
+        func arg(_ k: String) -> String? { args.first { $0.hasPrefix(k + "=") }.map { String($0.dropFirst(k.count + 1)) } }
+        if arg("ctx") != nil || arg("date") != nil || arg("len") != nil {
+            mc.previewFilters(context: arg("ctx"), date: arg("date").flatMap(Int.init), length: arg("len").flatMap(Int.init))
+        }
         if args.contains("notes") { mc.previewTab(0) }
         window.layoutIfNeeded()
         guard let content = window.contentView else { exit(1) }

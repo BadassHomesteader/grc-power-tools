@@ -40,10 +40,13 @@ struct Meeting: Codable {
     var notes: String
     var enhanced: String
     var segments: [MeetingSegment]
+    /// "Home", "Work", or any user-made label; nil = no context. Optional so
+    /// meeting files written before contexts existed still decode.
+    var context: String?
 
-    static func blank() -> Meeting {
+    static func blank(context: String? = nil) -> Meeting {
         Meeting(id: UUID().uuidString, title: "", created: Date(), recordedSeconds: 0,
-                notes: "", enhanced: "", segments: [])
+                notes: "", enhanced: "", segments: [], context: context)
     }
 
     var displayTitle: String {
@@ -96,6 +99,121 @@ enum MeetingStore {
 
     static func delete(_ id: String) {
         try? FileManager.default.removeItem(at: url(id))
+    }
+}
+
+// MARK: - Sidebar filtering & grouping
+
+enum MeetingDateFilter: Int, CaseIterable {
+    case any, today, week, month, year
+    var title: String { ["Any date", "Today", "Last 7 days", "Last 30 days", "This year"][rawValue] }
+    func includes(_ d: Date, now: Date, calendar: Calendar = .current) -> Bool {
+        switch self {
+        case .any: return true
+        case .today: return calendar.isDate(d, inSameDayAs: now)
+        case .week: return d >= calendar.date(byAdding: .day, value: -7, to: calendar.startOfDay(for: now))!
+        case .month: return d >= calendar.date(byAdding: .day, value: -30, to: calendar.startOfDay(for: now))!
+        case .year: return calendar.isDate(d, equalTo: now, toGranularity: .year)
+        }
+    }
+}
+
+enum MeetingLengthFilter: Int, CaseIterable {
+    case any, short, medium, long
+    var title: String { ["Any length", "Under 15 min", "15–45 min", "Over 45 min"][rawValue] }
+    func includes(_ seconds: Double) -> Bool {
+        switch self {
+        case .any: return true
+        case .short: return seconds < 15 * 60
+        case .medium: return seconds >= 15 * 60 && seconds <= 45 * 60
+        case .long: return seconds > 45 * 60
+        }
+    }
+}
+
+enum MeetingGrouping: Int, CaseIterable {
+    case date, context, none
+    var title: String { ["Group: Date", "Group: Context", "Group: None"][rawValue] }
+}
+
+enum MeetingSidebarRow: Equatable {
+    case header(String)
+    case meeting(String)  // meeting id
+}
+
+enum MeetingSidebar {
+    /// Context filter values that aren't a context name.
+    static let allContexts = ""
+    static let noContext = "\u{0}none"
+    static let defaultContexts = ["Home", "Work"]
+
+    /// Home and Work first, then every other label in use, A→Z.
+    static func contexts(_ meetings: [Meeting]) -> [String] {
+        var out = defaultContexts
+        let extra = Set(meetings.compactMap { $0.context?.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !out.contains($0) })
+        out += extra.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return out
+    }
+
+    static func matches(_ m: Meeting, context: String, date: MeetingDateFilter,
+                        length: MeetingLengthFilter, now: Date) -> Bool {
+        switch context {
+        case allContexts: break
+        case noContext: if !(m.context ?? "").isEmpty { return false }
+        default: if m.context != context { return false }
+        }
+        return date.includes(m.created, now: now) && length.includes(m.recordedSeconds)
+    }
+
+    /// Date buckets, newest first: Today · Yesterday · Previous 7 Days ·
+    /// Previous 30 Days · then one per month.
+    static func dateBucket(_ d: Date, now: Date, calendar: Calendar = .current) -> String {
+        let day = calendar.startOfDay(for: d), today = calendar.startOfDay(for: now)
+        let days = calendar.dateComponents([.day], from: day, to: today).day ?? 0
+        if days <= 0 { return "Today" }
+        if days == 1 { return "Yesterday" }
+        if days <= 7 { return "Previous 7 Days" }
+        if days <= 30 { return "Previous 30 Days" }
+        let f = DateFormatter()
+        f.dateFormat = calendar.isDate(d, equalTo: now, toGranularity: .year) ? "MMMM" : "MMMM yyyy"
+        return f.string(from: d)
+    }
+
+    /// Filtered rows with group headers. Within every group meetings stay
+    /// newest first; context groups run Home, Work, others A→Z, No context last.
+    static func rows(_ meetings: [Meeting], context: String, date: MeetingDateFilter,
+                     length: MeetingLengthFilter, grouping: MeetingGrouping, now: Date = Date()) -> [MeetingSidebarRow] {
+        let shown = meetings.filter { matches($0, context: context, date: date, length: length, now: now) }
+            .sorted { $0.created > $1.created }
+        switch grouping {
+        case .none:
+            return shown.map { .meeting($0.id) }
+        case .date:
+            var out: [MeetingSidebarRow] = []
+            var last: String?
+            for m in shown {
+                let b = dateBucket(m.created, now: now)
+                if b != last { out.append(.header(b)); last = b }
+                out.append(.meeting(m.id))
+            }
+            return out
+        case .context:
+            var out: [MeetingSidebarRow] = []
+            let names = contexts(shown)
+            for name in names {
+                let group = shown.filter { $0.context == name }
+                guard !group.isEmpty else { continue }
+                out.append(.header(name))
+                out += group.map { .meeting($0.id) }
+            }
+            let loose = shown.filter { !names.contains($0.context ?? "") }
+            if !loose.isEmpty {
+                out.append(.header("No context"))
+                out += loose.map { .meeting($0.id) }
+            }
+            return out
+        }
     }
 }
 
@@ -686,6 +804,14 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private var tab = 0  // 0 My Notes · 1 Enhanced · 2 Transcript
     private var suppressTextEvents = false
 
+    // Sidebar filters — a per-Mac view preference, kept in UserDefaults (not
+    // config.json, so the Windows schema contract is untouched).
+    private var rows: [MeetingSidebarRow] = []
+    private var contextFilter = UserDefaults.standard.string(forKey: "meetings.filter.context") ?? MeetingSidebar.allContexts
+    private var dateFilter = MeetingDateFilter(rawValue: UserDefaults.standard.integer(forKey: "meetings.filter.date")) ?? .any
+    private var lengthFilter = MeetingLengthFilter(rawValue: UserDefaults.standard.integer(forKey: "meetings.filter.length")) ?? .any
+    private var grouping = MeetingGrouping(rawValue: UserDefaults.standard.integer(forKey: "meetings.filter.grouping")) ?? .date
+
     /// Fired whenever recording starts or stops (status menu / notch can mirror it).
     var onRecordingChange: ((Bool) -> Void)?
 
@@ -706,6 +832,14 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private let hint = NSTextField(wrappingLabelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let emptyState = NSTextField(wrappingLabelWithString: "")
+    private let contextPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let datePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let lengthPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let groupPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let noMatch = NSTextField(wrappingLabelWithString: "No meetings match these filters.")
+    private let clearFiltersButton = NSButton(title: "Clear Filters", target: nil, action: nil)
+    /// The open meeting's own context, beside its title.
+    private let meetingContextPopup = NSPopUpButton(frame: .zero, pullsDown: false)
 
     init(config: Config) {
         self.config = config
@@ -723,8 +857,13 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         buildUI()
         applyAppearance()
         meetings = MeetingStore.all()
-        selectedID = meetings.first?.id
-        table.reloadData()
+        if contextFilter != MeetingSidebar.allContexts, contextFilter != MeetingSidebar.noContext,
+           !MeetingSidebar.contexts(meetings).contains(contextFilter) {
+            contextFilter = MeetingSidebar.allContexts  // that label's last meeting was deleted
+        }
+        reloadSidebar()
+        selectedID = rows.lazy.compactMap { if case .meeting(let id) = $0 { return id } else { return nil } }.first
+            ?? meetings.first?.id
         selectRow(for: selectedID)
         render()
     }
@@ -770,12 +909,38 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             .init(speaker: "them", start: 31, text: "Great. Rhett will send the updated map by Friday."),
         ]
         m.enhanced = "## Pilot crews\n- Running 3 crews today; target 5 before Thanksgiving, contingent on trucks arriving by Nov 15\n\n## Meter backlog\n- ~1,100 meters outstanding\n\n## Action items\n- [ ] Rhett — send updated map — Friday"
-        meetings = [m] + meetings.prefix(4)
+        m.context = "Work"
+        func past(_ title: String, days: Int, minutes: Double, _ context: String?) -> Meeting {
+            var x = Meeting.blank(context: context)
+            x.title = title
+            x.created = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
+            x.recordedSeconds = minutes * 60
+            return x
+        }
+        meetings = [m,
+                    past("Contractor walkthrough — barn roof", days: 0, minutes: 22, "Home"),
+                    past("Weekly ops standup", days: 1, minutes: 14, "Work"),
+                    past("APS routing review", days: 4, minutes: 51, "Work"),
+                    past("Vet call — goats", days: 6, minutes: 9, "Home"),
+                    past("DialAI advisory", days: 19, minutes: 38, "Advisory"),
+                    past("Quick sync", days: 45, minutes: 6, nil)]
         selectedID = m.id
-        table.reloadData()
+        reloadSidebar()
         tab = 2
         tabs.selectedSegment = 2
         render()
+    }
+
+    func previewFilters(context: String?, date: Int?, length: Int?) {
+        if let context { contextFilter = context == "none" ? MeetingSidebar.noContext : context }
+        if let date { dateFilter = MeetingDateFilter(rawValue: date) ?? .any }
+        if let length { lengthFilter = MeetingLengthFilter(rawValue: length) ?? .any }
+        reloadSidebar()
+    }
+
+    func previewGroup(_ g: MeetingGrouping) {
+        grouping = g
+        reloadSidebar()
     }
 
     func previewTab(_ t: Int) {
@@ -790,12 +955,21 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private func index(_ id: String?) -> Int? { meetings.firstIndex { $0.id == id } }
 
     private func newMeeting() {
-        let m = Meeting.blank()
+        // A new meeting joins the context being looked at, so it doesn't vanish
+        // from the list the moment it's made.
+        let inherit = (contextFilter == MeetingSidebar.allContexts || contextFilter == MeetingSidebar.noContext)
+            ? nil : contextFilter
+        let m = Meeting.blank(context: inherit)
         meetings.insert(m, at: 0)
         MeetingStore.save(m)
         selectedID = m.id
-        table.reloadData()
-        selectRow(for: m.id)
+        // A 0-minute meeting fails "Over 45 min" etc. — widen date/length so it shows.
+        if !MeetingSidebar.matches(m, context: contextFilter, date: dateFilter, length: lengthFilter, now: Date()) {
+            dateFilter = .any
+            lengthFilter = .any
+            saveFilters()
+        }
+        reloadSidebar()
         tab = 0
         tabs.selectedSegment = 0
         render()
@@ -889,8 +1063,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         recordButton.isEnabled = true
         updateChrome()
         render()
-        table.reloadData()
-        selectRow(for: selectedID)
+        reloadSidebar()
         onRecordingChange?(false)
     }
 
@@ -931,8 +1104,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
                     self.meetings[i].title = title
                 }
                 MeetingStore.save(self.meetings[i])
-                self.table.reloadData()
-                self.selectRow(for: self.selectedID)
+                self.reloadSidebar()
                 if self.selectedID == id {
                     self.tab = 1
                     self.tabs.selectedSegment = 1
@@ -978,18 +1150,22 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         setStatus("Copied.")
     }
 
-    @objc private func copyMarkdown() {
+    /// The meeting under a right-click, else the selected row.
+    private func targetMeeting() -> Meeting? {
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
-        guard meetings.indices.contains(row) else { return }
+        guard let id = meetingID(atRow: row) else { return nil }
+        return meetings.first { $0.id == id }
+    }
+
+    @objc private func copyMarkdown() {
+        guard let m = targetMeeting() else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(MeetingText.markdown(meetings[row]), forType: .string)
+        NSPasteboard.general.setString(MeetingText.markdown(m), forType: .string)
         setStatus("Copied the whole meeting as Markdown.")
     }
 
     @objc private func deleteMeeting() {
-        let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
-        guard meetings.indices.contains(row), let window else { return }
-        let m = meetings[row]
+        guard let m = targetMeeting(), let window else { return }
         guard m.id != recordingID else { setStatus("Stop the recording before deleting this meeting.", warn: true); return }
         let alert = NSAlert()
         alert.messageText = "Delete “\(m.displayTitle)”?"
@@ -1002,9 +1178,8 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             MeetingStore.delete(m.id)
             self.dirty.remove(m.id)
             self.meetings.removeAll { $0.id == m.id }
-            if self.selectedID == m.id { self.selectedID = self.meetings.first?.id }
-            self.table.reloadData()
-            self.selectRow(for: self.selectedID)
+            if self.selectedID == m.id { self.selectedID = self.firstVisibleID() ?? self.meetings.first?.id }
+            self.reloadSidebar()
             self.render()
         }
     }
@@ -1038,7 +1213,8 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
     private func render() {
         let has = selected != nil
-        for v in [titleField, tabs, textScroll, enhanceButton, copyButton] as [NSView] { v.isHidden = !has }
+        for v in [titleField, meetingContextPopup, tabs, textScroll, enhanceButton, copyButton] as [NSView] { v.isHidden = !has }
+        rebuildMeetingContextPopup()
         emptyState.isHidden = has
         updateChrome()
         guard let m = selected else { hint.isHidden = true; return }
@@ -1116,8 +1292,146 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     }
 
     private func selectRow(for id: String?) {
-        guard let id, let row = index(id) else { table.deselectAll(nil); return }
+        guard let id, let row = rows.firstIndex(of: .meeting(id)) else { table.deselectAll(nil); return }
         table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        table.scrollRowToVisible(row)
+    }
+
+    private func meetingID(atRow row: Int) -> String? {
+        guard rows.indices.contains(row), case .meeting(let id) = rows[row] else { return nil }
+        return id
+    }
+
+    private func firstVisibleID() -> String? {
+        rows.lazy.compactMap { if case .meeting(let id) = $0 { return id } else { return nil } }.first
+    }
+
+    // MARK: Filters & contexts
+
+    private func saveFilters() {
+        let d = UserDefaults.standard
+        d.set(contextFilter, forKey: "meetings.filter.context")
+        d.set(dateFilter.rawValue, forKey: "meetings.filter.date")
+        d.set(lengthFilter.rawValue, forKey: "meetings.filter.length")
+        d.set(grouping.rawValue, forKey: "meetings.filter.grouping")
+    }
+
+    /// Recompute rows from the filters, redraw, keep the selection, and
+    /// refresh every popup (the context list grows as labels are used).
+    private func reloadSidebar() {
+        rows = MeetingSidebar.rows(meetings, context: contextFilter, date: dateFilter,
+                                   length: lengthFilter, grouping: grouping)
+        table.reloadData()
+        selectRow(for: selectedID)
+        let filtered = contextFilter != MeetingSidebar.allContexts || dateFilter != .any || lengthFilter != .any
+        noMatch.isHidden = !(rows.isEmpty && !meetings.isEmpty)
+        clearFiltersButton.isHidden = noMatch.isHidden || !filtered
+        rebuildFilterPopups()
+        rebuildMeetingContextPopup()
+    }
+
+    private func rebuildFilterPopups() {
+        contextPopup.removeAllItems()
+        contextPopup.addItem(withTitle: "All contexts")
+        contextPopup.lastItem?.representedObject = MeetingSidebar.allContexts
+        contextPopup.menu?.addItem(.separator())
+        for name in MeetingSidebar.contexts(meetings) {
+            contextPopup.addItem(withTitle: name)
+            contextPopup.lastItem?.representedObject = name
+        }
+        contextPopup.menu?.addItem(.separator())
+        contextPopup.addItem(withTitle: "No context")
+        contextPopup.lastItem?.representedObject = MeetingSidebar.noContext
+        let idx = contextPopup.itemArray.firstIndex { ($0.representedObject as? String) == contextFilter } ?? 0
+        contextPopup.selectItem(at: idx)
+
+        datePopup.removeAllItems()
+        datePopup.addItems(withTitles: MeetingDateFilter.allCases.map(\.title))
+        datePopup.selectItem(at: dateFilter.rawValue)
+        lengthPopup.removeAllItems()
+        lengthPopup.addItems(withTitles: MeetingLengthFilter.allCases.map(\.title))
+        lengthPopup.selectItem(at: lengthFilter.rawValue)
+        groupPopup.removeAllItems()
+        groupPopup.addItems(withTitles: MeetingGrouping.allCases.map(\.title))
+        groupPopup.selectItem(at: grouping.rawValue)
+    }
+
+    private func rebuildMeetingContextPopup() {
+        let p = meetingContextPopup
+        p.removeAllItems()
+        p.addItem(withTitle: "No context")
+        p.lastItem?.representedObject = ""
+        p.menu?.addItem(.separator())
+        for name in MeetingSidebar.contexts(meetings) {
+            p.addItem(withTitle: name)
+            p.lastItem?.representedObject = name
+        }
+        p.menu?.addItem(.separator())
+        p.addItem(withTitle: "New Context…")
+        p.lastItem?.representedObject = "\u{0}new"
+        let current = selected?.context ?? ""
+        p.selectItem(at: p.itemArray.firstIndex { ($0.representedObject as? String) == current } ?? 0)
+    }
+
+    @objc private func filterChanged(_ sender: NSPopUpButton) {
+        switch sender {
+        case contextPopup:
+            contextFilter = (sender.selectedItem?.representedObject as? String) ?? MeetingSidebar.allContexts
+        case datePopup: dateFilter = MeetingDateFilter(rawValue: sender.indexOfSelectedItem) ?? .any
+        case lengthPopup: lengthFilter = MeetingLengthFilter(rawValue: sender.indexOfSelectedItem) ?? .any
+        default: grouping = MeetingGrouping(rawValue: sender.indexOfSelectedItem) ?? .date
+        }
+        saveFilters()
+        reloadSidebar()
+    }
+
+    @objc private func clearFilters() {
+        contextFilter = MeetingSidebar.allContexts
+        dateFilter = .any
+        lengthFilter = .any
+        saveFilters()
+        reloadSidebar()
+    }
+
+    @objc private func meetingContextChanged(_ sender: NSPopUpButton) {
+        guard let id = selectedID else { return }
+        let value = (sender.selectedItem?.representedObject as? String) ?? ""
+        if value == "\u{0}new" { askForNewContext(id); return }
+        setContext(value.isEmpty ? nil : value, for: id)
+    }
+
+    private func setContext(_ context: String?, for id: String) {
+        guard let i = index(id) else { return }
+        meetings[i].context = context
+        MeetingStore.save(meetings[i])
+        dirty.remove(id)
+        reloadSidebar()
+        if let context { setStatus("Filed under \(context).") } else { setStatus("Context cleared.") }
+    }
+
+    private func askForNewContext(_ id: String) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "New context"
+        alert.informativeText = "A label for grouping and filtering meetings — e.g. Clients, Family, Board."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Context name"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard response == .alertFirstButtonReturn, !name.isEmpty else {
+                self.rebuildMeetingContextPopup()  // put the popup back on the real value
+                return
+            }
+            // Reuse an existing label that differs only by case.
+            let existing = MeetingSidebar.contexts(self.meetings)
+                .first { $0.caseInsensitiveCompare(name) == .orderedSame }
+            self.setContext(existing ?? name, for: id)
+        }
     }
 
     private func applyAppearance() {
@@ -1140,34 +1454,71 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         guard (obj.object as? NSTextField) === titleField, let i = index(selectedID) else { return }
         meetings[i].title = titleField.stringValue
         markDirty(meetings[i].id)
-        table.reloadData(forRowIndexes: IndexSet(integer: i), columnIndexes: IndexSet(integer: 0))
+        if let row = rows.firstIndex(of: .meeting(meetings[i].id)) {
+            table.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
+        }
     }
 
     func windowWillClose(_ notification: Notification) { flushSaves() }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { meetings.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        if case .header = rows[row] { return true }
+        return false
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        meetingID(atRow: row) != nil
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .header = rows[row] { return 26 }
+        return 46
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if case .header(let name) = rows[row] {
+            let hid = NSUserInterfaceItemIdentifier("meetingHeader")
+            let h = (tableView.makeView(withIdentifier: hid, owner: self) as? NSTableCellView) ?? {
+                let c = NSTableCellView()
+                c.identifier = hid
+                let label = NSTextField(labelWithString: "")
+                label.font = .systemFont(ofSize: 11, weight: .semibold)
+                label.textColor = .secondaryLabelColor
+                label.translatesAutoresizingMaskIntoConstraints = false
+                c.addSubview(label)
+                c.textField = label
+                NSLayoutConstraint.activate([
+                    label.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 6),
+                    label.trailingAnchor.constraint(equalTo: c.trailingAnchor, constant: -6),
+                    label.bottomAnchor.constraint(equalTo: c.bottomAnchor, constant: -4),
+                ])
+                return c
+            }()
+            h.textField?.stringValue = name
+            return h
+        }
         let id = NSUserInterfaceItemIdentifier("meetingCell")
         let cell = (tableView.makeView(withIdentifier: id, owner: self) as? MeetingCell) ?? {
             let c = MeetingCell(); c.identifier = id; return c
         }()
-        let m = meetings[row]
+        guard let mid = meetingID(atRow: row), let m = meetings.first(where: { $0.id == mid }) else { return cell }
         cell.title.stringValue = m.displayTitle
         var sub = MeetingCell.dateFormatter.string(from: m.created)
         if m.id == recordingID { sub = "● Recording" }
         else if m.recordedSeconds >= 60 { sub += " · \(Int(m.recordedSeconds / 60)) min" }
+        // The context rides the subtitle unless the list is already grouped by it.
+        if grouping != .context, let c = m.context, !c.isEmpty { sub += " · \(c)" }
         cell.subtitle.stringValue = sub
         cell.subtitle.textColor = m.id == recordingID ? .systemRed : .secondaryLabelColor
         return cell
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = table.selectedRow
-        guard meetings.indices.contains(row) else { return }
-        guard meetings[row].id != selectedID else { return }
+        guard let id = meetingID(atRow: table.selectedRow), id != selectedID else { return }
         window?.makeFirstResponder(nil)  // commit any title edit to the old meeting
-        selectedID = meetings[row].id
+        selectedID = id
         render()
     }
 
@@ -1181,6 +1532,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         table.headerView = nil
         table.rowHeight = 46
         table.style = .sourceList
+        table.floatsGroupRows = false
         table.dataSource = self
         table.delegate = self
         let menu = NSMenu()
@@ -1191,6 +1543,27 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         tableScroll.documentView = table
         tableScroll.hasVerticalScroller = true
         tableScroll.drawsBackground = false
+
+        for p in [contextPopup, datePopup, lengthPopup, groupPopup] {
+            p.controlSize = .small
+            p.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            p.target = self
+            p.action = #selector(filterChanged(_:))
+            p.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        noMatch.font = .systemFont(ofSize: 12)
+        noMatch.textColor = .secondaryLabelColor
+        noMatch.alignment = .center
+        noMatch.isHidden = true
+        clearFiltersButton.target = self
+        clearFiltersButton.action = #selector(clearFilters)
+        clearFiltersButton.bezelStyle = .rounded
+        clearFiltersButton.controlSize = .small
+        clearFiltersButton.isHidden = true
+        meetingContextPopup.controlSize = .small
+        meetingContextPopup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        meetingContextPopup.target = self
+        meetingContextPopup.action = #selector(meetingContextChanged(_:))
 
         let sidebar = NSVisualEffectView()
         sidebar.material = .sidebar
@@ -1264,14 +1637,16 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         emptyState.textColor = .secondaryLabelColor
         emptyState.alignment = .center
 
-        let views: [NSView] = [paper, sidebar, tableScroll, newButton, divider, titleField, timeLabel, recordButton,
+        let views: [NSView] = [paper, sidebar, tableScroll, newButton, contextPopup, datePopup, lengthPopup, groupPopup,
+                               noMatch, clearFiltersButton, meetingContextPopup,
+                               divider, titleField, timeLabel, recordButton,
                                tabs, enhanceButton, copyButton, textScroll, hint, statusLabel, emptyState]
         for v in views { v.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(v) }
         hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let sideW: CGFloat = 230
+        let sideW: CGFloat = 250
         let pad: CGFloat = 20
         NSLayoutConstraint.activate([
             sidebar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
@@ -1283,7 +1658,26 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             newButton.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 12),
             newButton.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -12),
 
-            tableScroll.topAnchor.constraint(equalTo: newButton.bottomAnchor, constant: 10),
+            contextPopup.topAnchor.constraint(equalTo: newButton.bottomAnchor, constant: 10),
+            contextPopup.leadingAnchor.constraint(equalTo: newButton.leadingAnchor),
+            contextPopup.trailingAnchor.constraint(equalTo: sidebar.centerXAnchor, constant: -3),
+            datePopup.centerYAnchor.constraint(equalTo: contextPopup.centerYAnchor),
+            datePopup.leadingAnchor.constraint(equalTo: sidebar.centerXAnchor, constant: 3),
+            datePopup.trailingAnchor.constraint(equalTo: newButton.trailingAnchor),
+            lengthPopup.topAnchor.constraint(equalTo: contextPopup.bottomAnchor, constant: 6),
+            lengthPopup.leadingAnchor.constraint(equalTo: contextPopup.leadingAnchor),
+            lengthPopup.trailingAnchor.constraint(equalTo: contextPopup.trailingAnchor),
+            groupPopup.centerYAnchor.constraint(equalTo: lengthPopup.centerYAnchor),
+            groupPopup.leadingAnchor.constraint(equalTo: datePopup.leadingAnchor),
+            groupPopup.trailingAnchor.constraint(equalTo: datePopup.trailingAnchor),
+
+            noMatch.topAnchor.constraint(equalTo: tableScroll.topAnchor, constant: 24),
+            noMatch.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 16),
+            noMatch.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -16),
+            clearFiltersButton.topAnchor.constraint(equalTo: noMatch.bottomAnchor, constant: 8),
+            clearFiltersButton.centerXAnchor.constraint(equalTo: sidebar.centerXAnchor),
+
+            tableScroll.topAnchor.constraint(equalTo: lengthPopup.bottomAnchor, constant: 8),
             tableScroll.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
             tableScroll.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             tableScroll.bottomAnchor.constraint(equalTo: content.bottomAnchor),
@@ -1304,7 +1698,9 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
             titleField.centerYAnchor.constraint(equalTo: recordButton.centerYAnchor),
             titleField.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: pad),
-            titleField.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -12),
+            meetingContextPopup.centerYAnchor.constraint(equalTo: recordButton.centerYAnchor),
+            meetingContextPopup.leadingAnchor.constraint(equalTo: titleField.trailingAnchor, constant: 8),
+            meetingContextPopup.trailingAnchor.constraint(equalTo: timeLabel.leadingAnchor, constant: -12),
 
             tabs.topAnchor.constraint(equalTo: recordButton.bottomAnchor, constant: 14),
             tabs.leadingAnchor.constraint(equalTo: titleField.leadingAnchor),
