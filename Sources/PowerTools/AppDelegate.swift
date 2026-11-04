@@ -110,6 +110,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let shelfMenuItem = NSMenuItem(title: "Toggle Shelf", action: #selector(toggleShelf), keyEquivalent: "y")
         shelfMenuItem.target = self
         appMenu.addItem(shelfMenuItem)
+        let meetingMenuItem = NSMenuItem(title: "Meeting Notes", action: #selector(openMeetingNotes), keyEquivalent: "o")
+        meetingMenuItem.target = self
+        appMenu.addItem(meetingMenuItem)
         let hooksMenuItem = NSMenuItem(title: "Install Claude Code Hooks…", action: #selector(installClaudeHooks), keyEquivalent: "")
         hooksMenuItem.target = self
         appMenu.addItem(hooksMenuItem)
@@ -191,6 +194,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                    action: #selector(toggleAgentPad), keyEquivalent: "")
         agentItem.target = self
         menu.addItem(agentItem)
+
+        let meetingItem = NSMenuItem(title: "Meeting Notes  (hold \(config.hotkey.displayName) + O to record)",
+                                     action: #selector(openMeetingNotes), keyEquivalent: "")
+        meetingItem.target = self
+        menu.addItem(meetingItem)
         if !ClaudeHooksInstaller.isInstalled() {
             let hooksItem = NSMenuItem(title: "Install Claude Code Hooks…",
                                        action: #selector(installClaudeHooks), keyEquivalent: "")
@@ -221,6 +229,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleShelf() {
         controller?.toggleShelf()
+    }
+
+    @objc private func openMeetingNotes() {
+        controller?.openMeetingNotes()
     }
 
     @objc private func toggleMacroPad() {

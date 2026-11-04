@@ -19,6 +19,7 @@ final class AppController {
             overlay.anchor = config.overlayPosition
             overlay.scheme = config.appearance
             chat?.updateConfig(config)
+            meetingNotes?.updateConfig(config)
             clipboardWatcher.enabled = config.clipboardHistory
             hotkey?.lastWindowSwitch = config.lastWindowSwitch
             hotkey?.finderEnterOpens = config.finderEnterOpens
@@ -83,6 +84,9 @@ final class AppController {
     private lazy var clipboardWatcher = ClipboardHistory(store: store, enabled: config.clipboardHistory)
     private var hotkey: HotkeyMonitor?
     private var chat: ChatWindowController?
+    /// Meeting Notes window (hold + O). Created on first use; closing hides it
+    /// and a running recording keeps going.
+    private var meetingNotes: MeetingNotesController?
 
     private var cycle = 0
     /// File "cut" is Copy now + Move-on-next-paste (macOS has no real file cut).
@@ -279,6 +283,9 @@ final class AppController {
                 self.toggleShelf()
             case .shelfClose:
                 self.shelf.dismiss()
+            case .meetingNotes:
+                self.interruptDictation()
+                self.toggleMeetingRecording()
             case .screenRecord:
                 self.interruptDictation()
                 self.toggleScreenRecording()
@@ -1565,6 +1572,9 @@ final class AppController {
             ("shelf", false, .init(id: "shelf", glyph: "⊟", symbol: "tray.and.arrow.down", title: "Shelf", height: 0,
                                    make: { NSView() },
                                    open: { [weak self] in self?.toggleShelf() })),
+            ("meetings", false, .init(id: "meetings", glyph: "✎", symbol: "waveform.and.mic", title: "Meetings", height: 0,
+                                      make: { NSView() },
+                                      open: { [weak self] in self?.openMeetingNotes() })),
             ("chat", true, .init(id: "chat", glyph: "✦", symbol: "sparkles", title: "Ask", height: 200, make: { [weak self] in
                 ChatModuleView(model: self?.config.claudeModel ?? "claude-haiku-4-5",
                                openFull: { [weak self] text in self?.openChat(with: text) })
@@ -2336,6 +2346,29 @@ final class AppController {
     }
 
     /// Open (or focus) the AI chat window. Optionally seed it with a message and send.
+    private func meetingNotesController() -> MeetingNotesController {
+        if let m = meetingNotes { return m }
+        let m = MeetingNotesController(config: config)
+        meetingNotes = m
+        return m
+    }
+
+    /// Menu bar / notch tile: show the Meeting Notes window without recording.
+    func openMeetingNotes() {
+        interruptDictation()
+        meetingNotesController().present()
+    }
+
+    /// hold + O: start recording a new meeting, or stop the running one (which
+    /// finalizes the transcript and writes the enhanced notes).
+    func toggleMeetingRecording() {
+        let m = meetingNotesController()
+        m.toggleRecording()
+        m.present()
+    }
+
+    var isRecordingMeeting: Bool { meetingNotes?.isRecording ?? false }
+
     func openChat(with text: String = "") {
         if chat == nil { chat = ChatWindowController(config: config) }
         chat?.updateConfig(config)

@@ -20,16 +20,17 @@ enum CloudPolish {
 
     /// Anthropic Messages API (raw HTTPS — Swift has no official SDK).
     /// Sampling params and `thinking` are omitted so any model (Haiku…Opus/Fable) is accepted.
-    static func claude(instructions: String, prompt: String, model: String, apiKey: String) async throws -> String {
+    static func claude(instructions: String, prompt: String, model: String, apiKey: String,
+                       maxTokens: Int = 1024, timeout: TimeInterval = 12) async throws -> String {
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
         req.httpMethod = "POST"
-        req.timeoutInterval = 12
+        req.timeoutInterval = timeout
         req.setValue("application/json", forHTTPHeaderField: "content-type")
         req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": maxTokens,
             "system": instructions,
             "messages": [["role": "user", "content": prompt]],
         ]
@@ -196,15 +197,16 @@ enum CloudPolish {
     }
 
     /// OpenAI Chat Completions.
-    static func openai(instructions: String, prompt: String, model: String, apiKey: String) async throws -> String {
+    static func openai(instructions: String, prompt: String, model: String, apiKey: String,
+                       maxTokens: Int = 1024, timeout: TimeInterval = 12) async throws -> String {
         var req = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
         req.httpMethod = "POST"
-        req.timeoutInterval = 12
+        req.timeoutInterval = timeout
         req.setValue("application/json", forHTTPHeaderField: "content-type")
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": maxTokens,
             "temperature": 0,
             "messages": [
                 ["role": "system", "content": instructions],

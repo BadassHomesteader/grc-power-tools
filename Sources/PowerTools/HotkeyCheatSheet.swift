@@ -94,6 +94,7 @@ final class HotkeyCheatSheetView: NSView {
                 ("1…0", "fire macro button (pad open)"),
                 ("J", "Agent Pad (Claude Code)"),
                 ("Y", "Shelf — park files & text"),
+                ("O", "Meeting notes — record · stop"),
                 ("r-click", "Power Ring"),
                 ("Q", "this cheat sheet"),
                 ("esc", "close this sheet"),

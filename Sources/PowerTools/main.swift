@@ -727,6 +727,65 @@ case "chat-live-test":
         print("survived")
     }
 
+case "meeting-test":
+    // meeting-test <me-audio> [them-audio] [--enhance] [--save] [--notes "text"]
+    // Runs the Meeting Notes pipeline on files: LiveTranscriber per speaker →
+    // echo-cleaned turns → (optionally) the enhancer. --save writes the result
+    // into the real Meetings folder so it shows up in the window.
+    let files = args.dropFirst().prefix { !$0.hasPrefix("--") }.map { URL(fileURLWithPath: $0) }
+    guard let meFile = files.first else { print("usage: meeting-test <me-audio> [them-audio] [--enhance] [--save] [--notes text]"); exit(1) }
+    let themFile = files.count > 1 ? files[1] : nil
+    let cfg = Config.load()
+    let locale = Locale(identifier: cfg.localeIdentifier)
+    var notes = ""
+    if let i = args.firstIndex(of: "--notes"), args.count > i + 1 { notes = args[i + 1] }
+    do {
+        let started = Date()
+        var m = try runBlocking { try await meetingTestRun(me: meFile, them: themFile, locale: locale) }
+        m.notes = notes
+        FileHandle.standardError.write("(\(m.segments.count) segments in \(String(format: "%.1f", Date().timeIntervalSince(started)))s)\n".data(using: .utf8)!)
+        for seg in m.segments.sorted(by: { $0.start < $1.start }) {
+            print(String(format: "  %6.1fs %@ %@", seg.start, seg.speaker, seg.text))
+        }
+        print("\n--- transcript ---\n" + MeetingText.plain(m))
+        if args.contains("--enhance") {
+            let snapshot = m
+            let (raw, engine) = try runBlocking { try await MeetingEnhancer.enhance(snapshot, config: cfg) }
+            let (title, body) = MeetingEnhancer.splitTitle(raw)
+            m.title = title ?? ""
+            m.enhanced = body
+            print("\n--- enhanced (\(engine)) — title: \(title ?? "nil") ---\n" + body)
+        }
+        if args.contains("--save") { MeetingStore.save(m); print("\nsaved \(m.id)") }
+    } catch {
+        print("meeting-test failed: \(error)"); exit(1)
+    }
+
+case "meeting-preview":
+    // Offscreen render of the Meeting Notes window (sample data, transcript tab).
+    let out = args.count >= 2 ? args[1] : "meeting-preview.png"
+    MainActor.assumeIsolated {
+        var cfg = Config.load()
+        if args.count >= 3, args[2] == "light" { cfg.appearance = .light }
+        if args.count >= 3, args[2] == "dark" { cfg.appearance = .dark }
+        let mc = MeetingNotesController(config: cfg)
+        guard let window = mc.window else { exit(1) }
+        window.setContentSize(NSSize(width: 940, height: 640))
+        mc.previewSeed()
+        if args.contains("enhanced") { mc.previewTab(1) }
+        if args.contains("notes") { mc.previewTab(0) }
+        window.layoutIfNeeded()
+        guard let content = window.contentView else { exit(1) }
+        content.layoutSubtreeIfNeeded()
+        if let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+            content.cacheDisplay(in: content.bounds, to: rep)
+            if let data = rep.representation(using: .png, properties: [:]) {
+                try? data.write(to: URL(fileURLWithPath: out))
+                print("wrote \(out)")
+            }
+        }
+    }
+
 case "chat-preview":
     // Offscreen render of the AI chat window for design checks.
     let out = args.count >= 2 ? args[1] : "chat-preview.png"
@@ -2226,7 +2285,7 @@ case "notchstrip-preview":
             ("◷", "clock", "Clock"), ("▤", "calendar", "Calendar"), ("◵", "timer", "Timers"),
             ("☀", "sun.max", "Weather"),
             ("◫", "terminal", "Agent Pad"), ("⊞", "square.grid.2x2", "Macro Pad"),
-            ("⊟", "tray.and.arrow.down", "Shelf"), ("✦", "sparkles", "Ask"),
+            ("⊟", "tray.and.arrow.down", "Shelf"), ("✎", "waveform.and.mic", "Meetings"), ("✦", "sparkles", "Ask"),
             ("◔", "gauge.medium", "Usage"), ("❖", "cpu", "System"),
             ("☰", "internaldrive", "Disk"), ("◉", "camera", "Camera"),
             ("⚙", "gearshape", "Settings")]

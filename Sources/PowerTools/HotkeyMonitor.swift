@@ -63,6 +63,8 @@ final class HotkeyMonitor {
         case whiteboardClose
     /// hold + Y — the file/text/image shelf.
     case shelf
+    /// hold + O — Meeting Notes: start recording a meeting, or stop the running one.
+    case meetingNotes
     case shelfClose              // Esc while the whiteboard is up — cancel text entry / close
     case chordStart              // hold + Space — chord mode: show the panel for the front app
     case chordUpdate(String)     // the code typed so far (after each key / ⌫)
@@ -300,6 +302,7 @@ final class HotkeyMonitor {
     private static let kVK_ANSI_E: Int64 = 14
     private static let kVK_ANSI_F: Int64 = 3
     private static let kVK_ANSI_Y: Int64 = 16
+    private static let kVK_ANSI_O: Int64 = 31
     private static let kVK_Tab: Int64 = 48
     private static let kVK_Return: Int64 = 36
     private static let kVK_LeftArrow: Int64 = 123
@@ -856,6 +859,20 @@ final class HotkeyMonitor {
                 windowMode = true
                 swallowedKeyUps.insert(keyCode)
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.shelf) }
+                return nil
+            case Self.kVK_ANSI_O:
+                // Meeting Notes — same rules as Y: a user-assigned Quick Capture
+                // connection on O wins, and auto-repeat must not toggle a held O
+                // between start and stop.
+                if let connId = connectionLeader(for: keyCode) {
+                    log("hotkey: connection leader armed (\(connId))")
+                    pending = .quickCapture(connId); swallowedKeyUps.insert(keyCode)
+                    return nil
+                }
+                log("hotkey: +O meeting notes")
+                windowMode = true
+                swallowedKeyUps.insert(keyCode)
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { dispatch(.meetingNotes) }
                 return nil
             case Self.kVK_ANSI_3:
                 if regionPickerVisible { swallowedKeyUps.insert(keyCode); return nil }  // picker owns the keys
