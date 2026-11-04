@@ -781,6 +781,16 @@ case "meeting-preview":
             mc.previewFilters(context: arg("ctx"), date: arg("date").flatMap(Int.init), length: arg("len").flatMap(Int.init))
         }
         if args.contains("notes") { mc.previewTab(0) }
+        var picFolder: String?
+        if args.contains("pics") { picFolder = mc.previewPicture() }
+        defer { if let picFolder { try? FileManager.default.removeItem(at: MeetingImages.dir(picFolder)) } }
+        if let i = args.firstIndex(of: "--onenote-html"), args.count > i + 1, let m = mc.previewMeeting {
+            // The exact page body OneNote would receive, plus its picture parts.
+            let (html, parts) = OneNotePageBuilder.build(m)
+            try? html.write(toFile: args[i + 1], atomically: true, encoding: .utf8)
+            print("onenote html → \(args[i + 1]); parts: " + parts.map { "\($0.name) \($0.type) \($0.data.count)B" }.joined(separator: ", "))
+            print("markdown export:\n" + MeetingText.markdown(m).prefix(400))
+        }
         window.layoutIfNeeded()
         guard let content = window.contentView else { exit(1) }
         content.layoutSubtreeIfNeeded()
@@ -791,6 +801,43 @@ case "meeting-preview":
                 print("wrote \(out)")
             }
         }
+    }
+
+case "pictures-test":
+    // Pictures in meeting notes: paste an image into the real editor class,
+    // check the Markdown it produces, reload it, and check text-wins paste.
+    MainActor.assumeIsolated {
+        _ = NSApplication.shared
+        var fails = 0
+        func check(_ name: String, _ ok: Bool) { print("\(ok ? "PASS" : "FAIL") — \(name)"); if !ok { fails += 1 } }
+        let mid = "pictures-test-" + UUID().uuidString
+        defer { try? FileManager.default.removeItem(at: MeetingImages.dir(mid)) }
+        let tv = NotesTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 400))
+        tv.isRichText = true
+        tv.isEditable = true
+        tv.saveImage = { img in MeetingImages.save(img, meetingID: mid).flatMap { MeetingImages.attachment(meetingID: mid, fileName: $0) } }
+        tv.string = "before"
+        tv.setSelectedRange(NSRange(location: 6, length: 0))
+        let img = NSImage(size: NSSize(width: 1200, height: 600), flipped: false) { r in NSColor.red.setFill(); r.fill(); return true }
+        let pb = NSPasteboard(name: NSPasteboard.Name("pt-pictures-test"))
+        pb.clearContents(); pb.writeObjects([img])
+        check("image paste accepted", tv.readSelection(from: pb))
+        tv.insertText("after", replacementRange: tv.selectedRange())
+        let md = MeetingImages.markdown(tv.attributedString())
+        print("markdown: \(md.debugDescription)")
+        let refs = MeetingImages.references(in: md)
+        check("one picture referenced", refs.count == 1)
+        check("picture on its own line", md.hasPrefix("before\n![](") && md.hasSuffix(")\nafter"))
+        check("file saved", refs.first.map { FileManager.default.fileExists(atPath: MeetingImages.url(mid, $0).path) } ?? false)
+        let back = MeetingImages.attributed(md, meetingID: mid, attributes: [:])
+        check("round trip is lossless", MeetingImages.markdown(back) == md)
+        check("drawn ≤ 480pt wide", (back.attribute(.attachment, at: 7, effectiveRange: nil) as? NSTextAttachment)?.bounds.width ?? 999 <= 480)
+        pb.clearContents(); pb.setString("plain words", forType: .string); pb.setData(img.tiffRepresentation, forType: .tiff)
+        check("text + image pasteboard pastes as text", MeetingImages.images(on: pb).isEmpty)
+        pb.clearContents(); pb.setString("https://example.com/a.png", forType: .string); pb.setData(img.tiffRepresentation, forType: .tiff)
+        check("link + image pastes as picture", MeetingImages.images(on: pb).count == 1)
+        check("enhancer sees [picture]", MeetingImages.rewrite(md) { _ in "[picture]" } == "before\n[picture]\nafter")
+        exit(fails == 0 ? 0 : 1)
     }
 
 case "chat-preview":

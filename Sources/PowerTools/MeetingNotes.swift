@@ -18,7 +18,8 @@ import Speech
 // Storage is one JSON file per meeting under
 // ~/Library/Application Support/GRC Whisper/Meetings/ — deliberately NOT a
 // SQLite table, so the Mac/Windows schema-parity contract is untouched. Audio is
-// never written to disk; only text is kept.
+// never written to disk; only text is kept. Pictures pasted into notes live in
+// Meetings/<id>/ next to the JSON (see MeetingPictures.swift).
 
 // MARK: - Model
 
@@ -43,6 +44,9 @@ struct Meeting: Codable {
     /// "Home", "Work", or any user-made label; nil = no context. Optional so
     /// meeting files written before contexts existed still decode.
     var context: String?
+    /// The OneNote page this meeting was last sent to (re-sending replaces it).
+    var oneNotePageID: String?
+    var oneNoteURL: String?
 
     static func blank(context: String? = nil) -> Meeting {
         Meeting(id: UUID().uuidString, title: "", created: Date(), recordedSeconds: 0,
@@ -99,6 +103,7 @@ enum MeetingStore {
 
     static func delete(_ id: String) {
         try? FileManager.default.removeItem(at: url(id))
+        try? FileManager.default.removeItem(at: MeetingImages.dir(id))  // its pictures
     }
 }
 
@@ -285,8 +290,12 @@ enum MeetingText {
     static func markdown(_ m: Meeting) -> String {
         var parts = ["# \(m.displayTitle)",
                      DateFormatter.localizedString(from: m.created, dateStyle: .long, timeStyle: .short)]
-        if !m.enhanced.isEmpty { parts.append(m.enhanced) }
-        if !m.notes.isEmpty { parts.append("## My notes\n\n" + m.notes) }
+        // Pictures point at their files on this Mac, so the Markdown still renders.
+        func pics(_ s: String) -> String {
+            MeetingImages.rewrite(s) { "![](\(MeetingImages.url(m.id, $0).absoluteString))" }
+        }
+        if !m.enhanced.isEmpty { parts.append(pics(m.enhanced)) }
+        if !m.notes.isEmpty { parts.append("## My notes\n\n" + pics(m.notes)) }
         if !m.segments.isEmpty { parts.append("## Transcript\n\n" + plain(m)) }
         return parts.joined(separator: "\n\n")
     }
@@ -712,7 +721,8 @@ enum MeetingEnhancer {
     """
 
     static func prompt(_ m: Meeting, transcript: String) -> String {
-        let notes = m.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = MeetingImages.rewrite(m.notes) { _ in "[picture]" }
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return """
         <MY_NOTES>
         \(notes.isEmpty ? "(none)" : notes)
@@ -788,7 +798,7 @@ final class MeetingNotesWindow: NSWindow {}
 
 @MainActor
 final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTableViewDataSource,
-                                    NSTableViewDelegate, NSTextViewDelegate, NSTextFieldDelegate {
+                                    NSTableViewDelegate, NSTextViewDelegate, NSTextFieldDelegate, NSMenuDelegate {
     private var config: Config
     private(set) var meetings: [Meeting] = []
     private var selectedID: String?
@@ -827,8 +837,25 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
                                           trackingMode: .selectOne, target: nil, action: nil)
     private let enhanceButton = NSButton(title: "Enhance", target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
-    private let textScroll = NSTextView.scrollableTextView()
-    private var textView: NSTextView { textScroll.documentView as! NSTextView }
+    private let textScroll: NSScrollView = {
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        let tv = NotesTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        tv.minSize = .zero
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.autoresizingMask = [.width]
+        tv.textContainer?.widthTracksTextView = true
+        tv.textContainer?.containerSize = NSSize(width: 600, height: CGFloat.greatestFiniteMagnitude)
+        scroll.documentView = tv
+        return scroll
+    }()
+    private var textView: NotesTextView { textScroll.documentView as! NotesTextView }
+    private let oneNoteButton = NSPopUpButton(frame: .zero, pullsDown: true)
+    /// Meetings to send to OneNote once their auto-enhance finishes.
+    private var sendWhenEnhanced: Set<String> = []
+    private var sendingToOneNote: Set<String> = []
     private let hint = NSTextField(wrappingLabelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let emptyState = NSTextField(wrappingLabelWithString: "")
@@ -930,6 +957,30 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         tabs.selectedSegment = 2
         render()
     }
+
+    /// Puts a generated picture into the sample meeting's notes (`meeting-preview … pics`).
+    /// Returns the meeting id so the caller can delete its picture folder afterwards.
+    func previewPicture() -> String? {
+        guard let i = index(selectedID) else { return nil }
+        let img = NSImage(size: NSSize(width: 900, height: 420), flipped: false) { r in
+            NSColor(srgbRed: 0.93, green: 0.95, blue: 0.98, alpha: 1).setFill(); r.fill()
+            NSColor.systemBlue.setFill()
+            for (k, h) in [0.35, 0.6, 0.45, 0.8, 0.7].enumerated() {
+                NSRect(x: 80 + CGFloat(k) * 150, y: 40, width: 90, height: 320 * h).fill()
+            }
+            ("Whiteboard — crew plan" as NSString).draw(at: NSPoint(x: 30, y: 380), withAttributes: [.font: NSFont.boldSystemFont(ofSize: 22)])
+            return true
+        }
+        guard let name = MeetingImages.save(img, meetingID: meetings[i].id) else { return nil }
+        meetings[i].notes = "- pilot crews: 3 → 5?\n- whiteboard from the room:\n![](\(name))\n- Rhett to send updated map"
+        tab = 0
+        tabs.selectedSegment = 0
+        render()
+        return meetings[i].id
+    }
+
+    /// The selected (sample) meeting, for CLI checks.
+    var previewMeeting: Meeting? { selected }
 
     func previewFilters(context: String?, date: Int?, length: Int?) {
         if let context { contextFilter = context == "none" ? MeetingSidebar.noContext : context }
@@ -1047,8 +1098,13 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
                 }
                 self.endRecordingState()
                 let hasText = self.meetings.first { $0.id == id }.map { !$0.segments.isEmpty } ?? false
-                if autoEnhance, hasText { self.enhance(id) } else {
+                let sendAfter = OneNote.autoSend && OneNote.isSignedIn && hasText
+                if autoEnhance, hasText {
+                    if sendAfter { self.sendWhenEnhanced.insert(id) }
+                    self.enhance(id)
+                } else {
                     self.setStatus(hasText ? "Saved." : "Saved — no speech was transcribed.")
+                    if sendAfter { self.sendToOneNote(id) }
                 }
             }
         }
@@ -1093,7 +1149,13 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         setStatus("Writing enhanced notes…")
         let cfg = config
         Task { @MainActor in
-            defer { self.enhancing.remove(id); self.updateChrome() }
+            defer {
+                self.enhancing.remove(id)
+                self.updateChrome()
+                // "Send automatically when a meeting ends" — even if Enhance
+                // failed, the notes and transcript still go.
+                if self.sendWhenEnhanced.remove(id) != nil { self.sendToOneNote(id) }
+            }
             do {
                 let (raw, engine) = try await MeetingEnhancer.enhance(m, config: cfg)
                 guard let i = self.index(id) else { return }
@@ -1145,8 +1207,13 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         case 1: text = m.enhanced.isEmpty ? MeetingText.markdown(m) : "# \(m.displayTitle)\n\n\(m.enhanced)"
         default: text = MeetingText.plain(m)
         }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        if tab < 2 {
+            // Pictures come along when pasting into Mail, Notes, Word, OneNote…
+            MeetingImages.writeRich(text, meetingID: m.id, to: NSPasteboard.general)
+        } else {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
         setStatus("Copied.")
     }
 
@@ -1169,7 +1236,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         guard m.id != recordingID else { setStatus("Stop the recording before deleting this meeting.", warn: true); return }
         let alert = NSAlert()
         alert.messageText = "Delete “\(m.displayTitle)”?"
-        alert.informativeText = "Its notes and transcript are removed from this Mac. This can't be undone."
+        alert.informativeText = "Its notes, pictures, and transcript are removed from this Mac (a copy already sent to OneNote stays there). This can't be undone."
         alert.addButton(withTitle: "Delete")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
@@ -1181,6 +1248,135 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             if self.selectedID == m.id { self.selectedID = self.firstVisibleID() ?? self.meetings.first?.id }
             self.reloadSidebar()
             self.render()
+        }
+    }
+
+    // MARK: OneNote
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === oneNoteButton.menu else { return }
+        while menu.items.count > 1 { menu.removeItem(at: 1) }  // item 0 is the button's title
+        func add(_ title: String, _ action: Selector?, enabled: Bool = true, on: Bool = false) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.isEnabled = enabled && action != nil
+            item.state = on ? .on : .off
+            menu.addItem(item)
+        }
+        let m = selected
+        let busy = m.map { sendingToOneNote.contains($0.id) } ?? false
+        if OneNote.isSignedIn {
+            add(m?.oneNotePageID == nil ? "Send to OneNote" : "Send Again (replaces the page)",
+                #selector(sendSelectedToOneNote), enabled: m != nil && !busy)
+            add("Open in OneNote", #selector(openInOneNote), enabled: m?.oneNoteURL != nil)
+            menu.addItem(.separator())
+            add("Send automatically when a meeting ends", #selector(toggleAutoSend), on: OneNote.autoSend)
+            add(OneNote.sectionName.map { "Section: \($0)…" } ?? "Choose Section…", #selector(chooseSectionClicked))
+            menu.addItem(.separator())
+            add("Signed in as \(OneNote.account ?? "Microsoft account")", nil)
+            add("Sign Out", #selector(oneNoteSignOut))
+        } else {
+            add("Sign In to OneNote…", #selector(oneNoteSignIn))
+            add("Works with a personal or work Microsoft account.", nil)
+        }
+    }
+
+    @objc private func sendSelectedToOneNote() { if let id = selectedID { sendToOneNote(id) } }
+    @objc private func sendTargetToOneNote() { if let m = targetMeeting() { sendToOneNote(m.id) } }
+
+    @objc private func openInOneNote() {
+        guard let s = selected?.oneNoteURL, let url = URL(string: s) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func toggleAutoSend() {
+        OneNote.autoSend.toggle()
+        setStatus(OneNote.autoSend ? "Meetings will be sent to OneNote when you stop recording (after Enhance)."
+                                   : "Automatic OneNote sending is off.")
+        if OneNote.autoSend, OneNote.sectionID == nil { chooseSection(thenSend: nil) }
+    }
+
+    @objc private func chooseSectionClicked() { chooseSection(thenSend: nil) }
+
+    @objc private func oneNoteSignOut() {
+        OneNote.signOut()
+        setStatus("Signed out of OneNote.")
+    }
+
+    @objc private func oneNoteSignIn() { signInToOneNote(thenSend: nil) }
+
+    private func signInToOneNote(thenSend id: String?) {
+        setStatus("Opening Microsoft sign-in…")
+        Task { @MainActor in
+            do {
+                try await OneNote.signIn(from: self.window)
+                self.setStatus("Signed in to OneNote as \(OneNote.account ?? "your Microsoft account").")
+                self.chooseSection(thenSend: id)
+            } catch {
+                self.setStatus("OneNote sign-in: \(error.localizedDescription)", warn: true)
+            }
+        }
+    }
+
+    /// Lists the account's sections in a sheet; the pick is remembered.
+    private func chooseSection(thenSend id: String?) {
+        guard OneNote.isSignedIn else { signInToOneNote(thenSend: id); return }
+        setStatus("Loading your OneNote sections…")
+        Task { @MainActor in
+            let sections: [OneNote.Section]
+            do { sections = try await OneNote.sections() } catch {
+                self.setStatus(error.localizedDescription, warn: true)
+                return
+            }
+            guard let window = self.window else { return }
+            guard !sections.isEmpty else {
+                self.setStatus("No OneNote sections found — create a notebook in OneNote first.", warn: true)
+                return
+            }
+            self.setStatus("")
+            let alert = NSAlert()
+            alert.messageText = "Send meetings to which OneNote section?"
+            alert.informativeText = "Each meeting becomes one page: enhanced notes, your notes and pictures, then the transcript."
+            let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
+            for s in sections {
+                popup.addItem(withTitle: s.name)
+                popup.lastItem?.representedObject = s.id
+                if s.id == OneNote.sectionID { popup.select(popup.lastItem) }
+            }
+            alert.accessoryView = popup
+            alert.addButton(withTitle: id == nil ? "Use This Section" : "Send")
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard let self, response == .alertFirstButtonReturn,
+                      let item = popup.selectedItem, let sid = item.representedObject as? String else { return }
+                OneNote.setSection(id: sid, name: item.title)
+                self.setStatus("OneNote section: \(item.title).")
+                if let id { self.sendToOneNote(id) }
+            }
+        }
+    }
+
+    private func sendToOneNote(_ id: String) {
+        guard !sendingToOneNote.contains(id) else { return }
+        guard OneNote.isSignedIn else { signInToOneNote(thenSend: id); return }
+        guard OneNote.sectionID != nil else { chooseSection(thenSend: id); return }
+        flushSaves()
+        guard let m = meetings.first(where: { $0.id == id }) else { return }
+        sendingToOneNote.insert(id)
+        setStatus("Sending “\(m.displayTitle)” to OneNote…")
+        Task { @MainActor in
+            defer { self.sendingToOneNote.remove(id) }
+            do {
+                let page = try await OneNote.send(m)
+                guard let i = self.index(id) else { return }
+                self.meetings[i].oneNotePageID = page.id
+                self.meetings[i].oneNoteURL = page.url
+                MeetingStore.save(self.meetings[i])
+                self.setStatus("Sent “\(m.displayTitle)” to OneNote ▸ \(OneNote.sectionName ?? "your section").")
+            } catch {
+                log("meetings: OneNote send failed: \(error)")
+                self.setStatus(error.localizedDescription, warn: true)
+            }
         }
     }
 
@@ -1213,7 +1409,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
     private func render() {
         let has = selected != nil
-        for v in [titleField, meetingContextPopup, tabs, textScroll, enhanceButton, copyButton] as [NSView] { v.isHidden = !has }
+        for v in [titleField, meetingContextPopup, tabs, textScroll, enhanceButton, copyButton, oneNoteButton] as [NSView] { v.isHidden = !has }
         rebuildMeetingContextPopup()
         emptyState.isHidden = has
         updateChrome()
@@ -1223,11 +1419,11 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         defer { suppressTextEvents = false }
         switch tab {
         case 0:
-            setPlain(m.notes, editable: true)
-            hint.stringValue = "Type rough notes while the meeting runs — a few words per point is plenty. Enhance keeps them as the outline and fills in the details from the transcript."
+            setNotes(m.notes, meetingID: m.id)
+            hint.stringValue = "Type rough notes while the meeting runs — a few words per point is plenty. Paste or drop pictures right in. Enhance keeps your notes as the outline and fills in the details from the transcript."
             hint.isHidden = !m.notes.isEmpty
         case 1:
-            setPlain(m.enhanced, editable: true)
+            setNotes(m.enhanced, meetingID: m.id)
             hint.stringValue = m.segments.isEmpty && m.notes.isEmpty
                 ? "Record the meeting (or type notes), then Enhance to get a summary, decisions, and action items."
                 : "Nothing here yet — click Enhance."
@@ -1245,9 +1441,15 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
     /// Replaces the text AND its attributes — the transcript tab's styling must
     /// not leak into the editable tabs (or into what the user types next).
-    private func setPlain(_ s: String, editable: Bool) {
-        textView.isEditable = editable
-        textView.textStorage?.setAttributedString(NSAttributedString(string: s, attributes: Self.plainAttributes))
+    private func setNotes(_ s: String, meetingID: String) {
+        textView.isEditable = true
+        textView.saveImage = { img in
+            MeetingImages.save(img, meetingID: meetingID).flatMap {
+                MeetingImages.attachment(meetingID: meetingID, fileName: $0)
+            }
+        }
+        textView.textStorage?.setAttributedString(
+            MeetingImages.attributed(s, meetingID: meetingID, attributes: Self.plainAttributes))
         textView.typingAttributes = Self.plainAttributes
     }
 
@@ -1443,8 +1645,8 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     func textDidChange(_ notification: Notification) {
         guard !suppressTextEvents, let i = index(selectedID) else { return }
         switch tab {
-        case 0: meetings[i].notes = textView.string; hint.isHidden = !textView.string.isEmpty
-        case 1: meetings[i].enhanced = textView.string; hint.isHidden = !textView.string.isEmpty
+        case 0: meetings[i].notes = MeetingImages.markdown(textView.attributedString()); hint.isHidden = !textView.string.isEmpty
+        case 1: meetings[i].enhanced = MeetingImages.markdown(textView.attributedString()); hint.isHidden = !textView.string.isEmpty
         default: return
         }
         markDirty(meetings[i].id)
@@ -1537,6 +1739,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         table.delegate = self
         let menu = NSMenu()
         menu.addItem(withTitle: "Copy as Markdown", action: #selector(copyMarkdown), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Send to OneNote", action: #selector(sendTargetToOneNote), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Delete Meeting…", action: #selector(deleteMeeting), keyEquivalent: "").target = self
         table.menu = menu
@@ -1614,11 +1817,18 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         copyButton.target = self
         copyButton.action = #selector(copyClicked)
         copyButton.bezelStyle = .rounded
+        oneNoteButton.bezelStyle = .rounded
+        oneNoteButton.addItem(withTitle: "OneNote")
+        oneNoteButton.menu?.delegate = self
 
         textScroll.drawsBackground = false
         textScroll.borderType = .noBorder
         textView.delegate = self
-        textView.isRichText = false
+        // Rich so it can hold inline pictures; NotesTextView only ever reads
+        // plain text or images off the pasteboard, so no styles sneak in.
+        textView.isRichText = true
+        textView.importsGraphics = false
+        textView.usesFontPanel = false
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.textContainerInset = NSSize(width: 4, height: 10)
@@ -1640,7 +1850,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         let views: [NSView] = [paper, sidebar, tableScroll, newButton, contextPopup, datePopup, lengthPopup, groupPopup,
                                noMatch, clearFiltersButton, meetingContextPopup,
                                divider, titleField, timeLabel, recordButton,
-                               tabs, enhanceButton, copyButton, textScroll, hint, statusLabel, emptyState]
+                               tabs, enhanceButton, copyButton, oneNoteButton, textScroll, hint, statusLabel, emptyState]
         for v in views { v.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(v) }
         hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1704,8 +1914,10 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
             tabs.topAnchor.constraint(equalTo: recordButton.bottomAnchor, constant: 14),
             tabs.leadingAnchor.constraint(equalTo: titleField.leadingAnchor),
+            oneNoteButton.centerYAnchor.constraint(equalTo: tabs.centerYAnchor),
+            oneNoteButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -pad),
             copyButton.centerYAnchor.constraint(equalTo: tabs.centerYAnchor),
-            copyButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -pad),
+            copyButton.trailingAnchor.constraint(equalTo: oneNoteButton.leadingAnchor, constant: -8),
             enhanceButton.centerYAnchor.constraint(equalTo: tabs.centerYAnchor),
             enhanceButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -8),
 
