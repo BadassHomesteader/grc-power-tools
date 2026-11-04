@@ -17,11 +17,11 @@ final class WindowPalette {
 
     var isVisible: Bool { window != nil }
 
-    /// `target`: the AX window captured before the palette stole focus.
+    /// `target`: the window captured before the palette stole focus.
     /// `done`: always called (apply or cancel) so the caller can refocus the app.
     /// `layouts`: up to 3 saved-layout chips (A/B/C restore, S saves current).
     func present(dark: Bool, gridCols: Int, gridRows: Int,
-                 target: AXUIElement, screen: NSScreen,
+                 target: WindowManager.Target, screen: NSScreen,
                  layouts: [(entry: LayoutEntry, label: String)] = [],
                  onSaveLayout: (() -> Void)? = nil,
                  onRestoreLayout: ((LayoutEntry) -> Void)? = nil,

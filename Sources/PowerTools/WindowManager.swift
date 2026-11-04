@@ -20,11 +20,20 @@ enum WindowManager {
 
     struct SnapResult { let screen: NSScreen; let windowID: CGWindowID? }
 
+    /// A window to move. Other apps' windows go through Accessibility; Power
+    /// Tools' OWN windows (Meeting Notes, Settings, AI chat) can't — macOS answers
+    /// an app's AX queries about itself with kAXErrorNotImplemented (-25208,
+    /// verified by `ax-self-test`) — so those are moved directly as NSWindows.
+    enum Target {
+        case ax(AXUIElement)
+        case own(NSWindow)
+    }
+
     /// Snap to `fraction` of the screen along `edge` (0.5 = half, 1/3, 2/3…).
     /// Returns the screen used + the moved window's CGWindowID (for Snap Assist).
     @discardableResult
     static func snap(edge: Edge, fraction: CGFloat) -> SnapResult? {
-        guard let window = focusedWindow(), let screen = targetScreen(window) else { return nil }
+        guard let window = focusedTarget(), let screen = targetScreen(window) else { return nil }
         let vf = screen.visibleFrame
         let r: NSRect
         switch edge {
@@ -57,16 +66,20 @@ enum WindowManager {
 
     /// nil if the SPI fails — the caller must NOT use 0 as a real window ID (it
     /// would fail to exclude the just-snapped window from Snap Assist).
-    private static func cgWindowID(of window: AXUIElement) -> CGWindowID? {
-        var wid = CGWindowID(0)
-        return _AXUIElementGetWindow(window, &wid) == .success ? wid : nil
+    private static func cgWindowID(of target: Target) -> CGWindowID? {
+        switch target {
+        case .own(let w): return CGWindowID(w.windowNumber)
+        case .ax(let window):
+            var wid = CGWindowID(0)
+            return _AXUIElementGetWindow(window, &wid) == .success ? wid : nil
+        }
     }
 
     /// Snap into a corner: a horizontal edge×fraction combined with a vertical
     /// edge×fraction (chained arrows — e.g. ← then ↑ = top-left quarter).
     @discardableResult
     static func snapCorner(hEdge: Edge, hFraction: CGFloat, vEdge: Edge, vFraction: CGFloat) -> SnapResult? {
-        guard let window = focusedWindow(), let screen = targetScreen(window) else { return nil }
+        guard let window = focusedTarget(), let screen = targetScreen(window) else { return nil }
         let vf = screen.visibleFrame
         let w = vf.width * hFraction
         let h = vf.height * vFraction
@@ -77,23 +90,40 @@ enum WindowManager {
     }
 
     /// The screen a window mostly sits on (palette placement).
-    static func screen(of window: AXUIElement) -> NSScreen? { targetScreen(window) }
+    static func screen(of window: Target) -> NSScreen? { targetScreen(window) }
 
     @discardableResult
     static func maximize() -> Bool {
-        guard let window = focusedWindow(), let screen = targetScreen(window) else { return false }
+        guard let window = focusedTarget(), let screen = targetScreen(window) else { return false }
         setFrame(window, screen.visibleFrame)
         return true
     }
 
     /// The focused window of the frontmost app — capture this BEFORE showing any UI
     /// that steals focus (e.g. the grid overlay), then apply with `setWindow`.
-    static func frontmostWindow() -> AXUIElement? { focusedWindow() }
+    static func frontmostWindow() -> Target? { focusedTarget() }
 
     /// Move/resize a specific window to a global NSScreen (bottom-left) rect.
-    static func setWindow(_ window: AXUIElement, cocoaFrame: NSRect) { setFrame(window, cocoaFrame) }
+    static func setWindow(_ window: Target, cocoaFrame: NSRect) { setFrame(window, cocoaFrame) }
+    static func setWindow(_ window: AXUIElement, cocoaFrame: NSRect) { setFrame(.ax(window), cocoaFrame) }
+
+    /// Power Tools' own front document window, when Power Tools is frontmost —
+    /// a titled, resizable, non-panel window (never a pad, palette, or overlay).
+    static func ownFrontWindow() -> NSWindow? {
+        let candidates = [NSApp.keyWindow, NSApp.mainWindow] + NSApp.orderedWindows.map { Optional($0) }
+        return candidates.compactMap { $0 }.first {
+            $0.isVisible && !($0 is NSPanel) && $0.styleMask.contains(.titled) && $0.styleMask.contains(.resizable)
+        }
+    }
 
     // MARK: AX plumbing
+
+    private static func focusedTarget() -> Target? {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() {
+            return ownFrontWindow().map { .own($0) }
+        }
+        return focusedWindow().map { .ax($0) }
+    }
 
     private static func focusedWindow() -> AXUIElement? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
@@ -102,6 +132,13 @@ enum WindowManager {
         guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focused) == .success,
               let win = focused, CFGetTypeID(win) == AXUIElementGetTypeID() else { return nil }
         return (win as! AXUIElement)   // type-checked above; CF has no conditional cast
+    }
+
+    private static func targetScreen(_ target: Target) -> NSScreen? {
+        switch target {
+        case .own(let w): return w.screen ?? NSScreen.main
+        case .ax(let window): return targetScreen(window)
+        }
     }
 
     private static func targetScreen(_ window: AXUIElement) -> NSScreen? {
@@ -125,6 +162,17 @@ enum WindowManager {
         else { return nil }
         let cocoaY = primaryHeight() - pos.y - size.height
         return NSRect(x: pos.x, y: cocoaY, width: size.width, height: size.height)
+    }
+
+    private static func setFrame(_ target: Target, _ cocoaRect: NSRect) {
+        switch target {
+        case .own(let w):
+            var r = cocoaRect
+            r.size.width = max(r.width, w.minSize.width)
+            r.size.height = max(r.height, w.minSize.height)
+            w.setFrame(r, display: true, animate: false)
+        case .ax(let window): setFrame(window, cocoaRect)
+        }
     }
 
     private static func setFrame(_ window: AXUIElement, _ cocoaRect: NSRect) {

@@ -756,6 +756,22 @@ case "meeting-test":
             m.enhanced = body
             print("\n--- enhanced (\(engine)) — title: \(title ?? "nil") ---\n" + body)
         }
+        if args.contains("--live") {
+            // The live-assist refresh and an Ask, on this transcript (real AI call).
+            let snapshot = m
+            let t0 = Date()
+            let live = try runBlocking { try await MeetingLive.refresh(snapshot, config: cfg) }
+            print("\n--- live (\(String(format: "%.1f", Date().timeIntervalSince(t0)))s) ---\n" + live)
+            var again = m
+            again.live = live
+            let snap2 = again
+            let t1 = Date()
+            let stable = try runBlocking { try await MeetingLive.refresh(snap2, config: cfg) }
+            print("\n--- live refresh #2 with PREVIOUS (\(String(format: "%.1f", Date().timeIntervalSince(t1)))s) ---\n" + stable)
+            let q = "What deadline was mentioned?"
+            let a = try runBlocking { try await MeetingLive.ask(q, snapshot, config: cfg) }
+            print("\n--- ask: \(q) ---\n" + a)
+        }
         if args.contains("--save") { MeetingStore.save(m); print("\nsaved \(m.id)") }
     } catch {
         print("meeting-test failed: \(error)"); exit(1)
@@ -783,6 +799,11 @@ case "meeting-preview":
         if args.contains("notes") { mc.previewTab(0) }
         var picFolder: String?
         if args.contains("pics") { picFolder = mc.previewPicture() }
+        if args.contains("live"), let rep = mc.previewLive(), let data = rep.representation(using: .png, properties: [:]) {
+            let panelOut = (out as NSString).deletingPathExtension + "-panel.png"
+            try? data.write(to: URL(fileURLWithPath: panelOut))
+            print("wrote \(panelOut)")
+        }
         defer { if let picFolder { try? FileManager.default.removeItem(at: MeetingImages.dir(picFolder)) } }
         if let i = args.firstIndex(of: "--onenote-html"), args.count > i + 1, let m = mc.previewMeeting {
             // The exact page body OneNote would receive, plus its picture parts.
@@ -837,6 +858,50 @@ case "pictures-test":
         pb.clearContents(); pb.setString("https://example.com/a.png", forType: .string); pb.setData(img.tiffRepresentation, forType: .tiff)
         check("link + image pastes as picture", MeetingImages.images(on: pb).count == 1)
         check("enhancer sees [picture]", MeetingImages.rewrite(md) { _ in "[picture]" } == "before\n[picture]\nafter")
+        exit(fails == 0 ? 0 : 1)
+    }
+
+case "ax-self-test":
+    // Can Power Tools move ITS OWN windows through the same AX calls the snap
+    // features use on other apps? (Meeting Notes is the first real document window.)
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
+        let w = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 500, height: 300),
+                         styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        w.title = "ax-self-test"
+        w.makeKeyAndOrderFront(nil)
+        app.activate(ignoringOtherApps: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        print("trusted:", AXIsProcessTrusted(), "frontmost is self:", NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid())
+        let axApp = AXUIElementCreateApplication(getpid())
+        var focused: CFTypeRef?
+        let r1 = AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focused)
+        print("focused window query:", r1.rawValue, focused != nil ? "got window" : "nil")
+        if let f = focused, CFGetTypeID(f) == AXUIElementGetTypeID() {
+            let win = f as! AXUIElement
+            var settable = DarwinBoolean(false)
+            AXUIElementIsAttributeSettable(win, kAXPositionAttribute as CFString, &settable)
+            var p = CGPoint(x: 40, y: 80)
+            let r2 = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &p)!)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            print("position settable:", settable.boolValue, "set result:", r2.rawValue, "window frame now:", w.frame)
+        }
+        // The fix: own windows resolve as .own and move directly.
+        var fails = 0
+        func check(_ name: String, _ ok: Bool) { print("\(ok ? "PASS" : "FAIL") — \(name)"); if !ok { fails += 1 } }
+        if case .own(let found)? = WindowManager.frontmostWindow() { check("front window resolves to our own NSWindow", found === w) }
+        else { check("front window resolves to our own NSWindow", false) }
+        let vf = (w.screen ?? NSScreen.main!).visibleFrame
+        let r = WindowManager.snap(edge: .left, fraction: 0.5)
+        check("snap left half moves it", r != nil && abs(w.frame.minX - vf.minX) < 1 && abs(w.frame.width - vf.width / 2) < 1
+              && abs(w.frame.height - vf.height) < 1)
+        check("snap result carries the window number", r?.windowID == CGWindowID(w.windowNumber))
+        check("maximize fills the visible frame", WindowManager.maximize() && abs(w.frame.width - vf.width) < 1)
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
+                            styleMask: [.titled, .resizable, .utilityWindow], backing: .buffered, defer: false)
+        panel.orderFront(nil)
+        if case .own(let found)? = WindowManager.frontmostWindow() { check("panels are never the target", !(found is NSPanel)) }
         exit(fails == 0 ? 0 : 1)
     }
 

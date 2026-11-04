@@ -2114,8 +2114,8 @@ final class AppController {
         interruptDictation()
         overlay.hide()
         snapAssistRegion = nil; snapAssistExcludeWID = nil  // the grid replaces snap-assist for this hold
+        // Power Tools' own windows (Meeting Notes…) are fair game too.
         guard let app = NSWorkspace.shared.frontmostApplication,
-              app.bundleIdentifier != "com.grc.whisper",
               let window = WindowManager.frontmostWindow() else {
             overlay.showError("Click into a window first, then hold + 3")
             return
@@ -2127,7 +2127,7 @@ final class AppController {
             screen: screen, cols: config.gridSize.cols, rows: config.gridSize.rows,
             dark: config.appearance.isDark,
             snap: { rect in WindowManager.setWindow(window, cocoaFrame: rect) },
-            done: { app.activate() }
+            done: { Self.refocus(app, window) }
         )
     }
 
@@ -2139,7 +2139,6 @@ final class AppController {
         snapAssistRegion = nil; snapAssistExcludeWID = nil  // the palette replaces snap-assist for this hold
         guard config.windowPalette else { return }
         guard let app = NSWorkspace.shared.frontmostApplication,
-              app.bundleIdentifier != "com.grc.whisper",
               let target = WindowManager.frontmostWindow() else {
             overlay.showError("Click into a window first, then hold + W")
             return
@@ -2168,8 +2167,19 @@ final class AppController {
                 let r = WindowLayouts.restore(WindowLayouts.decode(entry.json))
                 self?.overlay.showResult("Restored \(r.restored) of \(r.total) windows")
             },
-            done: { app.activate() }
+            done: { Self.refocus(app, target) }
         )
+    }
+
+    /// Hand focus back after a palette/grid: the other app, or — when the target
+    /// was one of our own windows — that window.
+    private static func refocus(_ app: NSRunningApplication, _ target: WindowManager.Target) {
+        if case .own(let w) = target {
+            NSApp.activate(ignoringOtherApps: true)
+            w.makeKeyAndOrderFront(nil)
+        } else {
+            app.activate()
+        }
     }
 
     /// Arrow/Return in window mode. Fires on each keydown; repeating the same

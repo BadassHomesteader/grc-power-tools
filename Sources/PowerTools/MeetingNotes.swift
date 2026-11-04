@@ -47,6 +47,8 @@ struct Meeting: Codable {
     /// The OneNote page this meeting was last sent to (re-sending replaces it).
     var oneNotePageID: String?
     var oneNoteURL: String?
+    /// The live assist list (next steps / questions / decisions), Markdown.
+    var live: String?
 
     static func blank(context: String? = nil) -> Meeting {
         Meeting(id: UUID().uuidString, title: "", created: Date(), recordedSeconds: 0,
@@ -727,6 +729,9 @@ enum MeetingEnhancer {
         <MY_NOTES>
         \(notes.isEmpty ? "(none)" : notes)
         </MY_NOTES>
+        <LIVE_LIST note="running list made during the call; the transcript wins where they differ">
+        \(m.live?.isEmpty == false ? m.live! : "(none)")
+        </LIVE_LIST>
         <TRANSCRIPT>
         \(transcript.isEmpty ? "(no transcript)" : transcript)
         </TRANSCRIPT>
@@ -811,7 +816,21 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private var dirty: Set<String> = []
     private var saveWork: DispatchWorkItem?
     private var ticker: Timer?
-    private var tab = 0  // 0 My Notes · 1 Enhanced · 2 Transcript
+    private var tab = 0  // 0 My Notes · 1 Enhanced · 2 Transcript · 3 Live
+    // Live assist (MeetingLive.swift).
+    private var livePanel: MeetingLivePanel?
+    private var liveBusy: Set<String> = []
+    private var liveAt: [String: Date] = [:]
+    private var liveSegCount: [String: Int] = [:]
+    private var liveError: [String: String] = [:]
+    private var answers: [String: [MeetingLive.Answer]] = [:]
+    private let askField = NSTextField()
+    private let livePanelButton = NSButton(title: "Floating Panel", target: nil, action: nil)
+    private var textBottomToStatus: NSLayoutConstraint!
+    private var textBottomToAsk: NSLayoutConstraint!
+    /// Show the floating panel when a recording starts. Closing it with ✕
+    /// turns this off (closing is final); "Floating Panel" turns it back on.
+    private static let livePanelPref = "meetings.live.panel"
     private var suppressTextEvents = false
 
     // Sidebar filters — a per-Mac view preference, kept in UserDefaults (not
@@ -833,7 +852,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private let titleField = NSTextField()
     private let timeLabel = NSTextField(labelWithString: "")
     private let recordButton = NSButton(title: "Record", target: nil, action: nil)
-    private let tabs = NSSegmentedControl(labels: ["My Notes", "Enhanced", "Transcript"],
+    private let tabs = NSSegmentedControl(labels: ["My Notes", "Enhanced", "Transcript", "Live"],
                                           trackingMode: .selectOne, target: nil, action: nil)
     private let enhanceButton = NSButton(title: "Enhance", target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
@@ -979,6 +998,21 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         return meetings[i].id
     }
 
+    /// Live tab + floating panel with a sample list (`meeting-preview … live`).
+    func previewLive() -> NSBitmapImageRep? {
+        guard let i = index(selectedID) else { return nil }
+        meetings[i].live = "## Next steps\n- Them (Rhett) — send updated map — Friday\n- Me — confirm truck delivery date — before Nov 15\n\n## Questions to ask\n- Who owns crew 4 and 5 hiring if trucks slip?\n- Is the 1,100-meter backlog before or after this week's installs?\n\n## Decisions\n- Target 5 crews before Thanksgiving, contingent on trucks"
+        answers[meetings[i].id] = [MeetingLive.Answer(question: "What date did they give for the trucks?",
+                                                      answer: "You said the trucks need to arrive by the 15th for five crews to work; nobody confirmed the date.")]
+        liveAt[meetings[i].id] = Date()
+        tab = 3
+        tabs.selectedSegment = 3
+        render()
+        showLivePanel()
+        updatePanel()
+        return livePanel?.snapshot()
+    }
+
     /// The selected (sample) meeting, for CLI checks.
     var previewMeeting: Meeting? { selected }
 
@@ -1062,8 +1096,10 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         }
         rec.onWarning = { text in DispatchQueue.main.async { [weak self] in self?.setStatus(text, warn: true) } }
         ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateClock() }
+            MainActor.assumeIsolated { self?.updateClock(); self?.liveTick() }
         }
+        liveAt[id] = Date()  // first live list about a minute in
+        if UserDefaults.standard.object(forKey: Self.livePanelPref) as? Bool ?? true { showLivePanel() }
         setStatus("Starting…")
         updateChrome()
         onRecordingChange?(true)
@@ -1205,7 +1241,11 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         switch tab {
         case 0: text = m.notes
         case 1: text = m.enhanced.isEmpty ? MeetingText.markdown(m) : "# \(m.displayTitle)\n\n\(m.enhanced)"
-        default: text = MeetingText.plain(m)
+        case 2: text = MeetingText.plain(m)
+        default:
+            let qa = (answers[m.id] ?? []).map { "Q: \($0.question)\nA: \($0.answer ?? "…")" }
+            text = ([m.live ?? ""] + (qa.isEmpty ? [] : ["## Answers\n\n" + qa.joined(separator: "\n\n")]))
+                .filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         if tab < 2 {
             // Pictures come along when pasting into Mail, Notes, Word, OneNote…
@@ -1248,6 +1288,135 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             if self.selectedID == m.id { self.selectedID = self.firstVisibleID() ?? self.meetings.first?.id }
             self.reloadSidebar()
             self.render()
+        }
+    }
+
+    // MARK: Live
+
+    private func layoutLiveControls() {
+        let live = tab == 3 && selected != nil
+        askField.isHidden = !live
+        livePanelButton.isHidden = !live
+        textBottomToStatus.isActive = !live
+        textBottomToAsk.isActive = live
+    }
+
+    private func renderLive() {
+        guard tab == 3, let m = selected else { return }
+        suppressTextEvents = true
+        textView.isEditable = false
+        textView.textStorage?.setAttributedString(MeetingLive.attributed(live: m.live, answers: answers[m.id] ?? []))
+        suppressTextEvents = false
+        if recordingID == m.id {
+            hint.stringValue = liveBusy.contains(m.id) ? "Reading the conversation so far…"
+                : "Listening — next steps, questions to ask, and decisions appear here about a minute in, then refresh every minute."
+        } else if m.segments.isEmpty {
+            hint.stringValue = "While a meeting records, next steps, questions to ask, and decisions appear here about once a minute. You can ask questions about the meeting below any time."
+        } else {
+            hint.stringValue = "No live list for this meeting — ask a question about it below."
+        }
+        hint.isHidden = textView.string.count > 0
+    }
+
+    private func liveStatus(_ id: String) -> String {
+        if liveBusy.contains(id) { return "Updating…" }
+        if let e = liveError[id] { return "Live update failed: \(e)" }
+        if let m = meetings.first(where: { $0.id == id }), m.live != nil, let t = liveAt[id] {
+            return "Updated " + DateFormatter.localizedString(from: t, dateStyle: .none, timeStyle: .short)
+                + (recordingID == id ? " · next in ~1 min" : "")
+        }
+        return recordingID == id ? "Listening… first list about a minute in." : ""
+    }
+
+    private func updateLiveViews(_ id: String) {
+        if selectedID == id, tab == 3 { renderLive() }
+        updatePanel()
+    }
+
+    /// The panel follows the recording meeting, else the selected one.
+    private func updatePanel() {
+        guard let p = livePanel, p.isVisible, let id = recordingID ?? selectedID,
+              let m = meetings.first(where: { $0.id == id }) else { return }
+        p.update(title: m.displayTitle, content: MeetingLive.attributed(live: m.live, answers: answers[id] ?? []),
+                 status: liveStatus(id))
+    }
+
+    private func showLivePanel() {
+        if livePanel == nil {
+            let p = MeetingLivePanel(dark: config.appearance.isDark)
+            p.onAsk = { [weak self] q in
+                guard let self, let id = self.recordingID ?? self.selectedID else { return }
+                self.ask(q, id: id)
+            }
+            p.onRefresh = { [weak self] in
+                guard let self, let id = self.recordingID ?? self.selectedID else { return }
+                self.refreshLive(id)
+            }
+            p.onUserClose = { UserDefaults.standard.set(false, forKey: Self.livePanelPref) }
+            livePanel = p
+        }
+        livePanel?.show()
+        updatePanel()
+    }
+
+    @objc private func livePanelClicked() {
+        UserDefaults.standard.set(true, forKey: Self.livePanelPref)
+        showLivePanel()
+    }
+
+    @objc private func askSubmitted() {
+        let q = askField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, let id = selectedID else { return }
+        askField.stringValue = ""
+        ask(q, id: id)
+    }
+
+    /// Every second while recording: refresh once a minute, and only when
+    /// something new was said.
+    private func liveTick() {
+        guard let id = recordingID, !liveBusy.contains(id),
+              let m = meetings.first(where: { $0.id == id }) else { return }
+        guard Date().timeIntervalSince(liveAt[id] ?? .distantPast) >= MeetingLive.interval,
+              m.segments.count > (liveSegCount[id] ?? 0) else { return }
+        refreshLive(id)
+    }
+
+    private func refreshLive(_ id: String) {
+        guard !liveBusy.contains(id), let m = meetings.first(where: { $0.id == id }), !m.segments.isEmpty else { return }
+        liveBusy.insert(id)
+        liveSegCount[id] = m.segments.count
+        liveAt[id] = Date()
+        updateLiveViews(id)
+        let cfg = config
+        Task { @MainActor in
+            defer { self.liveBusy.remove(id); self.updateLiveViews(id) }
+            do {
+                let text = try await MeetingLive.refresh(m, config: cfg)
+                guard let i = self.index(id) else { return }
+                self.meetings[i].live = text
+                self.liveError[id] = nil
+                self.markDirty(id)
+            } catch {
+                log("meetings: live refresh failed: \(error)")
+                self.liveError[id] = error.localizedDescription
+            }
+        }
+    }
+
+    private func ask(_ question: String, id: String) {
+        flushSaves()
+        guard let m = meetings.first(where: { $0.id == id }) else { return }
+        answers[id, default: []].append(MeetingLive.Answer(question: question, answer: nil))
+        let slot = answers[id]!.count - 1
+        updateLiveViews(id)
+        let cfg = config
+        Task { @MainActor in
+            let a: String
+            do { a = try await MeetingLive.ask(question, m, config: cfg) } catch {
+                a = "Couldn't answer: \(error.localizedDescription)"
+            }
+            if self.answers[id]?.indices.contains(slot) == true { self.answers[id]![slot].answer = a }
+            self.updateLiveViews(id)
         }
     }
 
@@ -1408,6 +1577,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     }
 
     private func render() {
+        defer { layoutLiveControls(); updatePanel() }
         let has = selected != nil
         for v in [titleField, meetingContextPopup, tabs, textScroll, enhanceButton, copyButton, oneNoteButton] as [NSView] { v.isHidden = !has }
         rebuildMeetingContextPopup()
@@ -1428,8 +1598,10 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
                 ? "Record the meeting (or type notes), then Enhance to get a summary, decisions, and action items."
                 : "Nothing here yet — click Enhance."
             hint.isHidden = !m.enhanced.isEmpty
-        default:
+        case 2:
             renderTranscript()
+        default:
+            renderLive()
         }
     }
 
@@ -1638,6 +1810,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
     private func applyAppearance() {
         window?.appearance = NSAppearance(named: config.appearance.isDark ? .darkAqua : .aqua)
+        livePanel?.setDark(config.appearance.isDark)
     }
 
     // MARK: Delegates
@@ -1817,6 +1990,16 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         copyButton.target = self
         copyButton.action = #selector(copyClicked)
         copyButton.bezelStyle = .rounded
+        askField.placeholderString = "Ask about this meeting — e.g. “what date did they give for the trucks?”"
+        askField.bezelStyle = .roundedBezel
+        askField.target = self
+        askField.action = #selector(askSubmitted)
+        livePanelButton.target = self
+        livePanelButton.action = #selector(livePanelClicked)
+        livePanelButton.bezelStyle = .rounded
+        livePanelButton.image = NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: nil)
+        livePanelButton.imagePosition = .imageLeading
+        livePanelButton.toolTip = "Float the live list above your call window"
         oneNoteButton.bezelStyle = .rounded
         oneNoteButton.addItem(withTitle: "OneNote")
         oneNoteButton.menu?.delegate = self
@@ -1850,7 +2033,8 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         let views: [NSView] = [paper, sidebar, tableScroll, newButton, contextPopup, datePopup, lengthPopup, groupPopup,
                                noMatch, clearFiltersButton, meetingContextPopup,
                                divider, titleField, timeLabel, recordButton,
-                               tabs, enhanceButton, copyButton, oneNoteButton, textScroll, hint, statusLabel, emptyState]
+                               tabs, enhanceButton, copyButton, oneNoteButton, textScroll, hint, statusLabel, emptyState,
+                               askField, livePanelButton]
         for v in views { v.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(v) }
         hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1858,6 +2042,9 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
         let sideW: CGFloat = 250
         let pad: CGFloat = 20
+        textBottomToStatus = textScroll.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -8)
+        textBottomToAsk = textScroll.bottomAnchor.constraint(equalTo: askField.topAnchor, constant: -8)
+        textBottomToStatus.isActive = true
         NSLayoutConstraint.activate([
             sidebar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             sidebar.topAnchor.constraint(equalTo: content.topAnchor),
@@ -1924,7 +2111,11 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             textScroll.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 10),
             textScroll.leadingAnchor.constraint(equalTo: titleField.leadingAnchor, constant: -4),
             textScroll.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -pad + 4),
-            textScroll.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -8),
+            askField.leadingAnchor.constraint(equalTo: titleField.leadingAnchor),
+            askField.trailingAnchor.constraint(equalTo: livePanelButton.leadingAnchor, constant: -8),
+            askField.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -8),
+            livePanelButton.centerYAnchor.constraint(equalTo: askField.centerYAnchor),
+            livePanelButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -pad),
 
             hint.topAnchor.constraint(equalTo: textScroll.topAnchor, constant: 10),
             hint.leadingAnchor.constraint(equalTo: textScroll.leadingAnchor, constant: 9),
