@@ -743,6 +743,7 @@ case "meeting-test":
         let started = Date()
         var m = try runBlocking { try await meetingTestRun(me: meFile, them: themFile, locale: locale) }
         m.notes = notes
+        if let i = args.firstIndex(of: "--agenda"), args.count > i + 1 { m.agenda = args[i + 1] }
         FileHandle.standardError.write("(\(m.segments.count) segments in \(String(format: "%.1f", Date().timeIntervalSince(started)))s)\n".data(using: .utf8)!)
         for seg in m.segments.sorted(by: { $0.start < $1.start }) {
             print(String(format: "  %6.1fs %@ %@", seg.start, seg.speaker, seg.text))
@@ -786,7 +787,8 @@ case "meeting-preview":
         if args.count >= 3, args[2] == "dark" { cfg.appearance = .dark }
         let mc = MeetingNotesController(config: cfg)
         guard let window = mc.window else { exit(1) }
-        window.setContentSize(NSSize(width: 940, height: 640))
+        let w = args.first { $0.hasPrefix("w=") }.flatMap { Double($0.dropFirst(2)) } ?? 940
+        window.setContentSize(NSSize(width: w, height: 640))
         mc.previewSeed()
         if args.contains("enhanced") { mc.previewTab(1) }
         if args.contains("bycontext") { mc.previewGroup(.context) }

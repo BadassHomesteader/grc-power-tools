@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import UniformTypeIdentifiers
 
 // Pictures in meeting notes. A picture is a file in the meeting's own folder
@@ -151,6 +152,18 @@ enum MeetingImages {
         return (pb.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage]) ?? []
     }
 
+    /// Plain text of a dropped document: PDF via PDFKit, everything AppKit can
+    /// open (docx, rtf, html, odt, txt, md) via NSAttributedString.
+    static func documentText(_ url: URL) -> String? {
+        if url.pathExtension.lowercased() == "pdf" {
+            return PDFDocument(url: url)?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let a = try? NSAttributedString(url: url, options: [:], documentAttributes: nil) {
+            return a.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return (try? String(contentsOf: url, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Rich clipboard copy of notes: pictures included (RTFD), plus plain text.
     static func writeRich(_ markdown: String, meetingID: String, to pb: NSPasteboard) {
         pb.clearContents()
@@ -172,8 +185,12 @@ final class NotesTextView: NSTextView {
 
     private static let imageTypes: [NSPasteboard.PasteboardType] = [.fileURL, .png, .tiff]
 
+    /// Agenda tab: a dropped document (Word, PDF, RTF, text, HTML) inserts its text.
+    var acceptsDocuments = false
+
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
         // Only plain text besides images — styled text pastes as plain.
+        if isEditable, acceptsDocuments { return [.fileURL, .string] }
         guard isEditable, saveImage != nil else { return [.string] }
         return Self.imageTypes + [.string]
     }
@@ -181,17 +198,29 @@ final class NotesTextView: NSTextView {
     override var acceptableDragTypes: [NSPasteboard.PasteboardType] { readablePasteboardTypes }
 
     override func readSelection(from pboard: NSPasteboard) -> Bool {
+        if insertDocuments(from: pboard) { return true }
         if insertImages(from: pboard) { return true }
         return super.readSelection(from: pboard)
     }
 
     override func readSelection(from pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        if insertDocuments(from: pboard) { return true }
         if insertImages(from: pboard) { return true }
         if type != .string, let s = pboard.string(forType: .string) {
             insertText(s, replacementRange: selectedRange())
             return true
         }
         return super.readSelection(from: pboard, type: type)
+    }
+
+    private func insertDocuments(from pb: NSPasteboard) -> Bool {
+        guard isEditable, acceptsDocuments,
+              let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else { return false }
+        let text = urls.compactMap(MeetingImages.documentText).joined(separator: "\n")
+        guard !text.isEmpty else { return false }
+        insertText(text, replacementRange: selectedRange())
+        return true
     }
 
     /// Each picture goes on its own line.

@@ -13,6 +13,25 @@ enum MeetingLive {
     /// Seconds between automatic refreshes while recording.
     static var interval: TimeInterval = 60
 
+    /// When the meeting has an agenda, the list leads with a checklist of it.
+    static func instructions(hasAgenda: Bool) -> String {
+        guard hasAgenda else { return instructions }
+        return instructions.replacingOccurrences(of: "## Action items\n", with: """
+        ## Agenda
+        - ✓ <agenda topic> — <a few words on what was said>
+        - ◐ <agenda topic> — <touched on; what's still open>
+        - ○ <agenda topic>
+
+        ## Action items
+
+        """) + """
+
+        Agenda: list EVERY topic from the AGENDA, in its order, worded short — ✓ when \
+        it was clearly discussed, ◐ when only touched on, ○ when not yet. If the AGENDA \
+        is a pasted invite or email, pull out just the topics.
+        """
+    }
+
     static let instructions = """
     You assist the user LIVE during a meeting. "Me" is the user; "Them" is everyone \
     else on the call. From the transcript so far (and the user's notes), return \
@@ -42,7 +61,11 @@ enum MeetingLive {
 
     static func prompt(_ m: Meeting) -> String {
         let notes = MeetingImages.rewrite(m.notes) { _ in "[picture]" }.trimmingCharacters(in: .whitespacesAndNewlines)
+        let agenda = m.agenda?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return """
+        <AGENDA>
+        \(agenda.isEmpty ? "(none)" : agenda)
+        </AGENDA>
         <PREVIOUS>
         \(m.live?.isEmpty == false ? m.live! : "(none)")
         </PREVIOUS>
@@ -83,7 +106,8 @@ enum MeetingLive {
     }
 
     static func refresh(_ m: Meeting, config: Config) async throws -> String {
-        let text = try await complete(instructions: instructions, prompt: prompt(m), onDevicePrompt: {
+        let hasAgenda = !(m.agenda ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let text = try await complete(instructions: instructions(hasAgenda: hasAgenda), prompt: prompt(m), onDevicePrompt: {
             // Apple's model has a few-thousand-token window: last ~5 minutes only.
             var recent = m
             let latest = m.segments.map(\.start).max() ?? 0
@@ -114,7 +138,24 @@ enum MeetingLive {
 
     struct Answer { let question: String; var answer: String? }
 
-    static func attributed(live: String?, answers: [Answer]) -> NSAttributedString {
+    /// Agenda lines as typed/pasted, cleaned of bullets and numbering — shown
+    /// as all-open (○) until the first live refresh checks them off.
+    static func agendaItems(_ agenda: String?) -> [String] {
+        (agenda ?? "").components(separatedBy: .newlines).compactMap { raw in
+            var t = raw.trimmingCharacters(in: .whitespaces)
+            if let r = t.range(of: #"^([-*•○◐✓]|\d+[.)]|\[[ xX]\])\s*"#, options: .regularExpression) { t.removeSubrange(r) }
+            t = t.trimmingCharacters(in: .whitespaces)
+            return t.isEmpty || t.count > 140 ? nil : t
+        }.prefix(20).map { $0 }
+    }
+
+    static func attributed(live: String?, answers: [Answer], agenda: String? = nil) -> NSAttributedString {
+        var live = live
+        let hasAgendaSection = live?.range(of: #"(?m)^#+\s*Agenda"#, options: .regularExpression) != nil
+        let items = agendaItems(agenda)
+        if !hasAgendaSection, !items.isEmpty {
+            live = "## Agenda\n" + items.map { "- ○ \($0)" }.joined(separator: "\n") + "\n\n" + (live ?? "")
+        }
         let out = NSMutableAttributedString()
         let head: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11, weight: .bold),
                                                    .foregroundColor: NSColor.secondaryLabelColor]
@@ -131,12 +172,26 @@ enum MeetingLive {
         }
         func bullet(_ s: String, _ attrs: [NSAttributedString.Key: Any]) {
             let para = NSMutableParagraphStyle()
-            para.headIndent = 14
+            para.headIndent = 16
             para.paragraphSpacing = 3
-            para.tabStops = [NSTextTab(textAlignment: .left, location: 14)]
+            para.tabStops = [NSTextTab(textAlignment: .left, location: 16)]
             var a = attrs
             a[.paragraphStyle] = para
-            out.append(NSAttributedString(string: "•\t" + s + "\n", attributes: a))
+            // Agenda checkmarks replace the bullet: ✓ covered · ◐ partly · ○ not yet.
+            var mark = "•", text = s, markColor: NSColor?
+            for (m, c) in [("✓", NSColor.systemGreen), ("◐", NSColor.systemOrange), ("○", NSColor.tertiaryLabelColor)]
+                where s.hasPrefix(m) {
+                mark = m; markColor = c
+                text = String(s.dropFirst(m.count)).trimmingCharacters(in: .whitespaces)
+            }
+            let start = out.length
+            out.append(NSAttributedString(string: mark + "\t" + text + "\n", attributes: a))
+            if let markColor {
+                out.addAttributes([.foregroundColor: markColor, .font: NSFont.systemFont(ofSize: 13.5, weight: .bold)],
+                                  range: NSRange(location: start, length: (mark as NSString).length))
+                if mark == "○" { out.addAttribute(.foregroundColor, value: NSColor.textColor,
+                                                   range: NSRange(location: start + 2, length: (text as NSString).length)) }
+            }
         }
         var ownerFirst = false  // under "Action items" (or the older "Next steps")
         for raw in (live ?? "").components(separatedBy: "\n") {

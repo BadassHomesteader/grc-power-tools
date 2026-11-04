@@ -49,6 +49,9 @@ struct Meeting: Codable {
     var oneNoteURL: String?
     /// The live assist list (action items / questions / decisions), Markdown.
     var live: String?
+    /// The meeting's agenda as pasted/loaded — one topic per line, or a whole
+    /// invite. Live checks items off as they're discussed; Enhance reports coverage.
+    var agenda: String?
 
     static func blank(context: String? = nil) -> Meeting {
         Meeting(id: UUID().uuidString, title: "", created: Date(), recordedSeconds: 0,
@@ -718,11 +721,15 @@ enum MeetingEnhancer {
     ## Summary
     <2-3 sentences>
 
+    ## Agenda
+    - ✓ <agenda item> — <one line on what was said>   ("◐" when only partly covered, "- ○ <agenda item> — not discussed" when untouched)
+    <include this Agenda section ONLY when an AGENDA is given: one line per agenda item, in its order>
+
     ## Decisions
     - <only things actually agreed; omit this section if none>
 
     ## Action items
-    - [ ] <Owner> — <task> — <due date if stated>
+    - [ ] <Owner> — <task> — <due date; leave this part off entirely when none was stated>
 
     ## Open questions
     - <unresolved items; omit this section if none>
@@ -738,6 +745,9 @@ enum MeetingEnhancer {
         <MY_NOTES>
         \(notes.isEmpty ? "(none)" : notes)
         </MY_NOTES>
+        <AGENDA>
+        \(m.agenda?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? m.agenda! : "(none)")
+        </AGENDA>
         <LIVE_LIST note="running list made during the call; the transcript wins where they differ">
         \(m.live?.isEmpty == false ? m.live! : "(none)")
         </LIVE_LIST>
@@ -825,7 +835,13 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private var dirty: Set<String> = []
     private var saveWork: DispatchWorkItem?
     private var ticker: Timer?
-    private var tab = 0  // 0 My Notes · 1 Enhanced · 2 Transcript · 3 Live
+    private var tab = 0  // 0 My Notes · 1 Enhanced · 2 Transcript · 3 Live · 4 Agenda
+    /// Segment order on screen → internal tab id (Agenda sits first).
+    private static let segmentTabs = [4, 0, 1, 2, 3]
+    private func showTab(_ t: Int) {
+        tab = t
+        tabs.selectedSegment = Self.segmentTabs.firstIndex(of: t) ?? 1
+    }
     // Live assist (MeetingLive.swift).
     private var livePanel: MeetingLivePanel?
     private var liveBusy: Set<String> = []
@@ -862,7 +878,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private let titleField = NSTextField()
     private let timeLabel = NSTextField(labelWithString: "")
     private let recordButton = NSButton(title: "Record", target: nil, action: nil)
-    private let tabs = NSSegmentedControl(labels: ["My Notes", "Enhanced", "Transcript", "Live"],
+    private let tabs = NSSegmentedControl(labels: ["Agenda", "Notes", "Enhanced", "Transcript", "Live"],
                                           trackingMode: .selectOne, target: nil, action: nil)
     private let enhanceButton = NSButton(title: "Enhance", target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
@@ -982,8 +998,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
                     past("Quick sync", days: 45, minutes: 6, nil)]
         selectedID = m.id
         reloadSidebar()
-        tab = 2
-        tabs.selectedSegment = 2
+        showTab(2)
         render()
     }
 
@@ -1002,8 +1017,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         }
         guard let name = MeetingImages.save(img, meetingID: meetings[i].id) else { return nil }
         meetings[i].notes = "- pilot crews: 3 → 5?\n- whiteboard from the room:\n![](\(name))\n- Rhett to send updated map"
-        tab = 0
-        tabs.selectedSegment = 0
+        showTab(0)
         render()
         return meetings[i].id
     }
@@ -1011,12 +1025,12 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     /// Live tab + floating panel with a sample list (`meeting-preview … live`).
     func previewLive() -> NSBitmapImageRep? {
         guard let i = index(selectedID) else { return nil }
-        meetings[i].live = "## Action items\n- Them (Rhett) — send updated map — Friday\n- Me — confirm truck delivery date — before Nov 15\n\n## Questions to ask\n- Who owns crew 4 and 5 hiring if trucks slip?\n- Is the 1,100-meter backlog before or after this week's installs?\n\n## Decisions\n- Target 5 crews before Thanksgiving, contingent on trucks"
+        meetings[i].agenda = "1. Pilot crew count\n2. Meter backlog\n3. Truck delivery\n4. Safety stand-down"
+        meetings[i].live = "## Agenda\n- ✓ Pilot crew count — 3 today, target 5\n- ◐ Meter backlog — ~1,100; timing unclear\n- ✓ Truck delivery — needed by Nov 15\n- ○ Safety stand-down\n\n## Action items\n- Them (Rhett) — send updated map — Friday\n- Me — confirm truck delivery date — before Nov 15\n\n## Questions to ask\n- Who owns crew 4 and 5 hiring if trucks slip?\n- Is the 1,100-meter backlog before or after this week's installs?\n\n## Decisions\n- Target 5 crews before Thanksgiving, contingent on trucks"
         answers[meetings[i].id] = [MeetingLive.Answer(question: "What date did they give for the trucks?",
                                                       answer: "You said the trucks need to arrive by the 15th for five crews to work; nobody confirmed the date.")]
         liveAt[meetings[i].id] = Date()
-        tab = 3
-        tabs.selectedSegment = 3
+        showTab(3)
         render()
         showLivePanel()
         updatePanel()
@@ -1039,8 +1053,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     }
 
     func previewTab(_ t: Int) {
-        tab = t
-        tabs.selectedSegment = t
+        showTab(t)
         render()
     }
 
@@ -1065,8 +1078,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             saveFilters()
         }
         reloadSidebar()
-        tab = 0
-        tabs.selectedSegment = 0
+        showTab(0)
         render()
         window?.makeFirstResponder(titleField)
     }
@@ -1211,8 +1223,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
                 MeetingStore.save(self.meetings[i])
                 self.reloadSidebar()
                 if self.selectedID == id {
-                    self.tab = 1
-                    self.tabs.selectedSegment = 1
+                    self.showTab(1)
                     self.render()
                 }
                 self.setStatus("Enhanced with \(engine).")
@@ -1234,7 +1245,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     @objc private func newClicked() { newMeeting() }
 
     @objc private func tabChanged() {
-        tab = tabs.selectedSegment
+        tab = Self.segmentTabs[max(0, tabs.selectedSegment)]
         render()
     }
 
@@ -1249,12 +1260,13 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         case 0: text = m.notes
         case 1: text = m.enhanced.isEmpty ? MeetingText.markdown(m) : "# \(m.displayTitle)\n\n\(m.enhanced)"
         case 2: text = MeetingText.plain(m)
+        case 4: text = m.agenda ?? ""
         default:
             let qa = (answers[m.id] ?? []).map { "Q: \($0.question)\nA: \($0.answer ?? "…")" }
             text = ([m.live ?? ""] + (qa.isEmpty ? [] : ["## Answers\n\n" + qa.joined(separator: "\n\n")]))
                 .filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
-        if tab < 2 {
+        if tab < 2 {  // notes / enhanced may hold pictures
             // Pictures come along when pasting into Mail, Notes, Word, OneNote…
             MeetingImages.writeRich(text, meetingID: m.id, to: NSPasteboard.general)
         } else {
@@ -1312,7 +1324,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         guard tab == 3, let m = selected else { return }
         suppressTextEvents = true
         textView.isEditable = false
-        textView.textStorage?.setAttributedString(MeetingLive.attributed(live: m.live, answers: answers[m.id] ?? []))
+        textView.textStorage?.setAttributedString(MeetingLive.attributed(live: m.live, answers: answers[m.id] ?? [], agenda: m.agenda))
         suppressTextEvents = false
         if recordingID == m.id {
             hint.stringValue = liveBusy.contains(m.id) ? "Reading the conversation so far…"
@@ -1344,7 +1356,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private func updatePanel() {
         guard let p = livePanel, p.isVisible, let id = recordingID ?? selectedID,
               let m = meetings.first(where: { $0.id == id }) else { return }
-        p.update(title: m.displayTitle, content: MeetingLive.attributed(live: m.live, answers: answers[id] ?? []),
+        p.update(title: m.displayTitle, content: MeetingLive.attributed(live: m.live, answers: answers[id] ?? [], agenda: m.agenda),
                  status: liveStatus(id))
     }
 
@@ -1654,6 +1666,14 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             hint.isHidden = !m.enhanced.isEmpty
         case 2:
             renderTranscript()
+        case 4:
+            textView.isEditable = true
+            textView.saveImage = nil
+            textView.acceptsDocuments = true
+            textView.textStorage?.setAttributedString(NSAttributedString(string: m.agenda ?? "", attributes: Self.plainAttributes))
+            textView.typingAttributes = Self.plainAttributes
+            hint.stringValue = "Paste the agenda — one topic per line — or paste the whole invite or email, or drop in a document (Word, PDF, text). While the meeting records, Live checks off each topic as it's covered so nothing gets missed."
+            hint.isHidden = !(m.agenda ?? "").isEmpty
         default:
             renderLive()
         }
@@ -1669,6 +1689,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     /// not leak into the editable tabs (or into what the user types next).
     private func setNotes(_ s: String, meetingID: String) {
         textView.isEditable = true
+        textView.acceptsDocuments = false
         textView.saveImage = { img in
             MeetingImages.save(img, meetingID: meetingID).flatMap {
                 MeetingImages.attachment(meetingID: meetingID, fileName: $0)
@@ -1874,6 +1895,11 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         switch tab {
         case 0: meetings[i].notes = MeetingImages.markdown(textView.attributedString()); hint.isHidden = !textView.string.isEmpty
         case 1: meetings[i].enhanced = MeetingImages.markdown(textView.attributedString()); hint.isHidden = !textView.string.isEmpty
+        case 4:
+            let a = textView.string
+            meetings[i].agenda = a.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : a
+            hint.isHidden = !a.isEmpty
+            updatePanel()
         default: return
         }
         markDirty(meetings[i].id)
@@ -2034,7 +2060,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
         tabs.target = self
         tabs.action = #selector(tabChanged)
-        tabs.selectedSegment = 0
+        tabs.selectedSegment = 1  // My Notes
 
         enhanceButton.target = self
         enhanceButton.action = #selector(enhanceClicked)
@@ -2044,6 +2070,11 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         copyButton.target = self
         copyButton.action = #selector(copyClicked)
         copyButton.bezelStyle = .rounded
+        // Icon-only so the five tabs and the three actions share one row.
+        copyButton.title = ""
+        copyButton.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy")
+        copyButton.imagePosition = .imageOnly
+        copyButton.toolTip = "Copy this tab"
         askField.placeholderString = "Ask about this meeting — e.g. “what date did they give for the trucks?”"
         askField.bezelStyle = .roundedBezel
         askField.target = self
@@ -2161,6 +2192,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             copyButton.trailingAnchor.constraint(equalTo: oneNoteButton.leadingAnchor, constant: -8),
             enhanceButton.centerYAnchor.constraint(equalTo: tabs.centerYAnchor),
             enhanceButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -8),
+            enhanceButton.leadingAnchor.constraint(greaterThanOrEqualTo: tabs.trailingAnchor, constant: 12),
 
             textScroll.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 10),
             textScroll.leadingAnchor.constraint(equalTo: titleField.leadingAnchor, constant: -4),
