@@ -47,7 +47,7 @@ struct Meeting: Codable {
     /// The OneNote page this meeting was last sent to (re-sending replaces it).
     var oneNotePageID: String?
     var oneNoteURL: String?
-    /// The live assist list (next steps / questions / decisions), Markdown.
+    /// The live assist list (action items / questions / decisions), Markdown.
     var live: String?
 
     static func blank(context: String? = nil) -> Meeting {
@@ -621,9 +621,16 @@ final class MeetingRecorder {
     private var mic: MeetingMic?
     private var system: SystemAudioCapture?
     private var transcribers: [LiveTranscriber] = []
+    /// Held for the whole recording: keeps macOS from App-Napping Power Tools
+    /// while it sits behind the call window (which throttles the clock and the
+    /// once-a-minute Live refresh) and from idle-sleeping mid-meeting.
+    private var activity: NSObjectProtocol?
 
     /// Returns a warning to show when only part of the meeting can be heard.
     func start(locale: Locale, offset: Double) async throws -> String? {
+        activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled, .latencyCritical],
+            reason: "Recording a meeting")
         try await AppleSpeechUtterance.ensureAssets(locale: locale)
 
         let micAllowed = await AudioCapture.requestMicPermission()
@@ -674,6 +681,8 @@ final class MeetingRecorder {
     }
 
     func stop() async {
+        if let activity { ProcessInfo.processInfo.endActivity(activity) }
+        activity = nil
         mic?.stop()
         mic = nil
         await system?.stop()
@@ -823,6 +832,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private var liveAt: [String: Date] = [:]
     private var liveSegCount: [String: Int] = [:]
     private var liveError: [String: String] = [:]
+    private var liveRefreshes: [String: Int] = [:]
     private var answers: [String: [MeetingLive.Answer]] = [:]
     private let askField = NSTextField()
     private let livePanelButton = NSButton(title: "Floating Panel", target: nil, action: nil)
@@ -1001,7 +1011,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     /// Live tab + floating panel with a sample list (`meeting-preview … live`).
     func previewLive() -> NSBitmapImageRep? {
         guard let i = index(selectedID) else { return nil }
-        meetings[i].live = "## Next steps\n- Them (Rhett) — send updated map — Friday\n- Me — confirm truck delivery date — before Nov 15\n\n## Questions to ask\n- Who owns crew 4 and 5 hiring if trucks slip?\n- Is the 1,100-meter backlog before or after this week's installs?\n\n## Decisions\n- Target 5 crews before Thanksgiving, contingent on trucks"
+        meetings[i].live = "## Action items\n- Them (Rhett) — send updated map — Friday\n- Me — confirm truck delivery date — before Nov 15\n\n## Questions to ask\n- Who owns crew 4 and 5 hiring if trucks slip?\n- Is the 1,100-meter backlog before or after this week's installs?\n\n## Decisions\n- Target 5 crews before Thanksgiving, contingent on trucks"
         answers[meetings[i].id] = [MeetingLive.Answer(question: "What date did they give for the trucks?",
                                                       answer: "You said the trucks need to arrive by the 15th for five crews to work; nobody confirmed the date.")]
         liveAt[meetings[i].id] = Date()
@@ -1095,10 +1105,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             }
         }
         rec.onWarning = { text in DispatchQueue.main.async { [weak self] in self?.setStatus(text, warn: true) } }
-        ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateClock(); self?.liveTick() }
-        }
-        liveAt[id] = Date()  // first live list about a minute in
+        startTicker(id)
         if UserDefaults.standard.object(forKey: Self.livePanelPref) as? Bool ?? true { showLivePanel() }
         setStatus("Starting…")
         updateChrome()
@@ -1309,9 +1316,9 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         suppressTextEvents = false
         if recordingID == m.id {
             hint.stringValue = liveBusy.contains(m.id) ? "Reading the conversation so far…"
-                : "Listening — next steps, questions to ask, and decisions appear here about a minute in, then refresh every minute."
+                : "Listening — action items, questions to ask, and decisions appear here about a minute in, then refresh every minute."
         } else if m.segments.isEmpty {
-            hint.stringValue = "While a meeting records, next steps, questions to ask, and decisions appear here about once a minute. You can ask questions about the meeting below any time."
+            hint.stringValue = "While a meeting records, action items, questions to ask, and decisions appear here about once a minute. You can ask questions about the meeting below any time."
         } else {
             hint.stringValue = "No live list for this meeting — ask a question about it below."
         }
@@ -1350,7 +1357,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             }
             p.onRefresh = { [weak self] in
                 guard let self, let id = self.recordingID ?? self.selectedID else { return }
-                self.refreshLive(id)
+                self.refreshLive(id, auto: false)
             }
             p.onUserClose = { UserDefaults.standard.set(false, forKey: Self.livePanelPref) }
             livePanel = p
@@ -1371,6 +1378,49 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         ask(q, id: id)
     }
 
+    /// The 1 s recording clock, which also drives the automatic live refresh.
+    private func startTicker(_ id: String) {
+        ticker?.invalidate()
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateClock(); self?.liveTick() }
+        }
+        // .common, not the default mode: menus, sheets, and dragging the
+        // window or a scroller run the loop in other modes and would stall it.
+        RunLoop.main.add(t, forMode: .common)
+        ticker = t
+        liveAt[id] = Date()  // first live list about a minute in
+    }
+
+    /// CLI check (`live-auto-test`): drives the REAL timer + liveTick path with
+    /// scripted transcript lines instead of audio. Returns the meeting id.
+    func testAutoLive(_ lines: [(TimeInterval, MeetingSegment)]) -> String {
+        var m = Meeting.blank()
+        m.title = "live-auto-test"
+        meetings.insert(m, at: 0)
+        selectedID = m.id
+        recordingID = m.id
+        recordStart = Date()
+        baseSeconds = 0
+        startTicker(m.id)
+        for (at, seg) in lines {
+            DispatchQueue.main.asyncAfter(deadline: .now() + at) { [weak self] in self?.append(seg, to: m.id) }
+        }
+        return m.id
+    }
+
+    func testLiveState(_ id: String) -> (live: String?, refreshes: Int, busy: Bool) {
+        (meetings.first { $0.id == id }?.live, liveRefreshes[id] ?? 0, liveBusy.contains(id))
+    }
+
+    func testStop(_ id: String) {
+        ticker?.invalidate(); ticker = nil
+        recordingID = nil
+        meetings.removeAll { $0.id == id }
+        dirty.remove(id)
+        saveWork?.cancel()
+        MeetingStore.delete(id)
+    }
+
     /// Every second while recording: refresh once a minute, and only when
     /// something new was said.
     private func liveTick() {
@@ -1381,8 +1431,11 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         refreshLive(id)
     }
 
-    private func refreshLive(_ id: String) {
+    private func refreshLive(_ id: String, auto: Bool = true) {
         guard !liveBusy.contains(id), let m = meetings.first(where: { $0.id == id }), !m.segments.isEmpty else { return }
+        liveRefreshes[id, default: 0] += 1
+        log("meetings: live refresh #\(liveRefreshes[id]!) (\(auto ? "auto" : "manual")) on \(m.segments.count) segments")
+        let started = Date()
         liveBusy.insert(id)
         liveSegCount[id] = m.segments.count
         liveAt[id] = Date()
@@ -1396,6 +1449,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
                 self.meetings[i].live = text
                 self.liveError[id] = nil
                 self.markDirty(id)
+                log("meetings: live updated in \(String(format: "%.1f", Date().timeIntervalSince(started)))s")
             } catch {
                 log("meetings: live refresh failed: \(error)")
                 self.liveError[id] = error.localizedDescription

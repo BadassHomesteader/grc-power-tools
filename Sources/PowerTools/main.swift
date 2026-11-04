@@ -905,6 +905,40 @@ case "ax-self-test":
         exit(fails == 0 ? 0 : 1)
     }
 
+case "live-auto-test":
+    // Live must refresh ON ITS OWN while recording. Scripted lines arrive over
+    // ~40 s with the interval shortened to 12 s; nothing calls refresh directly.
+    MainActor.assumeIsolated {
+        _ = NSApplication.shared
+        MeetingLive.interval = 12
+        let mc = MeetingNotesController(config: Config.load())
+        let script: [(TimeInterval, String, String)] = [
+            (1, "them", "Okay, quick sync on the barn roof. The contractor can start on the twelfth if we approve the quote by Friday."),
+            (4, "me", "Got it. I'll approve the quote today."),
+            (8, "them", "The quote is eighteen thousand four hundred, not including gutters."),
+            (20, "me", "Let's get a separate number for gutters. Dana, can you call them about that?"),
+            (26, "them", "Sure, I'll call them tomorrow morning."),
+            (33, "me", "And I'll ask Mike about moving the hay out of the loft."),
+        ]
+        let id = mc.testAutoLive(script.map { ($0.0, MeetingSegment(speaker: $0.1, start: $0.0, text: $0.2)) })
+        let start = Date()
+        var lastRefreshes = 0
+        while Date().timeIntervalSince(start) < 75 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            let st = mc.testLiveState(id)
+            if st.refreshes != lastRefreshes {
+                lastRefreshes = st.refreshes
+                print(String(format: "t=%4.1fs auto refresh #%d started", Date().timeIntervalSince(start), st.refreshes))
+            }
+        }
+        let st = mc.testLiveState(id)
+        print("--- final live list (\(st.refreshes) automatic refreshes) ---\n" + (st.live ?? "(none)"))
+        mc.testStop(id)
+        let ok = st.refreshes >= 2 && st.live != nil
+        print(ok ? "PASS — refreshed automatically" : "FAIL — expected ≥2 automatic refreshes")
+        exit(ok ? 0 : 1)
+    }
+
 case "chat-preview":
     // Offscreen render of the AI chat window for design checks.
     let out = args.count >= 2 ? args[1] : "chat-preview.png"

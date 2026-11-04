@@ -3,7 +3,7 @@ import FoundationModels
 
 // Live meeting assist. While a meeting records, the transcript so far (plus
 // your notes and the previous list) goes to the AI about once a minute and
-// comes back as three short lists: next steps, questions worth asking now, and
+// comes back as three short lists: action items, questions worth asking now, and
 // decisions. Each refresh REPLACES the list, so nothing piles up or repeats.
 // "Ask" answers a question from the transcript so far — during the call or after.
 // Shown in the window's Live tab and in a floating panel that stays above the
@@ -11,15 +11,15 @@ import FoundationModels
 
 enum MeetingLive {
     /// Seconds between automatic refreshes while recording.
-    static let interval: TimeInterval = 60
+    static var interval: TimeInterval = 60
 
     static let instructions = """
     You assist the user LIVE during a meeting. "Me" is the user; "Them" is everyone \
     else on the call. From the transcript so far (and the user's notes), return \
     EXACTLY this Markdown and nothing else:
 
-    ## Next steps
-    - <Owner> — <task> — <when, if stated>
+    ## Action items
+    - <Owner> — <task> — <due, only if a time was actually said>
 
     ## Questions to ask
     - <a short question the user could ask right now>
@@ -27,12 +27,17 @@ enum MeetingLive {
     ## Decisions
     - <only things actually agreed>
 
-    Rules: at most 6 next steps, 3 questions, 5 decisions. Questions target what \
-    was left vague, undecided, or missing (owners, dates, numbers, scope) — never \
-    something already answered. Use "Me" / "Them" when a name isn't known. Under a \
-    heading with nothing yet, write "- (none yet)". If a PREVIOUS list is given, \
-    keep wording of items that still hold so the list stays stable; drop questions \
-    that have since been answered. Never invent facts.
+    Rules: an action item is something a specific person committed to or was \
+    asked to do — one item per person per task, the owner FIRST: the person's \
+    name when anyone says it (e.g. "Dana"), otherwise "Me" or "Them" — or \
+    "Unassigned" when something clearly needs doing but nobody took it. Leave the \
+    due part off entirely unless a time was stated — never write "ASAP" or guess. \
+    At most 8 action items, 3 questions, 5 decisions. Questions target what was \
+    left vague, undecided, or missing (owners, dates, numbers, scope) — never \
+    something already answered. Under a heading with nothing yet, write \
+    "- (none yet)". If a PREVIOUS list is given, keep the wording of items that \
+    still hold so the list stays stable; drop questions that have since been \
+    answered. Never invent facts.
     """
 
     static func prompt(_ m: Meeting) -> String {
@@ -133,15 +138,31 @@ enum MeetingLive {
             a[.paragraphStyle] = para
             out.append(NSAttributedString(string: "•\t" + s + "\n", attributes: a))
         }
+        var ownerFirst = false  // under "Action items" (or the older "Next steps")
         for raw in (live ?? "").components(separatedBy: "\n") {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty { continue }
-            if line.hasPrefix("#") { heading(line.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)); continue }
+            if line.hasPrefix("#") {
+                let title = line.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+                ownerFirst = title.lowercased().contains("action") || title.lowercased().contains("next step")
+                heading(title)
+                continue
+            }
             var item = line
             for prefix in ["- [ ] ", "- [x] ", "- ", "* ", "• "] where item.hasPrefix(prefix) {
                 item = String(item.dropFirst(prefix.count)); break
             }
-            bullet(item, item.hasPrefix("(none") ? dim : body)
+            if item.hasPrefix("(none") { bullet(item, dim); continue }
+            if ownerFirst, let dash = item.range(of: " — ") {
+                // "Dana — call about gutters — tomorrow": the owner in bold.
+                let start = out.length
+                bullet(item, body)
+                let ownerLen = (String(item[..<dash.lowerBound]) as NSString).length
+                out.addAttributes(bold.filter { $0.key == .font },
+                                  range: NSRange(location: start + 2, length: ownerLen))
+                continue
+            }
+            bullet(item, body)
         }
         if !answers.isEmpty {
             heading("Answers")
@@ -273,7 +294,7 @@ final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     func update(title: String, content: NSAttributedString, status text: String) {
         panel.title = "Live — " + title
         textView.textStorage?.setAttributedString(content.length > 0 ? content : NSAttributedString(
-            string: "Next steps, questions to ask, and decisions show up here about once a minute while the meeting records.",
+            string: "Action items, questions to ask, and decisions show up here about once a minute while the meeting records.",
             attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.tertiaryLabelColor]))
         status.stringValue = text
     }
