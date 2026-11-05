@@ -118,6 +118,8 @@ final class AppController {
     /// only reliable signal is the strip's own state, checked before the
     /// app-based routing below.
     private var dictatingIntoNotchAsk = false
+    /// A Power Tools text box (Meeting Notes, Agenda, Ask…) — insert directly.
+    private weak var dictatingIntoOwnText: NSTextView?
 
     init(config: Config, store: Store) {
         self.config = config
@@ -495,18 +497,24 @@ final class AppController {
         // The notch Ask field is the target whenever it holds focus — checked
         // first, because the non-activating notch never shows as the frontmost
         // app, so `ctx.bundleID` would point at whatever is behind it.
+        let selfFront = ctx.bundleID == "com.grc.whisper"
+        dictatingIntoOwnText = nil
         if notchStrip.acceptsDictation {
             dictatingIntoNotchAsk = true
             dictatingIntoCapture = false
-        } else if ctx.bundleID == "com.grc.whisper" {
-            // Exception: dictate INTO the Quick Capture panel when it's open,
-            // rather than refusing (normal dictation pastes into another app).
-            guard quickCapture.isVisible else {
-                overlay.showError("Click into another app first, then hold to dictate")
-                return
-            }
+        } else if selfFront, quickCapture.isVisible {
+            // Dictate INTO the Quick Capture panel when it's open.
             dictatingIntoCapture = true
             dictatingIntoNotchAsk = false
+        } else if let tv = OwnTextTarget.current(frontmostIsSelf: selfFront) {
+            // One of our own text boxes has the cursor (Meeting Notes, Agenda,
+            // the Live Ask field…): insert straight into it — no synthetic ⌘V.
+            dictatingIntoOwnText = tv
+            dictatingIntoCapture = false
+            dictatingIntoNotchAsk = false
+        } else if selfFront {
+            overlay.showError("Click into a text box first, then hold to dictate")
+            return
         } else {
             dictatingIntoCapture = false
             dictatingIntoNotchAsk = false
@@ -678,6 +686,17 @@ final class AppController {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(polished, forType: .string)
                 overlay.showError("Quick Capture closed — dictation copied to clipboard")
+            }
+            finishCycle()
+            return
+        }
+        if let tv = dictatingIntoOwnText {
+            if OwnTextTarget.insert(polished, into: tv) {
+                overlay.hide()   // the text is visible where the cursor was; no paste toast
+            } else {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(polished, forType: .string)
+                overlay.showError("Text box closed — dictation copied to clipboard")
             }
             finishCycle()
             return
@@ -2394,6 +2413,7 @@ final class AppController {
         startTask = nil
         dictatingIntoCapture = false
         dictatingIntoNotchAsk = false
+        dictatingIntoOwnText = nil
         onStateChange?(.idle)
     }
 }

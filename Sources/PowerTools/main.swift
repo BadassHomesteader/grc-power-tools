@@ -863,6 +863,50 @@ case "pictures-test":
         exit(fails == 0 ? 0 : 1)
     }
 
+case "dictate-self-test":
+    // Dictation into Power Tools' OWN text boxes: target resolution + insert.
+    MainActor.assumeIsolated {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
+        var fails = 0
+        func check(_ name: String, _ ok: Bool) { print("\(ok ? "PASS" : "FAIL") — \(name)"); if !ok { fails += 1 } }
+        let w = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 500, height: 300),
+                         styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        let tv = NotesTextView(frame: NSRect(x: 0, y: 40, width: 500, height: 260))
+        tv.isEditable = true; tv.allowsUndo = true
+        let field = NSTextField(frame: NSRect(x: 10, y: 5, width: 300, height: 24))
+        w.contentView?.addSubview(tv); w.contentView?.addSubview(field)
+        w.makeKeyAndOrderFront(nil)
+        app.activate(ignoringOtherApps: true)
+        w.makeFirstResponder(tv)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        tv.string = "Roof quote"
+        tv.setSelectedRange(NSRange(location: 10, length: 0))
+        let t1 = OwnTextTarget.current(frontmostIsSelf: true)
+        check("notes text view resolves as the target", t1 === tv)
+        check("not a target when another app is front", OwnTextTarget.current(frontmostIsSelf: false) == nil)
+        OwnTextTarget.insert("is approved.", into: t1)
+        check("inserted at cursor with a space: \"\(tv.string)\"", tv.string == "Roof quote is approved.")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))   // dictations land in separate event passes
+        tv.setSelectedRange(NSRange(location: 5, length: 5))   // select "quote"
+        OwnTextTarget.insert("estimate", into: t1)
+        check("replaces the selection: \"\(tv.string)\"", tv.string == "Roof estimate is approved.")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        tv.undoManager?.undo()
+        check("undo works: \"\(tv.string)\"", tv.string == "Roof quote is approved.")
+        tv.isEditable = false
+        check("read-only view is not a target", OwnTextTarget.current(frontmostIsSelf: true) == nil)
+        w.makeFirstResponder(field)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        let t2 = OwnTextTarget.current(frontmostIsSelf: true)
+        check("focused text field resolves (field editor)", t2 != nil)
+        OwnTextTarget.insert("who pulls the permit?", into: t2)
+        check("text field got it: \"\(field.stringValue)\"", field.stringValue == "who pulls the permit?")
+        w.orderOut(nil)
+        check("closed window: insert refuses", !OwnTextTarget.insert("x", into: t2))
+        exit(fails == 0 ? 0 : 1)
+    }
+
 case "ax-self-test":
     // Can Power Tools move ITS OWN windows through the same AX calls the snap
     // features use on other apps? (Meeting Notes is the first real document window.)
