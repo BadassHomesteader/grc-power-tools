@@ -53,7 +53,7 @@ final class AppController {
     private let overlay = OverlayPanel()
     private let gridOverlay = GridOverlay()
     private let snapAssist = SnapAssist()
-    private let advancedPaste = AdvancedPaste()
+    private let pasteDrawer = PasteDrawer()
     private let quickCapture = QuickCapture()
     private let findMouse = FindMouse()
     private let colorPalette = ColorFormatPalette()
@@ -215,6 +215,10 @@ final class AppController {
                 self.openWindowPalette()
             case .advancedPaste:
                 self.openAdvancedPaste()
+            case .advancedPasteDirect(let letter):
+                self.advancedPasteDirect(letter)
+            case .pasteDrawerKey(let code, let chars):
+                self.pasteDrawer.handleKey(code, chars: chars)
             case .quickCapture(let connId):
                 self.openQuickCapture(connectionId: connId)
             case .clipboardHistory:
@@ -380,6 +384,9 @@ final class AppController {
         // The clipboard drawer never takes key, so the tap routes its keys.
         clipboardPalette.onVisibility = { [weak self] visible in
             self?.hotkey?.clipboardDrawerVisible = visible
+        }
+        pasteDrawer.onVisibility = { [weak self] visible in
+            self?.hotkey?.pasteDrawerVisible = visible
         }
         macroPad.onSummonChanged = { [weak self] summoned in
             self?.hotkey?.macroPadSummoned = summoned
@@ -948,58 +955,100 @@ final class AppController {
         }
     }
 
-    /// hold + P: transform the clipboard text before pasting. Capture the clipboard
-    /// + target app NOW (before the palette steals focus), then paste into the app.
+    /// hold + P: the paste drawer. The clipboard and the target app are read
+    /// NOW; the drawer never takes focus, so the pick pastes straight back in.
+    /// hold + P again while it is out closes it.
     private func openAdvancedPaste() {
         interruptDictation()
         overlay.hide()
-        let pb = NSPasteboard.general
-        let clip = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !clip.isEmpty else { overlay.showError("Copy some text first, then hold + P"); return }
-        // Formatted flavors, read NOW for "Formatted, no colors" (the palette
-        // can't change the clipboard, but read it with the text for one moment).
-        let html = pb.string(forType: .html)
-        let rtf = pb.data(forType: .rtf)
+        if pasteDrawer.isVisible { pasteDrawer.cancel(); return }
+        let input = PasteInput.read()
+        guard !input.isEmpty else { overlay.showError("Copy some text or an image first, then hold + P"); return }
         guard let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != "com.grc.whisper" else {
             overlay.showError("Click into a text field first, then hold + P"); return
         }
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
-        advancedPaste.present(
-            clipboard: clip, dark: config.appearance.isDark, screen: screen,
-            onPick: { t in self.applyAdvancedPaste(t, clip: clip, html: html, rtf: rtf, app: app) },
+        pasteDrawer.present(
+            input: input, dark: config.appearance.isDark, screen: screen,
+            onPick: { t in self.applyAdvancedPaste(t, input: input, app: app, via: "drawer") },
             onCancel: { app.activate() }
         )
     }
 
-    private func applyAdvancedPaste(_ t: AdvancedPaste.Transform, clip: String, html: String?, rtf: Data?, app: NSRunningApplication) {
-        func paste(_ text: String, rich: [(NSPasteboard.PasteboardType, Data)] = []) {
-            app.activate()
-            // let focus land in the target field before the synthetic ⌘V
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(220)) {
-                try? Inserter.insert(text, rich: rich, restoreDelayMs: self.config.clipboardRestoreDelayMs)
-            }
+    /// hold + P, then a letter: that transform straight away, no drawer.
+    private func advancedPasteDirect(_ letter: String) {
+        interruptDictation()
+        overlay.hide()
+        if pasteDrawer.isVisible { pasteDrawer.dismiss() }
+        guard let t = AdvancedPaste.transform(forKey: letter) else {
+            overlay.showError("Nothing on hold + P, \(letter) — hold + P to see the letters"); return
         }
-        if t.rich {
-            let payload = RichText.uncoloredPayload(html: html, rtf: rtf)
-            log("advanced paste: formatted, no colors — \(payload == nil ? "no formatting on the clipboard, plain text" : (html != nil ? "HTML" : "RTF"))")
-            paste(clip, rich: payload ?? [])
+        let input = PasteInput.read()
+        guard let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != "com.grc.whisper" else {
+            overlay.showError("Click into a text field first, then hold + P"); return
+        }
+        guard AdvancedPaste.canRun(t, on: input) else {
+            // A formatted paste with no formatting on the clipboard is just the text.
+            if t.needs == .rich, !input.text.isEmpty {
+                applyAdvancedPaste(AdvancedPaste.transforms[0], input: input, app: app, via: "\(letter), no formatting → plain")
+                return
+            }
+            overlay.showError(t.needs == .image ? "Copy an image first, then hold + P, \(letter)"
+                                                 : "Copy some text first, then hold + P, \(letter)")
             return
         }
-        guard t.ai, let instruction = t.instruction else { paste(t.localTransform?(clip) ?? clip); return }  // plain text / case
-        guard let key = Keychain.get("claude"), !key.isEmpty else {
-            overlay.showError("Add a Claude key in Settings ▸ AI to use AI paste"); app.activate(); return
-        }
-        overlay.showProcessing()
-        let model = config.claudeModel
-        Task {
-            do {
-                let out = try await CloudPolish.claude(instructions: instruction, prompt: clip, model: model, apiKey: key)
-                await MainActor.run { self.overlay.hide(); paste(out) }
-            } catch {
-                await MainActor.run { self.overlay.showError("Paste transform failed"); app.activate() }
+        applyAdvancedPaste(t, input: input, app: app, via: letter)
+    }
+
+    private func applyAdvancedPaste(_ t: AdvancedPaste.Transform, input: PasteInput, app: NSRunningApplication, via: String) {
+        log("advanced paste: \(t.id) (\(via))")
+        func paste(_ result: PasteResult) {
+            app.activate()
+            switch result {
+            case .failure(let message):
+                overlay.showError(message)
+            case .text(let text):
+                // let focus land in the target field before the synthetic ⌘V
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(220)) {
+                    try? Inserter.insert(text, restoreDelayMs: self.config.clipboardRestoreDelayMs)
+                }
+            case .rich(let text, let flavors):
+                log("advanced paste: \(t.id) → " + flavors.map { $0.0 == .html ? "HTML" : "RTF" }.joined(separator: " + "))
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(220)) {
+                    try? Inserter.insert(text, rich: flavors, restoreDelayMs: self.config.clipboardRestoreDelayMs)
+                }
             }
+        }
+        switch t.kind {
+        case .ai(let instruction):
+            guard let key = Keychain.get("claude"), !key.isEmpty else {
+                overlay.showError("Add a Claude key in Settings ▸ AI to use AI paste"); app.activate(); return
+            }
+            overlay.showProcessing()
+            let model = config.claudeModel
+            let clip = input.text
+            Task {
+                do {
+                    let out = try await CloudPolish.claude(instructions: instruction, prompt: clip, model: model, apiKey: key)
+                    await MainActor.run { self.overlay.hide(); paste(.text(out)) }
+                } catch {
+                    await MainActor.run { self.overlay.showError("Paste transform failed"); app.activate() }
+                }
+            }
+        case .ocr:
+            guard let image = input.image else { paste(.failure("Copy an image first")); return }
+            overlay.showProcessing()
+            Task.detached {
+                let text = ScreenCapture.ocr(image).trimmingCharacters(in: .whitespacesAndNewlines)
+                await MainActor.run {
+                    self.overlay.hide()
+                    paste(text.isEmpty ? .failure(t.emptyMessage) : .text(text))
+                }
+            }
+        default:
+            paste(AdvancedPaste.run(t, on: input))
         }
     }
 

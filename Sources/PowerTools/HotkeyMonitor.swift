@@ -30,7 +30,9 @@ final class HotkeyMonitor {
         case windowEnd                    // hotkey released after window moves
         case grid                         // draw-a-grid window placement
         case windowPalette                // Moom-style snap palette
-        case advancedPaste                // paste-as palette
+        case advancedPaste                // paste-as drawer
+        case advancedPasteDirect(String)  // hold + P, then a letter: that transform, no drawer
+        case pasteDrawerKey(Int, String)  // key + its characters while the paste drawer is out; -1 = a combo (close)
         case clipboardHistory             // recent-copies drawer (Win+V)
         case clipboardDrawerKey(Int)      // Esc/↵/↑↓/1–9 while the drawer is out; -1 = any other key (close)
         case quickCapture(connectionId: String)  // send a line to a configured connection
@@ -112,6 +114,9 @@ final class HotkeyMonitor {
     /// True while the clipboard drawer is out (same discipline). It never takes
     /// key, so its keys — Esc, ↵, ↑/↓, 1–9 — are routed from here instead.
     var clipboardDrawerVisible = false
+    /// True while the paste drawer (hold + P) is out. Same discipline, but it
+    /// also takes typed characters — they filter its list.
+    var pasteDrawerVisible = false
     /// Chord mode feature flag (same discipline) — when off, a leader-held
     /// Space is an ordinary foreign key again.
     var chordsEnabled = true
@@ -177,7 +182,7 @@ final class HotkeyMonitor {
     /// keys (e.g. two arrows) are each tracked, not just the last one.
     private var swallowedKeyUps: Set<Int64> = []
     /// Leader action armed by tapping a letter while the hotkey is held.
-    private enum Pending { case none, ocr, readAloud, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, clipboardHistory, findMouse, colorPicker, newDoc, quickCapture(String) }
+    private enum Pending { case none, ocr, readAloud, ai, screenshot, search, fileCopy, fileCut, filePaste, advancedPaste, advancedPasteKey(String), clipboardHistory, findMouse, colorPicker, newDoc, quickCapture(String) }
     private var pending: Pending = .none
     /// Set once an arrow/Return moves a window this hold, so release ends the
     /// window session instead of dispatching a dictation.
@@ -495,6 +500,24 @@ final class HotkeyMonitor {
         // and are swallowed; any other key — ⌘-combos included — closes it the
         // way a menu closes and passes on, so typing on never picks a clip.
         // First in line, so ↵ beats Finder's ⏎-opens and the remaps below.
+        // The paste drawer, likewise — plus typed characters, which filter its
+        // list. ⌘/⌃/⌥ combos close it and pass on.
+        if pasteDrawerVisible, !held, type == .keyDown {
+            let combo = !flags.intersection([.maskCommand, .maskControl, .maskAlternate]).isEmpty
+            if !combo {
+                swallowedKeyUps.insert(keyCode)
+                let repeatable = keyCode == Self.kVK_UpArrow || keyCode == Self.kVK_DownArrow || keyCode == Self.kVK_Backspace
+                if repeatable || event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                    var length = 0
+                    var units = [UniChar](repeating: 0, count: 8)
+                    event.keyboardGetUnicodeString(maxStringLength: 8, actualStringLength: &length, unicodeString: &units)
+                    dispatch(.pasteDrawerKey(Int(keyCode), String(utf16CodeUnits: units, count: length)))
+                }
+                return nil
+            }
+            dispatch(.pasteDrawerKey(-1, ""))
+        }
+
         if clipboardDrawerVisible, !held, type == .keyDown {
             let bare = flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate]).isEmpty
             if bare, Self.drawerKeyCodes.contains(keyCode) {
@@ -687,6 +710,13 @@ final class HotkeyMonitor {
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
                     dispatch(.macroPadDigit(idx))
                 }
+                return nil
+            }
+            // hold + P, then a letter: paste with that transform, no drawer.
+            if case .advancedPaste = pending, let letter = Self.chordKeys[keyCode], letter.isLetter {
+                let l = String(letter).uppercased()
+                log("hotkey: +P \(l) armed (paste as, no drawer)")
+                pending = .advancedPasteKey(l); swallowedKeyUps.insert(keyCode)
                 return nil
             }
             switch keyCode {
@@ -997,6 +1027,7 @@ final class HotkeyMonitor {
                 case .fileCut: dispatch(.fileCut)
                 case .filePaste: dispatch(.filePaste)
                 case .advancedPaste: dispatch(.advancedPaste)
+                case .advancedPasteKey(let l): dispatch(.advancedPasteDirect(l))
                 case .clipboardHistory: dispatch(.clipboardHistory)
                 case .findMouse: dispatch(.findMouse)
                 case .colorPicker: dispatch(.colorPicker)

@@ -221,15 +221,103 @@ case "findmouse-preview":
     }
 
 case "advpaste-preview", "advancedpaste-preview":
-    let out = args.count >= 2 ? args[1] : "advpaste-preview.png"
-    let dark = !(args.count >= 3 && args[2] == "light")
+    // Offscreen render of the hold + P drawer. Flags: light · --text <file> ·
+    // --html <file> · --image <png> · --filter <words> · --down <n> (move the
+    // highlight n rows, so the preview shows that option).
+    let out = args.count >= 2 && !args[1].hasPrefix("-") ? args[1] : "advpaste-preview.png"
+    func flag(_ name: String) -> String? {
+        guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
+        return args[i + 1]
+    }
+    let dark = !args.contains("light")
+    let text = flag("--text").flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+        ?? "Doug Lepping <dlepping@example.com>; Willie Meredith <wmeredith@example.com>"
+    let html = flag("--html").flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+    let image = flag("--image").flatMap { FileManager.default.contents(atPath: $0) }
     MainActor.assumeIsolated {
-        let v = AdvancedPasteView(clipboard: "The quarterly report shows revenue up 12% with strong enterprise growth and a healthy pipeline for Q3.", dark: dark)
+        let input = PasteInput(text: text.trimmingCharacters(in: .whitespacesAndNewlines), html: html, rtf: nil, image: image)
+        let v = PasteDrawerView(input: input, dark: dark)
         v.frame = NSRect(origin: .zero, size: v.fittingSize)
+        if let f = flag("--filter") { for ch in f { v.handleKey(0, chars: String(ch)) } }
+        for _ in 0..<(Int(flag("--down") ?? "0") ?? 0) { v.handleKey(125, chars: "") }
+        if image != nil { RunLoop.main.run(until: Date().addingTimeInterval(2)) }   // background OCR
+        v.layoutSubtreeIfNeeded()
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { exit(1) }
         v.cacheDisplay(in: v.bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) { try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)") }
     }
+
+case "paste-test":
+    // Every offline Advanced Paste transform, the suggestions and the icons.
+    var fails = 0
+    func check(_ name: String, _ got: String?, _ want: String?) {
+        let ok = got == want
+        print("\(ok ? "PASS" : "FAIL") — \(name)")
+        if !ok { print("    got  \(got.map { "\"\($0)\"" } ?? "nil")\n    want \(want.map { "\"\($0)\"" } ?? "nil")"); fails += 1 }
+    }
+    func ok(_ name: String, _ cond: Bool) { check(name, cond ? "yes" : "no", "yes") }
+    check("unwrap joins a broken sentence, keeps paragraphs",
+          DataOps.unwrap("The crew finished the north\nside before lunch and then\nmoved on.\n\nNext paragraph."),
+          "The crew finished the north side before lunch and then moved on.\n\nNext paragraph.")
+    check("unwrap keeps bullets on their own lines",
+          DataOps.unwrap("Items:\n- one\n- two that wraps\n  onto a second line"),
+          "Items:\n- one\n- two that wraps onto a second line")
+    check("unwrap rejoins a hyphenated word", DataOps.unwrap("an exam-\nple here"), "an example here")
+    check("column → list", DataOps.joinList("WO-101\nWO-102\n\nWO-103 "), "WO-101, WO-102, WO-103")
+    check("copied row of cells → list", DataOps.joinList("a\tb\tc"), "a, b, c")
+    check("column → quoted list escapes quotes", DataOps.quotedList("O'Neil\nSmith"), "'O''Neil', 'Smith'")
+    check("list → column", DataOps.splitList("a, b; c,,d"), "a\nb\nc\nd")
+    check("sort + dedupe (numbers in order)", DataOps.sortUnique("b\na\nb\nitem 10\nitem 9"), "a\nb\nitem 9\nitem 10")
+    check("emails only", DataOps.emailsOnly("Doug <d@x.com>, d@X.com; w.m@y.org"), "d@x.com\nw.m@y.org")
+    check("no emails → nil", DataOps.emailsOnly("nothing here"), nil)
+    check("phones only, normalized + deduped", DataOps.phonesOnly("call 502.555.1234 or (502) 555-1234, cell +1 859 555 0000"),
+          "(502) 555-1234\n(859) 555-0000")
+    check("format phones in place", DataOps.formatPhones("Office 5025551234 ext 2"), "Office (502) 555-1234 ext 2")
+    check("a WO number is not a phone", DataOps.phonesOnly("WO-5025551234-7"), nil)
+    check("links only", DataOps.linksOnly("see https://a.com/x and https://a.com/x, mail me@x.com"), "https://a.com/x")
+    check("pretty JSON keeps key order", DataOps.prettyJSON("{\"b\":1,\"a\":[1,{\"c\":\"x, y\"}],\"e\":{}}"),
+          "{\n  \"b\": 1,\n  \"a\": [\n    1,\n    {\n      \"c\": \"x, y\"\n    }\n  ],\n  \"e\": {}\n}")
+    check("invalid JSON → nil", DataOps.prettyJSON("{nope"), nil)
+    check("HTML table → TSV", DataOps.tableToTSV(html: "<table><tr><th>Metric</th><th>10-31</th></tr><tr><td><b>Visited</b></td><td>75.2&nbsp;%</td></tr></table>", text: ""),
+          "Metric\t10-31\nVisited\t75.2 %")
+    check("Markdown table → TSV, marks dropped", DataOps.tableToTSV(html: nil, text: "| Metric | 10-31 |\n|---|---:|\n| [Visited](https://x) | **75.2%** |"),
+          "Metric\t10-31\nVisited\t75.2%")
+    check("no table → nil", DataOps.tableToTSV(html: nil, text: "just text"), nil)
+    check("markdown inline", Markdown.inline("**Bold** and *it* with `**code**` and [link](https://x.com)"),
+          "<b>Bold</b> and <i>it</i> with <code style=\"\(Markdown.codeStyle)\">**code**</code> and <a href=\"https://x.com\">link</a>")
+    check("snake_case words stay plain", Markdown.inline("a file_name_here"), "a file_name_here")
+    let md = Markdown.html("## Changes\n\nVisited is **up**.\n\n- one\n- two\n  - nested\n\n| A | B |\n|---|---|\n| 1 | 2 |")
+    ok("markdown: heading", md.contains("<h2>Changes</h2>"))
+    ok("markdown: paragraph with bold", md.contains("<p>Visited is <b>up</b>.</p>"))
+    ok("markdown: nested list", md.contains("<ul>\n<li>one</li>\n<li>two</li>\n<ul>\n<li>nested</li>\n</ul>\n</ul>"))
+    ok("markdown: table with borders", md.contains("<table style=\"border-collapse:collapse\">") && md.contains(">1</td>"))
+    ok("markdown: HTML in text is escaped", Markdown.html("a <script> b").contains("&lt;script&gt;"))
+    let emailFont = RichText.uncolorHTML("<p style=\"color: rgb(204,204,204); font-family: -apple-system; font-size: 13px; font-weight: 700; border-color: red\"><font face=\"Arial\" size=\"2\" color=\"white\">x</font></p>", dropFonts: true)
+    ok("email font: fonts + colors gone", !emailFont.contains("font-family") && !emailFont.contains("13px") && !emailFont.contains("Arial") && !emailFont.contains("white"))
+    ok("email font: bold + borders kept", emailFont.contains("font-weight: 700") && emailFont.contains("border-color: red"))
+    ok("dark theme detected", RichText.hasThemeColors("<p style=\"color: rgb(204, 204, 204); background-color: rgb(31, 31, 31)\">x</p>"))
+    ok("normal web page not flagged", !RichText.hasThemeColors("<p style=\"color: #222; background-color: #ffffff\">x</p>"))
+    ok("transparent background not flagged", !RichText.hasThemeColors("<p style=\"background-color: rgba(0, 0, 0, 0)\">x</p>"))
+    func suggested(_ i: PasteInput) -> [String] { AdvancedPaste.suggestions(for: i).map(\.id) }
+    check("suggest: dark HTML with a table", suggested(PasteInput(text: "x", html: "<table style=\"background-color: rgb(31,31,31)\"><tr><td>x</td></tr></table>", rtf: nil, image: nil)).joined(separator: ","), "uncolor,tsv")
+    check("suggest: image only", suggested(PasteInput(text: "", html: nil, rtf: nil, image: Data([1]))).joined(separator: ","), "ocr")
+    check("suggest: Claude markdown", suggested(PasteInput(text: "## Title\n\n- **one**\n- two", html: nil, rtf: nil, image: nil)).joined(separator: ","), "markdown")
+    check("suggest: Claude markdown with a table → formatted first", suggested(PasteInput(text: "## Title\n\n| A | B |\n|---|---|\n| 1 | 2 |", html: nil, rtf: nil, image: nil)).joined(separator: ","), "markdown,tsv")
+    check("suggest: a column of IDs", suggested(PasteInput(text: "WO-101\nWO-102\nWO-103", html: nil, rtf: nil, image: nil)).joined(separator: ","), "joinlist,quotedlist")
+    check("suggest: recipients", suggested(PasteInput(text: "Doug Lepping <d@x.com>; Willie M <w@x.com>", html: nil, rtf: nil, image: nil)).joined(separator: ","), "contacts")
+    check("suggest: tracked link", suggested(PasteInput(text: "https://a.com/x?utm_source=n", html: nil, rtf: nil, image: nil)).joined(separator: ","), "links")
+    check("suggest: JSON", suggested(PasteInput(text: "{\"a\":1}", html: nil, rtf: nil, image: nil)).joined(separator: ","), "json")
+    check("suggest: hard-wrapped prose", suggested(PasteInput(text: "The crew finished the north side\nbefore lunch and then they went\nover to the south side of town.", html: nil, rtf: nil, image: nil)).joined(separator: ","), "unwrap")
+    check("suggest: plain sentence → none", suggested(PasteInput(text: "See you at 3.", html: nil, rtf: nil, image: nil)).joined(separator: ","), "")
+    ok("image only hides the text rows", AdvancedPaste.available(for: PasteInput(text: "", html: nil, rtf: nil, image: Data([1]))).map(\.id) == ["ocr"])
+    ok("no formatting hides the formatted rows", !AdvancedPaste.available(for: PasteInput(text: "x", html: nil, rtf: nil, image: nil)).contains { $0.needs == .rich })
+    let keys = AdvancedPaste.transforms.compactMap(\.key)
+    ok("chord letters are unique", Set(keys).count == keys.count)
+    ok("filter matches keywords", AdvancedPaste.transforms.filter { AdvancedPaste.matches($0, filter: "excel") }.map(\.id).contains("tsv"))
+    let missing = AdvancedPaste.transforms.filter { NSImage(systemSymbolName: $0.icon, accessibilityDescription: nil) == nil }.map(\.icon)
+    check("every icon is a real SF Symbol", missing.joined(separator: ", "), "")
+    print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
+    exit(fails == 0 ? 0 : 1)
 
 case "quickcapture-preview":
     let out = args.count >= 2 ? args[1] : "quickcapture-preview.png"

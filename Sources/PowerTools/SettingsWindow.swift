@@ -1660,7 +1660,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         •  F   record the screen — drag the area (⏎ = whole screen); hold + F again or click the ● badge to stop
         •  K   color picker — sample a pixel, copy HEX · RGB · HSL · HSV · CMYK
         •  C / X / V   copy · cut · paste files (Finder)
-        •  P   Advanced Paste — plain, or AI: summarize / rewrite / translate
+        •  P   Advanced Paste drawer — formatted without dark colors, Markdown → formatted, table → Excel, lists, extracts, case, AI; type to filter. Hold + P, then a letter (F, M, X, P…) pastes with no drawer
         •  H   clipboard history — paste something you copied earlier
         •  D   new document — Word / Excel / … in the current Finder folder
         •  N   quick capture — send a line to your connection (todo app, webhook)

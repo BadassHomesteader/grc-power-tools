@@ -73,7 +73,7 @@ final class HotkeyCheatSheetView: NSView {
             ]),
             ("Clipboard & files", [
                 ("H", "clipboard history"),
-                ("P", "paste as…"),
+                ("P", "paste as… (P then F/M/X… skips the drawer)"),
                 ("C·X·V", "Finder copy / cut / paste"),
                 ("D", "new document here"),
             ]),
