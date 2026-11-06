@@ -953,8 +953,13 @@ final class AppController {
     private func openAdvancedPaste() {
         interruptDictation()
         overlay.hide()
-        let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let pb = NSPasteboard.general
+        let clip = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !clip.isEmpty else { overlay.showError("Copy some text first, then hold + P"); return }
+        // Formatted flavors, read NOW for "Formatted, no colors" (the palette
+        // can't change the clipboard, but read it with the text for one moment).
+        let html = pb.string(forType: .html)
+        let rtf = pb.data(forType: .rtf)
         guard let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != "com.grc.whisper" else {
             overlay.showError("Click into a text field first, then hold + P"); return
         }
@@ -963,18 +968,24 @@ final class AppController {
         guard let screen else { return }
         advancedPaste.present(
             clipboard: clip, dark: config.appearance.isDark, screen: screen,
-            onPick: { t in self.applyAdvancedPaste(t, clip: clip, app: app) },
+            onPick: { t in self.applyAdvancedPaste(t, clip: clip, html: html, rtf: rtf, app: app) },
             onCancel: { app.activate() }
         )
     }
 
-    private func applyAdvancedPaste(_ t: AdvancedPaste.Transform, clip: String, app: NSRunningApplication) {
-        func paste(_ text: String) {
+    private func applyAdvancedPaste(_ t: AdvancedPaste.Transform, clip: String, html: String?, rtf: Data?, app: NSRunningApplication) {
+        func paste(_ text: String, rich: [(NSPasteboard.PasteboardType, Data)] = []) {
             app.activate()
             // let focus land in the target field before the synthetic ⌘V
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(220)) {
-                try? Inserter.insert(text, restoreDelayMs: self.config.clipboardRestoreDelayMs)
+                try? Inserter.insert(text, rich: rich, restoreDelayMs: self.config.clipboardRestoreDelayMs)
             }
+        }
+        if t.rich {
+            let payload = RichText.uncoloredPayload(html: html, rtf: rtf)
+            log("advanced paste: formatted, no colors — \(payload == nil ? "no formatting on the clipboard, plain text" : (html != nil ? "HTML" : "RTF"))")
+            paste(clip, rich: payload ?? [])
+            return
         }
         guard t.ai, let instruction = t.instruction else { paste(t.localTransform?(clip) ?? clip); return }  // plain text / case
         guard let key = Keychain.get("claude"), !key.isEmpty else {

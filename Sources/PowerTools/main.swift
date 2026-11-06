@@ -2047,6 +2047,46 @@ case "clean-links-test":
     print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
     exit(fails == 0 ? 0 : 1)
 
+case "uncolor-html":
+    // "Formatted, no colors" on a saved HTML file (e.g. a dark-theme IDE copy):
+    // prints the cleaned HTML, so it can be opened in a browser and compared.
+    guard args.count >= 2, let html = try? String(contentsOfFile: args[1], encoding: .utf8) else {
+        print("usage: uncolor-html <file.html>"); exit(2)
+    }
+    print(RichText.uncolorHTML(html))
+
+case "uncolor-test":
+    var fails = 0
+    func check(_ name: String, _ ok: Bool) { print("\(ok ? "PASS" : "FAIL") — \(name)"); if !ok { fails += 1 } }
+    let dark = "<meta charset='utf-8'><p style=\"color: rgb(204, 204, 204); font-size: 13px; background-color: rgb(31, 31, 31); text-decoration-color: initial;\">Set <b>color: blue</b> here <code style=\"color: rgb(208, 208, 208); background: none 0% 0% / auto repeat scroll padding-box border-box rgb(60, 60, 60); padding: 2px 4px;\">x.pdf</code></p>"
+        + "<table style=\"border-collapse: collapse; color: rgb(204, 204, 204)\"><tr><td bgcolor=\"#1f1f1f\" style=\"border-color: rgb(69, 69, 69); border-style: solid; border-width: 1px;\"><font color=\"white\">Visited</font></td></tr></table>"
+        + "<style>body { color: #ccc; background: #1f1f1f; font-weight: 400 }</style>"
+    let out = RichText.uncolorHTML(dark)
+    check("text colors gone", !out.contains("rgb(204, 204, 204)") && !out.contains("rgb(208, 208, 208)"))
+    check("background colors gone", !out.contains("rgb(31, 31, 31)") && !out.contains("rgb(60, 60, 60)"))
+    check("legacy bgcolor / font color gone", !out.contains("bgcolor") && !out.contains("color=\"white\""))
+    check("<style> block colors gone", !out.contains("#ccc") && !out.contains("#1f1f1f"))
+    check("border color, width and style kept", out.contains("border-color: rgb(69, 69, 69)") && out.contains("border-width: 1px"))
+    check("font size, padding, weight kept", out.contains("font-size: 13px") && out.contains("padding: 2px 4px") && out.contains("font-weight: 400"))
+    check("body text that says \"color: blue\" kept", out.contains("<b>color: blue</b>"))
+    check("tags and text intact", out.contains("<table") && out.contains("Visited") && out.contains("<code"))
+    MainActor.assumeIsolated {
+        let payload = RichText.uncoloredPayload(html: dark, rtf: nil) ?? []
+        check("payload has HTML and RTF", payload.map(\.0) == [.html, .rtf])
+        if let rtf = payload.first(where: { $0.0 == .rtf })?.1, let a = NSAttributedString(rtf: rtf, documentAttributes: nil) {
+            var colored = false
+            a.enumerateAttributes(in: NSRange(location: 0, length: a.length)) { attrs, _, _ in
+                if let c = attrs[.backgroundColor] as? NSColor, c.alphaComponent > 0 { colored = true }
+                if let ps = attrs[.paragraphStyle] as? NSParagraphStyle, ps.textBlocks.contains(where: { $0.backgroundColor != nil }) { colored = true }
+            }
+            check("RTF has no background shading", !colored)
+            check("RTF keeps the text", a.string.contains("Visited") && a.string.contains("x.pdf"))
+        } else { check("RTF parses", false) }
+        check("no formatting → nil (plain text paste)", RichText.uncoloredPayload(html: nil, rtf: nil) == nil)
+    }
+    print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
+    exit(fails == 0 ? 0 : 1)
+
 case "shelf-preview":
     // Offscreen render of the shelf: dark by default, "light" for the light
     // theme, "empty" for the empty state, "dropping" for the drop highlight.

@@ -15,37 +15,42 @@ final class AdvancedPaste {
         let ai: Bool
         let instruction: String?  // Claude system prompt for AI transforms
         var localTransform: ((String) -> String)? = nil  // instant, offline case/text transforms
+        /// Works on the clipboard's HTML/RTF, not its plain text: keeps bold,
+        /// tables, lists and links, drops text + background colors.
+        var rich: Bool = false
     }
 
     static let transforms: [Transform] = [
         Transform(digit: 1, title: "Plain text", subtitle: "strip all formatting", ai: false, instruction: nil),
-        Transform(digit: 2, title: "Clean text", subtitle: "trim, collapse spaces, straighten quotes", ai: false, instruction: nil,
+        Transform(digit: 2, title: "Formatted, no colors", subtitle: "keep bold, tables, lists · drop dark-theme colors", ai: false, instruction: nil,
+                  rich: true),
+        Transform(digit: 3, title: "Clean text", subtitle: "trim, collapse spaces, straighten quotes", ai: false, instruction: nil,
                   localTransform: { TextOps.clean($0) }),
-        Transform(digit: 3, title: "Single line", subtitle: "flatten line breaks into one line", ai: false, instruction: nil,
+        Transform(digit: 4, title: "Single line", subtitle: "flatten line breaks into one line", ai: false, instruction: nil,
                   localTransform: { TextOps.singleLine($0) }),
-        Transform(digit: 4, title: "Proper Case", subtitle: "Capitalize Each Word", ai: false, instruction: nil,
+        Transform(digit: 5, title: "Proper Case", subtitle: "Capitalize Each Word", ai: false, instruction: nil,
                   localTransform: { $0.capitalized }),
-        Transform(digit: 5, title: "Sentence case", subtitle: "Capitalize each sentence", ai: false, instruction: nil,
+        Transform(digit: 6, title: "Sentence case", subtitle: "Capitalize each sentence", ai: false, instruction: nil,
                   localTransform: { TextOps.sentenceCase($0) }),
-        Transform(digit: 6, title: "lowercase", subtitle: "all lower", ai: false, instruction: nil,
+        Transform(digit: 7, title: "lowercase", subtitle: "all lower", ai: false, instruction: nil,
                   localTransform: { $0.lowercased() }),
-        Transform(digit: 7, title: "UPPERCASE", subtitle: "all caps", ai: false, instruction: nil,
+        Transform(digit: 8, title: "UPPERCASE", subtitle: "all caps", ai: false, instruction: nil,
                   localTransform: { $0.uppercased() }),
-        Transform(digit: 8, title: "Numbers only", subtitle: "strip $ , % — paste as values", ai: false, instruction: nil,
+        Transform(digit: 9, title: "Numbers only", subtitle: "strip $ , % — paste as values", ai: false, instruction: nil,
                   localTransform: { TextOps.numbersOnly($0) }),
-        Transform(digit: 9, title: "Contacts, one per line", subtitle: "Name <email>; … → name, email, blank line", ai: false, instruction: nil,
+        Transform(digit: 10, title: "Contacts, one per line", subtitle: "Name <email>; … → name, email, blank line", ai: false, instruction: nil,
                   localTransform: { TextOps.contactList($0) }),
-        Transform(digit: 10, title: "Clean links", subtitle: "strip utm_, fbclid, si… from every URL", ai: false, instruction: nil,
+        Transform(digit: 11, title: "Clean links", subtitle: "strip utm_, fbclid, si… from every URL", ai: false, instruction: nil,
                   localTransform: { TextOps.cleanLinks($0) }),
-        Transform(digit: 11, title: "Summarize", subtitle: "AI · the key points", ai: true,
+        Transform(digit: 12, title: "Summarize", subtitle: "AI · the key points", ai: true,
                   instruction: "Summarize the following text concisely. Output only the summary."),
-        Transform(digit: 12, title: "Rewrite", subtitle: "AI · fix grammar, tighten", ai: true,
+        Transform(digit: 13, title: "Rewrite", subtitle: "AI · fix grammar, tighten", ai: true,
                   instruction: "Rewrite the following to fix grammar and make it clear and concise, keeping the meaning and tone. Output only the rewrite."),
-        Transform(digit: 13, title: "Bullet points", subtitle: "AI · as a list", ai: true,
+        Transform(digit: 14, title: "Bullet points", subtitle: "AI · as a list", ai: true,
                   instruction: "Rewrite the following as a concise bulleted list using '- '. Output only the list."),
-        Transform(digit: 14, title: "Markdown", subtitle: "AI · clean markdown", ai: true,
+        Transform(digit: 15, title: "Markdown", subtitle: "AI · clean markdown", ai: true,
                   instruction: "Reformat the following as clean, well-structured Markdown. Output only the Markdown."),
-        Transform(digit: 15, title: "Translate → English", subtitle: "AI", ai: true,
+        Transform(digit: 16, title: "Translate → English", subtitle: "AI", ai: true,
                   instruction: "Translate the following into natural English. If it's already English, correct it lightly. Output only the translation."),
     ]
 
@@ -86,6 +91,107 @@ final class AdvancedPaste {
         keyMonitor = nil
         window?.orderOut(nil)
         window = nil
+    }
+}
+
+/// "Formatted, no colors": dark-theme apps (Antigravity / VS Code chat, Chrome
+/// in dark mode) copy HTML with inline `color: rgb(204,204,204)` and
+/// `background-color: rgb(31,31,31)` on every element, so a formatted paste
+/// lands as white-on-black blocks. Drop ONLY the color rules — bold, tables,
+/// borders, lists and links survive — and let the target app's own text and
+/// page colors show through.
+enum RichText {
+    /// CSS properties that carry a theme's text or background color. Matched
+    /// as whole property names, so `border-color` and `border-radius` stay.
+    private static let colorDecl = try! NSRegularExpression(
+        pattern: "(?<![-\\w])(?:color|background|background-color|background-image|-webkit-text-fill-color|text-decoration-color|caret-color)\\s*:[^;\"'}]*;?",
+        options: [.caseInsensitive])
+    /// style="…" / style='…' attributes and <style>…</style> blocks — the only
+    /// places a declaration is CSS (body text saying "color: blue" is left alone).
+    private static let styleAttrDouble = try! NSRegularExpression(pattern: "(\\sstyle\\s*=\\s*\")([^\"]*)(\")", options: [.caseInsensitive])
+    private static let styleAttrSingle = try! NSRegularExpression(pattern: "(\\sstyle\\s*=\\s*')([^']*)(')", options: [.caseInsensitive])
+    private static let styleBlock = try! NSRegularExpression(pattern: "(<style[^>]*>)(.*?)(</style>)", options: [.caseInsensitive, .dotMatchesLineSeparators])
+    /// Legacy attributes: <td bgcolor=…>, <font color=…>, <body text=…>.
+    private static let colorAttr = try! NSRegularExpression(
+        pattern: "\\s(?:bgcolor|color|text)\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s>]+)", options: [.caseInsensitive])
+
+    static func uncolorHTML(_ html: String) -> String {
+        var s = html
+        for re in [styleAttrDouble, styleAttrSingle, styleBlock] {
+            s = replaceGroup2(re, in: s) { css in
+                let ns = css as NSString
+                return colorDecl.stringByReplacingMatches(in: css, range: NSRange(location: 0, length: ns.length), withTemplate: "")
+            }
+        }
+        // Legacy color attributes only inside tags, never in text.
+        s = replaceTags(in: s) { tag in
+            colorAttr.stringByReplacingMatches(in: tag, range: NSRange(location: 0, length: (tag as NSString).length), withTemplate: "")
+        }
+        return s
+    }
+
+    /// RTF-only sources (Terminal, Xcode, Notes in dark mode): drop text and
+    /// background colors, table-cell shading included.
+    static func uncolor(_ attr: NSAttributedString) -> NSAttributedString {
+        let m = NSMutableAttributedString(attributedString: attr)
+        let all = NSRange(location: 0, length: m.length)
+        m.removeAttribute(.foregroundColor, range: all)
+        m.removeAttribute(.backgroundColor, range: all)
+        m.enumerateAttribute(.paragraphStyle, in: all) { value, range, _ in
+            guard let ps = value as? NSParagraphStyle, !ps.textBlocks.isEmpty else { return }
+            let copy = ps.mutableCopy() as! NSMutableParagraphStyle
+            copy.textBlocks = ps.textBlocks.map { block in
+                let b = block.copy() as! NSTextBlock
+                b.backgroundColor = nil
+                return b
+            }
+            m.addAttribute(.paragraphStyle, value: copy, range: range)
+        }
+        return m
+    }
+
+    /// Clipboard payload for the colorless paste: HTML (Outlook, Word, Gmail,
+    /// web editors) + RTF (TextEdit, Pages, Notes). Nil when the clipboard had
+    /// no formatting — the caller pastes plain text then.
+    static func uncoloredPayload(html: String?, rtf: Data?) -> [(NSPasteboard.PasteboardType, Data)]? {
+        if let html, !html.isEmpty {
+            let clean = uncolorHTML(html)
+            var out: [(NSPasteboard.PasteboardType, Data)] = [(.html, Data(clean.utf8))]
+            if let a = NSAttributedString(html: Data(clean.utf8), options: [.characterEncoding: String.Encoding.utf8.rawValue], documentAttributes: nil),
+               let r = try? uncolor(a).data(from: NSRange(location: 0, length: a.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]) {
+                out.append((.rtf, r))
+            }
+            return out
+        }
+        if let rtf, let a = NSAttributedString(rtf: rtf, documentAttributes: nil),
+           let r = try? uncolor(a).data(from: NSRange(location: 0, length: a.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]) {
+            return [(.rtf, r)]
+        }
+        return nil
+    }
+
+    private static func replaceGroup2(_ re: NSRegularExpression, in s: String, _ f: (String) -> String) -> String {
+        let ns = s as NSString
+        var out = ""
+        var last = 0
+        for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            out += ns.substring(with: m.range(at: 1)) + f(ns.substring(with: m.range(at: 2))) + ns.substring(with: m.range(at: 3))
+            last = m.range.location + m.range.length
+        }
+        return out + ns.substring(from: last)
+    }
+
+    private static let tag = try! NSRegularExpression(pattern: "<[a-zA-Z][^>]*>")
+    private static func replaceTags(in s: String, _ f: (String) -> String) -> String {
+        let ns = s as NSString
+        var out = ""
+        var last = 0
+        for m in tag.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last)) + f(ns.substring(with: m.range))
+            last = m.range.location + m.range.length
+        }
+        return out + ns.substring(from: last)
     }
 }
 

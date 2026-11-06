@@ -36,7 +36,9 @@ enum Inserter {
         }
     }
 
-    static func insert(_ text: String, restoreDelayMs: Int) throws {
+    /// `rich`: extra flavors (HTML, RTF) written before the plain string, so a
+    /// formatted paste lands formatted; plain-only targets still get `text`.
+    static func insert(_ text: String, rich: [(NSPasteboard.PasteboardType, Data)] = [], restoreDelayMs: Int) throws {
         // Secure-field refusal happens up front at key-down (ContextSnapshot); we
         // don't re-check the global secure-input flag here — it's held session-wide
         // by loginwindow and would wrongly block every paste.
@@ -65,6 +67,7 @@ enum Inserter {
         let before = pb.changeCount
         pb.clearContents()
         let item = NSPasteboardItem()
+        for (type, data) in rich { item.setData(data, forType: type) }
         item.setString(text, forType: .string)
         item.setString(sessionID, forType: sessionType)
         item.setString("", forType: concealedType)
