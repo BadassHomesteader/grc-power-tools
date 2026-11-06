@@ -875,6 +875,8 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private let table = NSTableView()
     private let tableScroll = NSScrollView()
     private let newButton = NSButton(title: "New Meeting", target: nil, action: nil)
+    private let exportButton = NSButton(title: "", target: nil, action: nil)
+    private var exportSheet: MeetingExportSheet?
     private let titleField = NSTextField()
     private let timeLabel = NSTextField(labelWithString: "")
     private let recordButton = NSButton(title: "Record", target: nil, action: nil)
@@ -1288,6 +1290,33 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(MeetingText.markdown(m), forType: .string)
         setStatus("Copied the whole meeting as Markdown.")
+    }
+
+    // MARK: Export
+
+    @objc private func exportClicked() { openExport(preselect: selectedID) }
+    @objc private func exportTarget() { openExport(preselect: targetMeeting()?.id) }
+
+    /// The Export sheet over this window; the given meeting starts ticked.
+    private func openExport(preselect id: String?) {
+        guard let window, exportSheet == nil else { return }
+        guard !meetings.isEmpty else { setStatus("No meetings to export yet."); return }
+        let sheet = MeetingExportSheet(meetings: meetings, preselect: id.map { [$0] } ?? [])
+        sheet.window.appearance = window.appearance
+        sheet.onDone = { [weak self] msg in
+            self?.exportSheet = nil
+            if let msg { self?.setStatus(msg) }
+        }
+        exportSheet = sheet
+        window.beginSheet(sheet.window)
+    }
+
+    /// Preview/test: the export sheet built over the sample data, unattached.
+    func previewExport(selectDayRow: Int?) -> MeetingExportSheet {
+        let sheet = MeetingExportSheet(meetings: meetings, preselect: selectedID.map { [$0] } ?? [])
+        sheet.window.appearance = window?.appearance
+        if let r = selectDayRow { sheet.testToggleDay(r) }
+        return sheet
     }
 
     @objc private func deleteMeeting() {
@@ -1992,6 +2021,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         table.delegate = self
         let menu = NSMenu()
         menu.addItem(withTitle: "Copy as Markdown", action: #selector(copyMarkdown), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Export…", action: #selector(exportTarget), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Send to OneNote", action: #selector(sendTargetToOneNote), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Delete Meeting…", action: #selector(deleteMeeting), keyEquivalent: "").target = self
@@ -2030,6 +2060,12 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         newButton.bezelStyle = .rounded
         newButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
         newButton.imagePosition = .imageLeading
+        exportButton.target = self
+        exportButton.action = #selector(exportClicked)
+        exportButton.bezelStyle = .rounded
+        exportButton.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: "Export")
+        exportButton.imagePosition = .imageOnly
+        exportButton.toolTip = "Export meetings — pick one, many, or a whole day to copy into a bot"
 
         let divider = NSBox()
         divider.boxType = .separator
@@ -2115,7 +2151,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         emptyState.textColor = .secondaryLabelColor
         emptyState.alignment = .center
 
-        let views: [NSView] = [paper, sidebar, tableScroll, newButton, contextPopup, datePopup, lengthPopup, groupPopup,
+        let views: [NSView] = [paper, sidebar, tableScroll, newButton, exportButton, contextPopup, datePopup, lengthPopup, groupPopup,
                                noMatch, clearFiltersButton, meetingContextPopup,
                                divider, titleField, timeLabel, recordButton,
                                tabs, enhanceButton, copyButton, oneNoteButton, textScroll, hint, statusLabel, emptyState,
@@ -2138,14 +2174,17 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
             newButton.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
             newButton.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 12),
-            newButton.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -12),
+            exportButton.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
+            exportButton.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -12),
+            exportButton.widthAnchor.constraint(equalToConstant: 34),
+            newButton.trailingAnchor.constraint(equalTo: exportButton.leadingAnchor, constant: -6),
 
             contextPopup.topAnchor.constraint(equalTo: newButton.bottomAnchor, constant: 10),
             contextPopup.leadingAnchor.constraint(equalTo: newButton.leadingAnchor),
             contextPopup.trailingAnchor.constraint(equalTo: sidebar.centerXAnchor, constant: -3),
             datePopup.centerYAnchor.constraint(equalTo: contextPopup.centerYAnchor),
             datePopup.leadingAnchor.constraint(equalTo: sidebar.centerXAnchor, constant: 3),
-            datePopup.trailingAnchor.constraint(equalTo: newButton.trailingAnchor),
+            datePopup.trailingAnchor.constraint(equalTo: exportButton.trailingAnchor),
             lengthPopup.topAnchor.constraint(equalTo: contextPopup.bottomAnchor, constant: 6),
             lengthPopup.leadingAnchor.constraint(equalTo: contextPopup.leadingAnchor),
             lengthPopup.trailingAnchor.constraint(equalTo: contextPopup.trailingAnchor),

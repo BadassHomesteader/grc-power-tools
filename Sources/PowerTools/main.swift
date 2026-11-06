@@ -807,6 +807,21 @@ case "meeting-preview":
             print("wrote \(panelOut)")
         }
         defer { if let picFolder { try? FileManager.default.removeItem(at: MeetingImages.dir(picFolder)) } }
+        if args.contains("export") {
+            // The Export sheet with the first day ticked; its text beside it.
+            let sheet = mc.previewExport(selectDayRow: 0)
+            let base = (out as NSString).deletingPathExtension
+            try? sheet.exportText.write(toFile: base + "-export.md", atomically: true, encoding: .utf8)
+            print("export: \(sheet.testSizeText) → \(base)-export.md")
+            if let c = sheet.window.contentView {
+                c.layoutSubtreeIfNeeded()
+                if let rep = c.bitmapImageRepForCachingDisplay(in: c.bounds) {
+                    c.cacheDisplay(in: c.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: base + "-export.png"))
+                    print("wrote \(base)-export.png")
+                }
+            }
+        }
         if let i = args.firstIndex(of: "--onenote-html"), args.count > i + 1, let m = mc.previewMeeting {
             // The exact page body OneNote would receive, plus its picture parts.
             let (html, parts) = OneNotePageBuilder.build(m)
@@ -860,6 +875,49 @@ case "pictures-test":
         pb.clearContents(); pb.setString("https://example.com/a.png", forType: .string); pb.setData(img.tiffRepresentation, forType: .tiff)
         check("link + image pastes as picture", MeetingImages.images(on: pb).count == 1)
         check("enhancer sees [picture]", MeetingImages.rewrite(md) { _ in "[picture]" } == "before\n[picture]\nafter")
+        exit(fails == 0 ? 0 : 1)
+    }
+
+case "export-test":
+    // Meeting export text: order, sections, picture stripping, heading levels.
+    MainActor.assumeIsolated {
+        _ = NSApplication.shared
+        var fails = 0
+        func check(_ name: String, _ ok: Bool) { print("\(ok ? "PASS" : "FAIL") — \(name)"); if !ok { fails += 1 } }
+        let now = Date()
+        var a = Meeting.blank(context: "Work")
+        a.title = "Later call"; a.created = now; a.recordedSeconds = 1860
+        a.enhanced = "- quote is $18,400\n\n## Action items\n- [ ] Me — approve\n\n![](pic-1.png)"
+        a.agenda = "Quote\nPermit"
+        a.live = "## Questions to ask\n- permit?"
+        a.segments = [MeetingSegment(speaker: "them", start: 3, text: "We can start the 12th.")]
+        var b = Meeting.blank()
+        b.title = "Earlier call"; b.created = now.addingTimeInterval(-3600); b.notes = "rough note"
+        let o = MeetingExportOptions()
+        let t = MeetingExport.text([a, b], o)
+        check("header counts meetings", t.hasPrefix("2 meetings exported"))
+        check("oldest first", (t.range(of: "# Earlier call")?.lowerBound ?? t.endIndex) < (t.range(of: "# Later call")?.lowerBound ?? t.startIndex))
+        check("separated by a rule", t.contains("\n\n---\n\n# "))
+        check("meta line has length + context", t.contains(" · 31 min · Work"))
+        check("agenda section", t.contains("## Agenda\n\nQuote\nPermit"))
+        check("enhanced headings demoted", t.contains("### Action items") && !t.contains("\n## Action items"))
+        check("pictures become [picture]", t.contains("[picture]") && !t.contains("pic-1.png"))
+        check("transcript included", t.contains("Them: We can start the 12th."))
+        check("live off by default", !t.contains("Questions to ask"))
+        var o2 = o; o2.transcript = false; o2.live = true; o2.enhanced = false
+        let t2 = MeetingExport.text([a], o2)
+        check("single meeting has no header", t2.hasPrefix("# Later call"))
+        check("toggles respected", !t2.contains("Transcript") && t2.contains("### Questions to ask") && !t2.contains("18,400"))
+        check("empty sections skipped", !MeetingExport.text([b], o).contains("## Agenda"))
+        check("file name", MeetingExport.fileName([a, b]).hasPrefix("Power_Tools_Meetings_") && MeetingExport.fileName([a]).hasSuffix(".md"))
+        check("day label today", MeetingExport.dayLabel(now) == "Today")
+        let sheet = MeetingExportSheet(meetings: [a, b], preselect: [])
+        check("starts with nothing selected", sheet.selected.isEmpty && sheet.testSizeText == "Nothing selected")
+        sheet.testToggleDay(0)
+        check("ticking the day selects both", sheet.selected.count == 2)
+        print("size: \(sheet.testSizeText)")
+        sheet.testToggleDay(0)
+        check("ticking it again clears it", sheet.selected.isEmpty)
         exit(fails == 0 ? 0 : 1)
     }
 
