@@ -964,16 +964,14 @@ final class AppController {
         if pasteDrawer.isVisible { pasteDrawer.cancel(); return }
         let input = PasteInput.read()
         guard !input.isEmpty else { overlay.showError("Copy some text or an image first, then hold + P"); return }
-        guard let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != "com.grc.whisper" else {
-            overlay.showError("Click into a text field first, then hold + P"); return
-        }
+        guard let target = pasteTarget(key: "P") else { return }
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
         pasteDrawer.present(
             input: input, dark: config.appearance.isDark, screen: screen,
-            onPick: { t in self.applyAdvancedPaste(t, input: input, app: app, via: "drawer") },
-            onCancel: { app.activate() }
+            onPick: { t in self.applyAdvancedPaste(t, input: input, target: target, via: "drawer") },
+            onCancel: { target.refocus() }
         )
     }
 
@@ -986,26 +984,34 @@ final class AppController {
             overlay.showError("Nothing on hold + P, \(letter) — hold + P to see the letters"); return
         }
         let input = PasteInput.read()
-        guard let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != "com.grc.whisper" else {
-            overlay.showError("Click into a text field first, then hold + P"); return
-        }
+        guard let target = pasteTarget(key: "P") else { return }
         guard AdvancedPaste.canRun(t, on: input) else {
             // A formatted paste with no formatting on the clipboard is just the text.
             if t.needs == .rich, !input.text.isEmpty {
-                applyAdvancedPaste(AdvancedPaste.transforms[0], input: input, app: app, via: "\(letter), no formatting → plain")
+                applyAdvancedPaste(AdvancedPaste.transforms[0], input: input, target: target, via: "\(letter), no formatting → plain")
                 return
             }
             overlay.showError(t.needs == .image ? "Copy an image first, then hold + P, \(letter)"
                                                  : "Copy some text first, then hold + P, \(letter)")
             return
         }
-        applyAdvancedPaste(t, input: input, app: app, via: letter)
+        applyAdvancedPaste(t, input: input, target: target, via: letter)
     }
 
-    private func applyAdvancedPaste(_ t: AdvancedPaste.Transform, input: PasteInput, app: NSRunningApplication, via: String) {
-        log("advanced paste: \(t.id) (\(via))")
+    private func applyAdvancedPaste(_ t: AdvancedPaste.Transform, input: PasteInput, target: PasteTarget, via: String) {
+        log("advanced paste: \(t.id) (\(via))" + (target.ownBox != nil ? " → own text box" : ""))
         func paste(_ result: PasteResult) {
-            app.activate()
+            if let tv = target.ownBox {
+                // Our own boxes keep plain text (the notes box on purpose), so a
+                // formatted result lands as its text. No clipboard swap, no ⌘V.
+                switch result {
+                case .failure(let message): overlay.showError(message)
+                case .text(let text), .rich(let text, _):
+                    if !OwnTextTarget.paste(text, into: tv) { overlay.showError("That text box closed — nothing pasted") }
+                }
+                return
+            }
+            target.refocus()
             switch result {
             case .failure(let message):
                 overlay.showError(message)
@@ -1024,7 +1030,7 @@ final class AppController {
         switch t.kind {
         case .ai(let instruction):
             guard let key = Keychain.get("claude"), !key.isEmpty else {
-                overlay.showError("Add a Claude key in Settings ▸ AI to use AI paste"); app.activate(); return
+                overlay.showError("Add a Claude key in Settings ▸ AI to use AI paste"); target.refocus(); return
             }
             overlay.showProcessing()
             let model = config.claudeModel
@@ -1034,7 +1040,7 @@ final class AppController {
                     let out = try await CloudPolish.claude(instructions: instruction, prompt: clip, model: model, apiKey: key)
                     await MainActor.run { self.overlay.hide(); paste(.text(out)) }
                 } catch {
-                    await MainActor.run { self.overlay.showError("Paste transform failed"); app.activate() }
+                    await MainActor.run { self.overlay.showError("Paste transform failed"); target.refocus() }
                 }
             }
         case .ocr:
@@ -2156,16 +2162,30 @@ final class AppController {
             overlay.showError("No clipboard history yet — copy something first")
             return
         }
-        guard let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != "com.grc.whisper" else {
-            overlay.showError("Click into a text field first, then hold + H")
-            return
-        }
+        guard let target = pasteTarget(key: "H") else { return }
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         guard let screen else { return }
         clipboardPalette.present(
             clips: clips, dark: config.appearance.isDark, screen: screen,
             onPick: { clip in
+                if let tv = target.ownBox {
+                    // One of our own boxes: the clip goes on the clipboard (Win+V
+                    // semantics) and the box pastes it itself — its own paste keeps
+                    // only plain text and pictures.
+                    log("clipboard history: pick → own text box")
+                    if let png = clip.image {
+                        Inserter.putImageOnClipboard(png)
+                        self.store.addImageClip(png, label: clip.content)
+                    } else {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(clip.content, forType: .string)
+                        self.store.addClip(clip.content)
+                    }
+                    if tv.window?.isVisible == true { tv.paste(nil) } else { self.overlay.showError("That text box closed — the clip is on the clipboard") }
+                    return
+                }
+                guard case .app(let app) = target else { return }
                 app.activate()
                 // let focus land back in the target field before the synthetic ⌘V
                 DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(220)) {
@@ -2178,8 +2198,40 @@ final class AppController {
                     }
                 }
             },
-            onCancel: { app.activate() }
+            onCancel: { target.refocus() }
         )
+    }
+
+    /// Where a hold + P or hold + H pick lands: another app (clipboard swap +
+    /// synthetic ⌘V), or one of Power Tools' own text boxes — Meeting Notes,
+    /// Agenda, the Live Ask field — which take the text straight in, like
+    /// dictation does (a synthetic ⌘V has no route into our own windows).
+    enum PasteTarget {
+        case app(NSRunningApplication)
+        case own(NSTextView)
+
+        var ownBox: NSTextView? { if case .own(let tv) = self { return tv }; return nil }
+
+        @MainActor func refocus() {
+            switch self {
+            case .app(let app): app.activate()
+            case .own(let tv): tv.window?.makeKeyAndOrderFront(nil); tv.window?.makeFirstResponder(tv)
+            }
+        }
+    }
+
+    /// Resolve the target NOW, before a drawer opens: the box with the cursor
+    /// in our own key window, else the frontmost other app.
+    private func pasteTarget(key: String) -> PasteTarget? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let selfFront = app.bundleIdentifier == "com.grc.whisper"
+        if let tv = OwnTextTarget.current(frontmostIsSelf: selfFront) { return .own(tv) }
+        if selfFront {
+            log("hold + \(key): Power Tools is in front but no text box has the cursor")
+            overlay.showError("Click into a text box first, then hold + \(key)")
+            return nil
+        }
+        return .app(app)
     }
 
     enum FileOp { case copy, cut, paste }

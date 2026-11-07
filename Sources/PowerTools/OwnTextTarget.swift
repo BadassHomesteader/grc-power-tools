@@ -23,6 +23,18 @@ enum OwnTextTarget {
         return tv
     }
 
+    /// Paste exactly `text` at the cursor (replacing any selection) as one undo
+    /// step, in the box's own typing style. No spacing guesses — a paste is
+    /// what was asked for, character for character.
+    @discardableResult
+    static func paste(_ text: String, into tv: NSTextView?) -> Bool {
+        guard let tv, tv.window?.isVisible == true, tv.isEditable else { return false }
+        tv.breakUndoCoalescing()
+        tv.insertText(text, replacementRange: tv.selectedRange())
+        tv.breakUndoCoalescing()
+        return true
+    }
+
     /// Insert at the cursor (replacing any selection), with a space before it
     /// when it would otherwise run into the previous word. False if the box is
     /// gone or no longer editable.

@@ -1040,6 +1040,15 @@ case "dictate-self-test":
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         tv.undoManager?.undo()
         check("undo works: \"\(tv.string)\"", tv.string == "Roof quote is approved.")
+        // hold + P into our own box: exact text, no spacing guess, one undo step.
+        tv.setSelectedRange(NSRange(location: (tv.string as NSString).length, length: 0))
+        let tsv = AdvancedPaste.run(AdvancedPaste.transforms.first { $0.id == "joinlist" }!,
+                                    on: PasteInput(text: "WO-1\nWO-2", html: nil, rtf: nil, image: nil))
+        if case .text(let out) = tsv { OwnTextTarget.paste(out, into: t1) }
+        check("advanced paste lands exactly: \"\(tv.string)\"", tv.string == "Roof quote is approved.WO-1, WO-2")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        tv.undoManager?.undo()
+        check("advanced paste undoes in one step: \"\(tv.string)\"", tv.string == "Roof quote is approved.")
         tv.isEditable = false
         check("read-only view is not a target", OwnTextTarget.current(frontmostIsSelf: true) == nil)
         w.makeFirstResponder(field)

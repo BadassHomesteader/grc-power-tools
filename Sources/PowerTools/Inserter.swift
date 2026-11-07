@@ -124,15 +124,19 @@ enum Inserter {
     /// Image variant: PNG + TIFF go on the clipboard (max app compatibility),
     /// then ⌘V. The image stays on the clipboard afterwards.
     static func pasteImageLeavingOnClipboard(_ png: Data) {
-        let pb = NSPasteboard.general
-        let item = NSPasteboardItem()
-        item.setData(png, forType: .png)
-        if let tiff = NSImage(data: png)?.tiffRepresentation { item.setData(tiff, forType: .tiff) }
-        pb.clearContents()
-        pb.writeObjects([item])
+        putImageOnClipboard(png)
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) {
             postCmdV()
         }
+    }
+
+    /// PNG + TIFF on the clipboard (max app compatibility), nothing pasted.
+    static func putImageOnClipboard(_ png: Data) {
+        let item = NSPasteboardItem()
+        item.setData(png, forType: .png)
+        if let tiff = NSImage(data: png)?.tiffRepresentation { item.setData(tiff, forType: .tiff) }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([item])
     }
 
     /// Type literal text into the focused app as unicode keyboard events — no
