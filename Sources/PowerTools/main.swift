@@ -303,6 +303,29 @@ case "diarize-test":
             print("\(ok ? "PASS" : "FAIL") — \(s.who) \(String(format: "%5.1f–%5.1f", s.from, s.to)) → \(l)")
         }
         print("\(right)/\(spans.count) sentences labeled right")
+        if args.contains("--claim"), room.enrolledMe == nil, let a = labelFor["A"] {
+            // "This is me" on A's label: A's lines become "me", and the voice
+            // cut out of the meeting must enroll A in a fresh run.
+            let voice = room.claimMe(label: a) ?? []
+            let after = spans.filter { $0.who == "A" }.allSatisfy { room.label(from: $0.from, to: $0.to) == "me" }
+            print("\(after ? "PASS" : "FAIL") — after \"This is me\" on \(a), A's lines are me")
+            print("\(voice.count >= 16_000 * 3 ? "PASS" : "FAIL") — cut \(String(format: "%.1f", Double(voice.count) / 16_000)) s of A's voice")
+            let again = RoomDiarizer(models: models, enrollment: voice, clockStart: 0)
+            var k = 0
+            while k < mix.count {
+                let n = min(1365, mix.count - k)
+                let b = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(n))!
+                b.frameLength = AVAudioFrameCount(n)
+                for j in 0..<n { b.floatChannelData![0][j] = mix[k + j] }
+                again.feed(b); k += n
+            }
+            again.finish()
+            let mine = spans.filter { $0.who == "A" }.filter { again.label(from: $0.from, to: $0.to) == "me" }.count
+            let others = spans.filter { $0.who != "A" }.filter { again.label(from: $0.from, to: $0.to) == "me" }.count
+            let ok = mine == spans.filter { $0.who == "A" }.count && others == 0
+            print("\(ok ? "PASS" : "FAIL") — next meeting enrolled from that voice: A as me \(mine)×, others as me \(others)×")
+            exit(after && ok ? 0 : 1)
+        }
         exit(right == spans.count ? 0 : 1)
     } catch {
         print("FAIL — \(error)"); exit(1)

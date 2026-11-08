@@ -776,6 +776,17 @@ final class MeetingRecorder {
         }
     }
 
+    /// "This is me" while recording: the diarizer relabels from now on, and
+    /// the user's recent speech becomes the voice sample for next meetings.
+    /// Returns the seconds of voice saved (0 = none).
+    func claimMe(label: String) -> Double {
+        guard let samples = room?.claimMe(label: label) else { return 0 }
+        let seconds = Double(samples.count) / VoiceSample.rate
+        guard seconds >= 3 else { return 0 }
+        VoiceSample.save(samples)
+        return seconds
+    }
+
     private func makeTranscriber(_ speaker: String, locale: Locale, offset: Double, wordTimes: Bool = false) -> LiveTranscriber {
         let t = LiveTranscriber(speaker: speaker, locale: locale, offset: offset, wordTimes: wordTimes)
         t.onFinal = { [weak self] in self?.onFinal?($0) }
@@ -1925,7 +1936,14 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         let text: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.textColor]
         for turn in MeetingText.turns(m.segments) {
             body.append(NSAttributedString(string: MeetingText.clock(turn.start) + "  ", attributes: stamp))
-            body.append(NSAttributedString(string: MeetingText.label(turn.speaker) + "  ", attributes: speaker(turn.speaker)))
+            var who = speaker(turn.speaker)
+            // In-room speaker names are clickable: "This is me".
+            if turn.speaker.hasPrefix("room"), let url = URL(string: "speaker://\(turn.speaker)") {
+                who[.link] = url
+                who[.toolTip] = "Click if this is you"
+            }
+            body.append(NSAttributedString(string: MeetingText.label(turn.speaker), attributes: who))
+            body.append(NSAttributedString(string: "  ", attributes: speaker(turn.speaker)))
             body.append(NSAttributedString(string: turn.text + "\n", attributes: text))
         }
         if recordingID == m.id {
@@ -1946,6 +1964,46 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
                                               : "No transcript — click Record when the meeting starts."
         hint.isHidden = body.length > 0
         if atBottom { textView.scrollToEndOfDocument(nil) }
+    }
+
+    // MARK: Speakers
+
+    /// A click on an in-room speaker's name in the transcript.
+    func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+        guard let url = link as? URL, url.scheme == "speaker", let label = url.host, let id = selectedID else { return false }
+        let menu = NSMenu()
+        let item = NSMenuItem(title: "This is me", action: #selector(claimMeClicked(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = [id, label]
+        menu.addItem(item)
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)   // screen coordinates
+        return true
+    }
+
+    @objc private func claimMeClicked(_ sender: NSMenuItem) {
+        guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
+        claimMe(pair[1], meetingID: pair[0])
+    }
+
+    /// That speaker becomes "Me" in this meeting (a previous "Me" takes its
+    /// label); while recording, also from now on and in future meetings.
+    func claimMe(_ label: String, meetingID id: String) {
+        guard let i = index(id) else { return }
+        for j in meetings[i].segments.indices {
+            switch meetings[i].segments[j].speaker {
+            case label: meetings[i].segments[j].speaker = "me"
+            case "me": meetings[i].segments[j].speaker = label
+            default: break
+            }
+        }
+        markDirty(id)
+        var saved = 0.0
+        if recordingID == id { saved = recorder?.claimMe(label: label) ?? 0 }
+        log("meetings: \(label) claimed as me" + (saved > 0 ? String(format: " — saved %.0f s of voice for next meetings", saved) : ""))
+        setStatus(saved > 0 ? "Got it — you're “Me” from now on, and the next meeting will know your voice."
+                            : "Got it — those lines are yours now.")
+        renderTranscript()
+        updateLiveViews(id)
     }
 
     private func selectRow(for id: String?) {
@@ -2319,6 +2377,8 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.font = .systemFont(ofSize: 14)
+        // Clickable speaker names keep their own color — no blue underline.
+        textView.linkTextAttributes = [.cursor: NSCursor.pointingHand]
 
         hint.font = .systemFont(ofSize: 13)
         hint.textColor = .tertiaryLabelColor

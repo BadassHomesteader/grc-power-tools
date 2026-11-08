@@ -54,6 +54,15 @@ final class RoomDiarizer: @unchecked Sendable {
     private let lock = NSLock()
     /// The enrolled "Me" slot, nil when there was no usable voice sample.
     let enrolledMe: Int?
+    /// The slot labeled "Me" now — the enrolled one, or the one the user
+    /// picked with "This is me" in the transcript.
+    private var meSlot: Int?
+    /// The last ~90 s of mic audio (device rate), so "This is me" can cut the
+    /// user's own speech out as a voice sample for the next meetings.
+    private var ring: [Float] = []
+    private var ringRate: Double = 48_000
+    private var fedSeconds: Double = 0   // diarizer clock at the end of `ring`
+    private static let ringSeconds: Double = 90
     /// Recording seconds at which the diarizer's own clock reads 0 (it starts
     /// after the transcriber when the model is still loading).
     let clockStart: Double
@@ -73,6 +82,7 @@ final class RoomDiarizer: @unchecked Sendable {
             }
         }
         enrolledMe = me
+        meSlot = me
         log("meetings: room speakers on — " + (me.map { "your voice enrolled in slot \($0)" }
             ?? "no voice sample yet (dictate a few times) — labels are Speaker 1, 2, 3"))
     }
@@ -83,6 +93,11 @@ final class RoomDiarizer: @unchecked Sendable {
         let samples = Array(UnsafeBufferPointer(start: data[0], count: Int(buffer.frameLength)))
         let rate = buffer.format.sampleRate
         queue.async { [self] in
+            ringRate = rate
+            ring += samples
+            fedSeconds += Double(samples.count) / rate
+            let keep = Int(Self.ringSeconds * rate)
+            if ring.count > keep + Int(rate * 10) { ring.removeFirst(ring.count - keep) }
             guard !lock.withLock({ failed }) else { return }
             do { _ = try diarizer.process(samples: samples, sourceSampleRate: rate) } catch {
                 lock.withLock { failed = true }
@@ -139,6 +154,34 @@ final class RoomDiarizer: @unchecked Sendable {
         }
     }
 
+    /// "This is me" on a transcript label ("room1"…): that voice slot becomes
+    /// "Me" from now on (a previous "Me" slot takes the label's number), and
+    /// the user's speech in the last 90 s comes back as a 16 kHz voice sample.
+    func claimMe(label: String) -> [Float]? {
+        guard label.hasPrefix("room"), let n = Int(label.dropFirst(4)) else { return nil }
+        return queue.sync { () -> [Float]? in
+            let slot: Int? = lock.withLock {
+                guard let slot = roomNumbers.first(where: { $0.value == n })?.key else { return nil }
+                roomNumbers[slot] = nil
+                if let old = meSlot { roomNumbers[old] = n }
+                meSlot = slot
+                return slot
+            }
+            guard let slot, let sp = diarizer.timeline.speakers[slot] else { return nil }
+            let ringStart = fedSeconds - Double(ring.count) / ringRate
+            var out: [Float] = []
+            for seg in sp.finalizedSegments + sp.tentativeSegments {
+                let a = max(Double(seg.startTime), ringStart), b = min(Double(seg.endTime), fedSeconds)
+                guard b - a > 0.3 else { continue }
+                let i = Int((a - ringStart) * ringRate), j = min(Int((b - ringStart) * ringRate), ring.count)
+                if i < j { out += ring[i..<j] }
+            }
+            let cap = Int(VoiceSample.keepSeconds * ringRate)
+            if out.count > cap { out = Array(out.suffix(cap)) }
+            return VoiceSample.to16k(out, rate: ringRate)
+        }
+    }
+
     /// (slot, start, end) of every segment so far, time-sorted — for tests.
     func debugSegments() -> [(Int, Double, Double)] {
         diarizer.timeline.speakers.flatMap { slot, sp in
@@ -160,7 +203,7 @@ final class RoomDiarizer: @unchecked Sendable {
             }
         }
         guard let best = overlap.max(by: { $0.value < $1.value })?.key else { return nil }
-        if best == enrolledMe { return "me" }
+        if best == lock.withLock({ meSlot }) { return "me" }
         // With your voice enrolled the others are Speaker 2, 3, 4. Without it,
         // nobody is claimed as "Me" — Speaker 1, 2, 3 in order of first speech
         // (guessing "the one who talks most" was wrong 8 times out of 8 in tests).
@@ -223,7 +266,19 @@ final class VoiceSample: @unchecked Sendable {
 
     static var seconds: Double { Double(load()?.count ?? 0) / rate }
 
-    private func resample(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+    /// Mono samples at any rate → 16 kHz.
+    static func to16k(_ samples: [Float], rate: Double) -> [Float] {
+        guard !samples.isEmpty, rate != Self.rate,
+              let src = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: 1, interleaved: false),
+              let buf = AVAudioPCMBuffer(pcmFormat: src, frameCapacity: AVAudioFrameCount(samples.count)) else { return samples }
+        buf.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { buf.floatChannelData![0].update(from: $0.baseAddress!, count: samples.count) }
+        let v = VoiceSample()
+        guard let out = v.resample(buf), let d = out.floatChannelData else { return [] }
+        return Array(UnsafeBufferPointer(start: d[0], count: Int(out.frameLength)))
+    }
+
+    fileprivate func resample(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         if buffer.format.sampleRate == Self.rate { return buffer }
         if converterSource != buffer.format {
             converter = AVAudioConverter(from: buffer.format, to: target)
