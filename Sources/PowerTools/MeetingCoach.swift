@@ -91,7 +91,7 @@ enum MeetingCoach {
         \(cues.isEmpty ? "  (none)" : cues.map { "  " + $0 }.joined(separator: "\n"))
         transcript (meeting time, oldest first; the last lines are the most recent):
         <TRANSCRIPT>
-        \(turns.map { "[\(MeetingText.clock($0.start))] \(MeetingText.label($0.speaker)): \($0.text)" }.joined(separator: "\n"))
+        \(turns.map { "[\(MeetingText.clock($0.start))] \(MeetingText.label($0.speaker, names: m.speakerNames)): \($0.text)" }.joined(separator: "\n"))
         </TRANSCRIPT>
         """
     }

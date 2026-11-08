@@ -26,7 +26,8 @@ import Speech
 
 struct MeetingSegment: Codable, Equatable {
     /// "me" (you), "room1"…"room4" (others at the mic, from RoomDiarizer),
-    /// or "them" (system audio — the call).
+    /// "them1"…"them4" (people on the call, by voice), or "them" (the call,
+    /// before its voice model loaded or with Room speakers off).
     var speaker: String
     /// Seconds from the start of the meeting's first recording.
     var start: Double
@@ -64,6 +65,8 @@ struct Meeting: Codable {
     /// The meeting's agenda as pasted/loaded — one topic per line, or a whole
     /// invite. Live checks items off as they're discussed; Enhance reports coverage.
     var agenda: String?
+    /// Names the user gave speakers in this meeting: "them1" → "Ralph".
+    var speakerNames: [String: String]?
 
     static func blank(context: String? = nil) -> Meeting {
         Meeting(id: UUID().uuidString, title: "", created: Date(), recordedSeconds: 0,
@@ -258,10 +261,10 @@ enum MeetingText {
     /// mostly appear in a "them" segment within a few seconds is that echo.
     static func cleaned(_ segments: [MeetingSegment]) -> [MeetingSegment] {
         let sorted = segments.sorted { $0.start < $1.start }
-        let thems = sorted.filter { $0.speaker == "them" }.map { (start: $0.start, words: Set(words($0.text))) }
+        let thems = sorted.filter { isCall($0.speaker) }.map { (start: $0.start, words: Set(words($0.text))) }
         guard !thems.isEmpty else { return sorted }
         return sorted.filter { seg in
-            guard seg.speaker != "them" else { return true }   // any mic speaker can echo the call
+            guard !isCall(seg.speaker) else { return true }   // any mic speaker can echo the call
             let w = words(seg.text)
             guard w.count >= 3 else {
                 // Short "me" bits ("yeah", "okay") only count as echo on an exact match.
@@ -295,18 +298,30 @@ enum MeetingText {
         return out
     }
 
-    static func label(_ speaker: String) -> String {
+    /// The call side: "them", or "them1"… once the call's voices are told apart.
+    static func isCall(_ speaker: String) -> Bool { speaker.hasPrefix("them") }
+
+    /// Display name: a name the user gave this speaker in this meeting, else
+    /// Me / Speaker N (room) / Them N (call) / Them.
+    static func label(_ speaker: String, names: [String: String]? = nil) -> String {
+        if let n = names?[speaker]?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { return n }
         switch speaker {
         case "me": return "Me"
         case "them": return "Them"
-        default: return speaker.hasPrefix("room") ? "Speaker \(speaker.dropFirst(4))" : speaker.capitalized
+        default:
+            if speaker.hasPrefix("room") { return "Speaker \(speaker.dropFirst(4))" }
+            if speaker.hasPrefix("them") { return "Them \(speaker.dropFirst(4))" }
+            return speaker.capitalized
         }
     }
 
     static func color(_ speaker: String) -> NSColor {
         switch speaker {
         case "me": return .systemBlue
-        case "them": return .systemPurple
+        case "them", "them1": return .systemPurple
+        case "them2": return .systemIndigo
+        case "them3": return .systemBrown
+        case "them4": return .systemCyan
         case "room1": return .systemPink
         case "room2": return .systemGreen
         case "room3": return .systemOrange
@@ -316,11 +331,13 @@ enum MeetingText {
 
     /// Said once wherever a transcript goes to a model.
     static let speakerKey = "\"Me\" is the user. \"Speaker 1/2/3…\" are other people in the room with the user " +
-        "(told apart by voice — labels can be wrong). \"Them\" is everyone on the call (remote audio)."
+        "(told apart by voice — labels can be wrong). \"Them 1/2/3…\" are different people on the call, told apart " +
+        "by voice the same way; plain \"Them\" is the call with voices not told apart. A real name means the user " +
+        "named that speaker."
 
     /// Plain transcript, one turn per paragraph — what Copy and the enhancer see.
     static func plain(_ m: Meeting) -> String {
-        turns(m.segments).map { "[\(clock($0.start))] \(label($0.speaker)): \($0.text)" }
+        turns(m.segments).map { "[\(clock($0.start))] \(label($0.speaker, names: m.speakerNames)): \($0.text)" }
             .joined(separator: "\n\n")
     }
 
@@ -685,6 +702,10 @@ final class MeetingRecorder {
     private var _room: RoomDiarizer?
     private var room: RoomDiarizer? { roomLock.withLock { _room } }
     private var micSeconds: Double = 0
+    /// The same for the call audio: Them 1, 2, 3 (also under roomLock).
+    private var _call: RoomDiarizer?
+    private var call: RoomDiarizer? { roomLock.withLock { _call } }
+    private var callSeconds: Double = 0
     private var recordingOffset: Double = 0
     /// Mic phrases waiting for their speaker label; stop() waits for them.
     private let labeling = DispatchGroup()
@@ -720,20 +741,26 @@ final class MeetingRecorder {
                 self.room?.feed(buf)
             }
             do { try m.start(); mic = m } catch { warnings.append("Mic unavailable (\(error.localizedDescription))") }
-            if mic != nil, RoomDiarizer.enabled { startRoomSpeakers() }
+            if mic != nil, RoomDiarizer.enabled { startDiarizer("room") }
         } else {
             warnings.append("Microphone permission is off — only the other side is transcribed")
         }
 
         if screenAllowed {
-            let t = makeTranscriber("them", locale: locale, offset: offset)
+            let t = makeTranscriber("them", locale: locale, offset: offset, wordTimes: RoomDiarizer.enabled)
             try await t.start()
             let s = SystemAudioCapture()
-            s.onBuffer = { [weak t] in t?.feed($0) }
+            s.onBuffer = { [weak t, weak self] buf in
+                t?.feed(buf)
+                guard let self else { return }
+                self.roomLock.withLock { self.callSeconds += Double(buf.frameLength) / buf.format.sampleRate }
+                self.call?.feed(buf)
+            }
             s.onStop = { [weak self] _ in self?.onWarning?("System audio capture stopped — only your mic is being transcribed now") }
             do { try await s.start(); system = s } catch {
                 warnings.append("System audio unavailable (\(error.localizedDescription))")
             }
+            if system != nil, RoomDiarizer.enabled { startDiarizer("them") }
         } else {
             CGRequestScreenCaptureAccess()
             warnings.append("Grant Screen Recording (System Settings ▸ Privacy) to transcribe the other side — mic only for now")
@@ -746,26 +773,29 @@ final class MeetingRecorder {
         return warnings.isEmpty ? nil : warnings.joined(separator: " · ")
     }
 
-    /// Loads the diarizer model (a one-time download the first time) without
-    /// holding up the recording; mic phrases before it's ready stay "Me".
-    private func startRoomSpeakers() {
+    /// Loads a diarizer model (a one-time download the first time) without
+    /// holding up the recording; phrases before it's ready stay "Me" / "Them".
+    /// "room" = voices at the mic, "them" = voices on the call.
+    private func startDiarizer(_ prefix: String) {
+        let isCall = prefix == "them"
         Task.detached { [weak self] in
             do {
-                let models = try await RoomDiarizer.models()
-                guard let self, self.mic != nil else { return }
-                let start = self.roomLock.withLock { self.micSeconds }
-                let r = RoomDiarizer(models: models, enrollment: VoiceSample.load(), clockStart: start)
-                self.roomLock.withLock { self._room = r }
+                let models = try await RoomDiarizer.models(for: prefix)
+                guard let self, isCall ? self.system != nil : self.mic != nil else { return }
+                let start = self.roomLock.withLock { isCall ? self.callSeconds : self.micSeconds }
+                let r = RoomDiarizer(models: models, enrollment: isCall ? nil : VoiceSample.load(),
+                                     clockStart: start, prefix: prefix)
+                self.roomLock.withLock { if isCall { self._call = r } else { self._room = r } }
             } catch {
-                log("meetings: room speakers unavailable: \(error)")
+                log("meetings: \(isCall ? "call" : "room") speakers unavailable: \(error)")
             }
         }
     }
 
-    /// A finished mic phrase waits for the diarizer to catch up, then takes the
-    /// speaker label of whoever spoke most during it.
-    private func labelMicPhrase(_ seg: MeetingSegment, words: [MeetingWord]) {
-        guard let room else { onFinal?(seg); return }
+    /// A finished phrase waits for its diarizer to catch up, then takes the
+    /// speaker label of whoever spoke most during it (split per word).
+    private func labelPhrase(_ seg: MeetingSegment, words: [MeetingWord]) {
+        guard let room = MeetingText.isCall(seg.speaker) ? call : room else { onFinal?(seg); return }
         labeling.enter()
         let offset = recordingOffset
         DispatchQueue.global().asyncAfter(deadline: .now() + RoomDiarizer.labelDelay) { [weak self] in
@@ -790,7 +820,7 @@ final class MeetingRecorder {
     private func makeTranscriber(_ speaker: String, locale: Locale, offset: Double, wordTimes: Bool = false) -> LiveTranscriber {
         let t = LiveTranscriber(speaker: speaker, locale: locale, offset: offset, wordTimes: wordTimes)
         t.onFinal = { [weak self] in self?.onFinal?($0) }
-        if wordTimes { t.onFinalWords = { [weak self] seg, words in self?.labelMicPhrase(seg, words: words) } }
+        if wordTimes { t.onFinalWords = { [weak self] seg, words in self?.labelPhrase(seg, words: words) } }
         t.onVolatile = { [weak self] in self?.onVolatile?(speaker, $0) }
         transcribers.append(t)
         return t
@@ -817,7 +847,8 @@ final class MeetingRecorder {
             }
         }
         room?.finish()
-        roomLock.withLock { _room = nil; micSeconds = 0 }
+        call?.finish()
+        roomLock.withLock { _room = nil; micSeconds = 0; _call = nil; callSeconds = 0 }
     }
 }
 
@@ -828,9 +859,11 @@ enum MeetingEnhancer {
     You turn a meeting transcript plus the user's own rough notes into clean meeting notes.
 
     Speakers: "Me" is the user. "Speaker 1", "Speaker 2"… are other people in the room \
-    with the user, told apart by voice (labels can be wrong). "Them" is everyone on the \
-    call, lumped together — infer distinct people from context when names are used, \
-    otherwise say "they". Transcription errors are common; read charitably \
+    with the user, told apart by voice (labels can be wrong). "Them 1", "Them 2"… are \
+    different people on the call, told apart by voice the same way; plain "Them" is the \
+    call with its voices not told apart — infer distinct people from context when names \
+    are used, otherwise say "they". A real name in place of a label is a speaker the \
+    user named — use it. Transcription errors are common; read charitably \
     (e.g. "cruise" next to "crews" is probably "crews").
 
     Output EXACTLY this Markdown structure, in this order:
@@ -1937,12 +1970,13 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         for turn in MeetingText.turns(m.segments) {
             body.append(NSAttributedString(string: MeetingText.clock(turn.start) + "  ", attributes: stamp))
             var who = speaker(turn.speaker)
-            // In-room speaker names are clickable: "This is me".
-            if turn.speaker.hasPrefix("room"), let url = URL(string: "speaker://\(turn.speaker)") {
+            // Every speaker but you is clickable: name them, or "This is me" (room).
+            if turn.speaker != "me", let url = URL(string: "speaker://\(turn.speaker)") {
                 who[.link] = url
-                who[.toolTip] = "Click if this is you"
+                who[.toolTip] = turn.speaker.hasPrefix("room") ? "Click to name this speaker, or if this is you"
+                                                               : "Click to name this speaker"
             }
-            body.append(NSAttributedString(string: MeetingText.label(turn.speaker), attributes: who))
+            body.append(NSAttributedString(string: MeetingText.label(turn.speaker, names: m.speakerNames), attributes: who))
             body.append(NSAttributedString(string: "  ", attributes: speaker(turn.speaker)))
             body.append(NSAttributedString(string: turn.text + "\n", attributes: text))
         }
@@ -1968,16 +2002,65 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
     // MARK: Speakers
 
-    /// A click on an in-room speaker's name in the transcript.
+    /// A click on a speaker's name in the transcript.
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-        guard let url = link as? URL, url.scheme == "speaker", let label = url.host, let id = selectedID else { return false }
+        guard let url = link as? URL, url.scheme == "speaker", let label = url.host,
+              let id = selectedID, let i = index(id) else { return false }
+        let named = meetings[i].speakerNames?[label] != nil
         let menu = NSMenu()
-        let item = NSMenuItem(title: "This is me", action: #selector(claimMeClicked(_:)), keyEquivalent: "")
-        item.target = self
-        item.representedObject = [id, label]
-        menu.addItem(item)
+        func add(_ title: String, _ action: Selector) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = [id, label]
+            menu.addItem(item)
+        }
+        add(named ? "Rename…" : "Name this speaker…", #selector(nameSpeakerClicked(_:)))
+        if named { add("Remove name", #selector(clearNameClicked(_:))) }
+        if label.hasPrefix("room") {
+            menu.addItem(.separator())
+            add("This is me", #selector(claimMeClicked(_:)))
+        }
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)   // screen coordinates
         return true
+    }
+
+    @objc private func nameSpeakerClicked(_ sender: NSMenuItem) {
+        guard let pair = sender.representedObject as? [String], pair.count == 2,
+              let window, let i = index(pair[0]) else { return }
+        let (id, label) = (pair[0], pair[1])
+        let alert = NSAlert()
+        alert.messageText = "Name \(MeetingText.label(label))"
+        alert.informativeText = "Shown in this meeting's transcript, notes, and exports. New lines from this voice get the name too."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Name"
+        field.stringValue = meetings[i].speakerNames?[label] ?? ""
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.nameSpeaker(label, field.stringValue, meetingID: id)
+        }
+    }
+
+    @objc private func clearNameClicked(_ sender: NSMenuItem) {
+        guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
+        nameSpeaker(pair[1], "", meetingID: pair[0])
+    }
+
+    /// Names (or, with "", un-names) one speaker label in one meeting.
+    func nameSpeaker(_ label: String, _ name: String, meetingID id: String) {
+        guard let i = index(id) else { return }
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var names = meetings[i].speakerNames ?? [:]
+        names[label] = n.isEmpty ? nil : n
+        meetings[i].speakerNames = names.isEmpty ? nil : names
+        markDirty(id)
+        log("meetings: \(label) " + (n.isEmpty ? "name removed" : "named"))
+        setStatus(n.isEmpty ? "Name removed." : "Named \(n).")
+        renderTranscript()
+        updateLiveViews(id)
     }
 
     @objc private func claimMeClicked(_ sender: NSMenuItem) {
@@ -1996,6 +2079,9 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             default: break
             }
         }
+        // That label now belongs to whoever was "Me" before — its name doesn't.
+        meetings[i].speakerNames?[label] = nil
+        if meetings[i].speakerNames?.isEmpty == true { meetings[i].speakerNames = nil }
         markDirty(id)
         var saved = 0.0
         if recordingID == id { saved = recorder?.claimMe(label: label) ?? 0 }
@@ -2547,18 +2633,23 @@ func meetingTestRun(me: URL, them: URL?, locale: Locale, roomEnrollment: [Float]
     try await AppleSpeechUtterance.ensureAssets(locale: locale)
     var m = Meeting.blank()
     let collected = SegmentBox()
-    var room: RoomDiarizer?
+    var mic: RoomDiarizer?, call: RoomDiarizer?
     if let roomEnrollment {
-        room = RoomDiarizer(models: try await RoomDiarizer.models(),
-                            enrollment: roomEnrollment.isEmpty ? nil : roomEnrollment, clockStart: 0)
+        mic = RoomDiarizer(models: try await RoomDiarizer.models(),
+                           enrollment: roomEnrollment.isEmpty ? nil : roomEnrollment, clockStart: 0)
+        if them != nil {
+            call = RoomDiarizer(models: try await RoomDiarizer.models(for: "them"),
+                                enrollment: nil, clockStart: 0, prefix: "them")
+        }
     }
     for (speaker, url) in [("me", me), ("them", them)] {
         guard let url else { continue }
+        let room = speaker == "me" ? mic : call
         let t = LiveTranscriber(speaker: speaker, locale: locale, offset: 0, wallClock: false,
-                                wordTimes: speaker == "me" && room != nil)
+                                wordTimes: room != nil)
         t.onFinal = { collected.add($0) }
         let pending = WordBox()
-        if speaker == "me", room != nil { t.onFinalWords = { pending.add($0, $1) } }
+        if room != nil { t.onFinalWords = { pending.add($0, $1) } }
         try await t.start()
         let file = try AVAudioFile(forReading: url)
         while file.framePosition < file.length {
@@ -2567,11 +2658,11 @@ func meetingTestRun(me: URL, them: URL?, locale: Locale, roomEnrollment: [Float]
             if buf.frameLength == 0 { break }
             if let mono = buf.monoFloat(loudest: speaker == "me") {
                 t.feed(mono)
-                if speaker == "me" { room?.feed(mono) }
+                room?.feed(mono)
             }
         }
         await t.finish()
-        if speaker == "me", let room {
+        if let room {
             room.finish()   // every buffer through the diarizer before labeling
             if ProcessInfo.processInfo.environment["PT_WORD_DEBUG"] != nil {
                 for (_, words) in pending.all() { for w in words {

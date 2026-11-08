@@ -327,7 +327,7 @@ enum OneNotePageBuilder {
             body.append("<h2>Transcript</h2>")
             for t in turns {
                 body.append("<p><span style=\"color:#999999\">\(MeetingText.clock(t.start))</span> "
-                            + "<b>\(esc(MeetingText.label(t.speaker)))</b> \(esc(t.text))</p>")
+                            + "<b>\(esc(MeetingText.label(t.speaker, names: m.speakerNames)))</b> \(esc(t.text))</p>")
             }
         }
         let created = ISO8601DateFormatter().string(from: m.created)

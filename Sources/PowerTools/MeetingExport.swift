@@ -50,7 +50,7 @@ enum MeetingExport {
         if o.enhanced { add("Enhanced notes", m.enhanced) }
         if o.notes { add("My notes", m.notes) }
         if o.live { add("Live list", m.live) }
-        if o.transcript, !m.segments.isEmpty { add("Transcript (Me = me, Speaker N = others in the room, Them = the call)", MeetingText.plain(m)) }
+        if o.transcript, !m.segments.isEmpty { add("Transcript (Me = me, Speaker N = others in the room, Them N = people on the call)", MeetingText.plain(m)) }
         return parts.joined(separator: "\n\n")
     }
 

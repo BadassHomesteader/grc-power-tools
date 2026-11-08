@@ -34,8 +34,9 @@ enum MeetingLive {
 
     static let instructions = """
     You assist the user LIVE during a meeting. "Me" is the user; "Speaker 1/2/3…" are \
-    other people in the room (told apart by voice — labels can be wrong); "Them" is \
-    everyone on the call. From the transcript so far (and the user's notes), return \
+    other people in the room (told apart by voice — labels can be wrong); "Them 1/2/3…" \
+    are people on the call, told apart the same way ("Them" alone = the call); a real \
+    name is a speaker the user named. From the transcript so far (and the user's notes), return \
     EXACTLY this Markdown and nothing else:
 
     ## Action items
@@ -120,7 +121,7 @@ enum MeetingLive {
 
     static let askInstructions = """
     Answer the user's question about the meeting from the transcript (and their \
-    notes). "Me" is the user; "Speaker N" are others in the room; "Them" is the call. One to three sentences, \
+    notes). "Me" is the user; "Speaker N" are others in the room; "Them N" are people on the call; real names were set by the user. One to three sentences, \
     plain text. If it wasn't discussed, say so briefly — never guess.
     """
 

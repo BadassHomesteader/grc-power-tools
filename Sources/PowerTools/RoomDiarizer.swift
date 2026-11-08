@@ -10,7 +10,11 @@ import Foundation
 ///
 /// "Me" is the slot enrolled from your own dictation audio (`VoiceSample`);
 /// the others are "Speaker 2", "3", "4" in the order they first speak. With no
-/// sample yet, nobody is called "Me": Speaker 1, 2, 3. Call audio stays "Them".
+/// sample yet, nobody is called "Me": Speaker 1, 2, 3.
+///
+/// A second instance (prefix "them") runs on the call audio: everyone on a
+/// Teams/Zoom call arrives mixed in one stream, and it tells them apart as
+/// Them 1, 2, 3, 4 — no enrollment, no "Me" (you aren't in the call audio).
 final class RoomDiarizer: @unchecked Sendable {
     /// PT_SORTFORMER=fast|balanced|high|efficient overrides it (tests).
     /// Efficient v2.1 (~2 s behind live). Measured on two-voice and
@@ -38,14 +42,16 @@ final class RoomDiarizer: @unchecked Sendable {
     static var enabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
 
     private static let modelLock = NSLock()
-    private static var cachedModels: SortformerModels?
+    private static var cachedModels: [String: SortformerModels] = [:]
 
     /// One-time download (FluidInference/diar-streaming-sortformer-coreml →
     /// ~/Library/Application Support/FluidAudio/Models), then cached per launch.
-    static func models() async throws -> SortformerModels {
-        if let m = modelLock.withLock({ cachedModels }) { return m }
+    /// Each stream (mic "room", call "them") gets its own loaded copy, so two
+    /// diarizers never run predictions on the same Core ML model at once.
+    static func models(for prefix: String = "room") async throws -> SortformerModels {
+        if let m = modelLock.withLock({ cachedModels[prefix] }) { return m }
         let m = try await SortformerModels.loadFromHuggingFace(config: config)
-        modelLock.withLock { cachedModels = m }
+        modelLock.withLock { cachedModels[prefix] = m }
         return m
     }
 
@@ -68,13 +74,17 @@ final class RoomDiarizer: @unchecked Sendable {
     let clockStart: Double
     private var roomNumbers: [Int: Int] = [:]   // slot → 2, 3, 4 in order of first speech
     private var failed = false
+    /// Label prefix: "room" (mic: room1…, can be "me") or "them" (call: them1…).
+    let prefix: String
+    private var isCall: Bool { prefix == "them" }
 
-    init(models: SortformerModels, enrollment: [Float]?, clockStart: Double) {
+    init(models: SortformerModels, enrollment: [Float]?, clockStart: Double, prefix: String = "room") {
         diarizer = SortformerDiarizer(config: Self.config)
         diarizer.initialize(models: models)
         self.clockStart = clockStart
+        self.prefix = prefix
         var me: Int?
-        if let enrollment, enrollment.count >= 16_000 * 3 {
+        if prefix == "room", let enrollment, enrollment.count >= 16_000 * 3 {
             do {
                 me = try diarizer.enrollSpeaker(withAudio: enrollment, sourceSampleRate: 16_000, named: "Me")?.index
             } catch {
@@ -83,6 +93,7 @@ final class RoomDiarizer: @unchecked Sendable {
         }
         enrolledMe = me
         meSlot = me
+        if prefix == "them" { log("meetings: call speakers on — Them 1, 2, 3 by voice"); return }
         log("meetings: room speakers on — " + (me.map { "your voice enrolled in slot \($0)" }
             ?? "no voice sample yet (dictate a few times) — labels are Speaker 1, 2, 3"))
     }
@@ -93,11 +104,13 @@ final class RoomDiarizer: @unchecked Sendable {
         let samples = Array(UnsafeBufferPointer(start: data[0], count: Int(buffer.frameLength)))
         let rate = buffer.format.sampleRate
         queue.async { [self] in
-            ringRate = rate
-            ring += samples
             fedSeconds += Double(samples.count) / rate
-            let keep = Int(Self.ringSeconds * rate)
-            if ring.count > keep + Int(rate * 10) { ring.removeFirst(ring.count - keep) }
+            if !isCall {   // only the mic's voices can be claimed as "Me"
+                ringRate = rate
+                ring += samples
+                let keep = Int(Self.ringSeconds * rate)
+                if ring.count > keep + Int(rate * 10) { ring.removeFirst(ring.count - keep) }
+            }
             guard !lock.withLock({ failed }) else { return }
             do { _ = try diarizer.process(samples: samples, sourceSampleRate: rate) } catch {
                 lock.withLock { failed = true }
@@ -158,7 +171,7 @@ final class RoomDiarizer: @unchecked Sendable {
     /// "Me" from now on (a previous "Me" slot takes the label's number), and
     /// the user's speech in the last 90 s comes back as a 16 kHz voice sample.
     func claimMe(label: String) -> [Float]? {
-        guard label.hasPrefix("room"), let n = Int(label.dropFirst(4)) else { return nil }
+        guard !isCall, label.hasPrefix("room"), let n = Int(label.dropFirst(4)) else { return nil }
         return queue.sync { () -> [Float]? in
             let slot: Int? = lock.withLock {
                 guard let slot = roomNumbers.first(where: { $0.value == n })?.key else { return nil }
@@ -189,8 +202,9 @@ final class RoomDiarizer: @unchecked Sendable {
         }.sorted { $0.1 < $1.1 }
     }
 
-    /// Speaker for a mic phrase spanning [from, to] seconds of this recording:
-    /// "me", "room2"…"room4", or nil when the diarizer heard no speech there.
+    /// Speaker for a phrase spanning [from, to] seconds of this recording:
+    /// "me", "room2"…"room4" (mic) or "them1"…"them4" (call), or nil when the
+    /// diarizer heard no speech there.
     func label(from: Double, to: Double, minSpan: Double = 0.5) -> String? {
         let a = Float(from - clockStart), b = Float(max(to, from + minSpan) - clockStart)
         guard b > 0 else { return nil }
@@ -209,10 +223,10 @@ final class RoomDiarizer: @unchecked Sendable {
         // (guessing "the one who talks most" was wrong 8 times out of 8 in tests).
         let first = enrolledMe == nil ? 1 : 2
         return lock.withLock {
-            if let n = roomNumbers[best] { return "room\(n)" }
+            if let n = roomNumbers[best] { return "\(prefix)\(n)" }
             let n = max(roomNumbers.values.max().map { $0 + 1 } ?? first, first)
             roomNumbers[best] = n
-            return "room\(n)"
+            return "\(prefix)\(n)"
         }
     }
 }
