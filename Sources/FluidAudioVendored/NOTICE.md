@@ -17,3 +17,19 @@ compile with the same plain `swiftc` invocation as the rest of the app.
 
 To update: re-clone FluidAudio, diff the same folder set, re-copy, re-check
 MachTaskSelfWrapper/FastClusterWrapper usage in case that changed upstream.
+
+## Diarizer subset (2026-11-07, Power Tools v1.107)
+
+Added from the SAME commit (2e860df): Diarizer/Sortformer/*.swift (streaming
+only, not Offline/), Diarizer/DiarizerTimeline.swift, DiarizerProtocol.swift;
+DiarizerError copied verbatim out of Diarizer/Core/DiarizerTypes.swift into
+Diarizer/DiarizerError.swift; Shared/ANEMemoryOptimizer.swift and the
+ModelNames.Sortformer catalog restored to upstream. Used by RoomDiarizer
+(in-room speakers in Meeting Notes).
+
+LOCAL PATCH — SortformerDiarizer.preprocessAudioToFeatureTargetLocked: the
+streaming mel re-padded every call and under-consumed samples, so the
+timeline drifted ~1% fast (measured 0.46 s at 48 s). Patched to one
+virtually center-padded stream (nFFT/2 zero seed, `.prePadded`,
+frames*stride consumed) — same approach upstream describes on main. Drop
+the patch when re-vendoring a version that has it.

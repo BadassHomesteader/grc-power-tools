@@ -247,6 +247,127 @@ case "advpaste-preview", "advancedpaste-preview":
         if let data = rep.representation(using: .png, properties: [:]) { try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)") }
     }
 
+case "diarize-test":
+    // Room speakers end to end: <dir> holds NN-A.aiff / NN-B.aiff sentences
+    // (two voices, in order) and enroll-A*.aiff (voice A alone). Builds one
+    // "meeting" with 0.7 s gaps, enrolls A as "Me", streams it through
+    // RoomDiarizer in mic-sized buffers, then labels each sentence.
+    guard args.count >= 2 else { print("usage: diarize-test <dir>"); exit(2) }
+    let dir = URL(fileURLWithPath: args[1])
+    let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).sorted()
+    let conv = AudioConverter(sampleRate: 16_000)
+    func load(_ name: String) -> [Float] { (try? conv.resampleAudioFile(dir.appendingPathComponent(name))) ?? [] }
+    let enroll = files.filter { $0.hasPrefix("enroll-A") }.flatMap { load($0) }
+    var mix: [Float] = []
+    var spans: [(who: String, from: Double, to: Double)] = []
+    for f in files where f.first?.isNumber == true {
+        let a = load(f)
+        let from = Double(mix.count) / 16_000
+        mix += a
+        spans.append((String(f.split(separator: "-")[1].prefix(1)), from, Double(mix.count) / 16_000))
+        mix += [Float](repeating: 0, count: 11_200)
+    }
+    print("meeting \(String(format: "%.1f", Double(mix.count) / 16_000)) s, \(spans.count) sentences, enrollment \(String(format: "%.1f", Double(enroll.count) / 16_000)) s")
+    do {
+        let t0 = Date()
+        let models = try runBlocking { try await RoomDiarizer.models() }
+        print("models ready in \(String(format: "%.1f", Date().timeIntervalSince(t0))) s")
+        let room = RoomDiarizer(models: models, enrollment: args.contains("--no-enroll") ? nil : enroll, clockStart: 0)
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+        let t1 = Date()
+        var i = 0
+        while i < mix.count {
+            let n = min(Int(ProcessInfo.processInfo.environment["PT_DIAR_CHUNK"] ?? "1365") ?? 1365, mix.count - i)   // 1365 ≈ a 4096-frame 48 kHz mic buffer
+            let b = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(n))!
+            b.frameLength = AVAudioFrameCount(n)
+            for j in 0..<n { b.floatChannelData![0][j] = mix[i + j] }
+            room.feed(b)
+            i += n
+        }
+        room.finish()
+        print("diarized in \(String(format: "%.1f", Date().timeIntervalSince(t1))) s (\(String(format: "%.0f", Double(mix.count) / 16_000 / max(Date().timeIntervalSince(t1), 0.01)))× realtime)")
+        if ProcessInfo.processInfo.environment["PT_DIAR_DEBUG"] != nil {
+            for s in spans { print(String(format: "  truth %@ %5.2f–%5.2f", s.who, s.from, s.to)) }
+            for seg in room.debugSegments() { print(String(format: "  diar  slot%d %5.2f–%5.2f", seg.0, seg.1, seg.2)) }
+        }
+        // A must be "me" (or, with no enrollment, one consistent label); every
+        // other voice must get its own label, the same every time it speaks.
+        var right = 0
+        var labelFor: [String: String] = [:]
+        for s in spans {
+            let l = room.label(from: s.from, to: s.to) ?? "nil"
+            if labelFor[s.who] == nil, l != "nil", !labelFor.values.contains(l) { labelFor[s.who] = l }
+            let want = s.who == "A" && room.enrolledMe != nil ? "me" : (labelFor[s.who] ?? "?")
+            let ok = l == want
+            if ok { right += 1 }
+            print("\(ok ? "PASS" : "FAIL") — \(s.who) \(String(format: "%5.1f–%5.1f", s.from, s.to)) → \(l)")
+        }
+        print("\(right)/\(spans.count) sentences labeled right")
+        exit(right == spans.count ? 0 : 1)
+    } catch {
+        print("FAIL — \(error)"); exit(1)
+    }
+
+case "coach-preview":
+    // The Live panel with a coach cue on top, rendered to a PNG.
+    let out = args.count >= 2 ? args[1] : "coach-preview.png"
+    MainActor.assumeIsolated {
+        _ = NSApplication.shared
+        let p = MeetingLivePanel(dark: !args.contains("light"))
+        let cue = MeetingCoach.Cue(at: Date().addingTimeInterval(-20), cue: "They asked to stop. Pause this topic without adding final points.",
+                                   say: "You're right. I'm worried, but I'll step back. Let's take a break.",
+                                   reason: "Speaker 2 asked to stop at 0:31; you continued at 0:36.", signal: "deescalation")
+        let live = "## Action items\n- Me — send the inspection address — today\n\n## Questions to ask\n- What would help you feel in charge of this?"
+        p.update(title: "Kitchen table talk", content: MeetingLive.attributed(live: live, answers: [], cue: cue), status: "Updated 7:42 PM · Coach on")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        if let rep = p.snapshot(), let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")
+        }
+    }
+
+case "coach-test":
+    // The live coach on scripted conversations, through the real prompt file
+    // and model. Expect a cue for "pushy" and quiet for "calm".
+    func seg(_ who: String, _ t: Double, _ text: String) -> MeetingSegment { MeetingSegment(speaker: who, start: t, text: text) }
+    let scenarios: [(String, [MeetingSegment])] = [
+        ("pushy", [
+            seg("me", 0, "You really need to tell your doctor about the dizziness."),
+            seg("room2", 6, "I already told you, I'm tracking it myself and I'll bring it up at my next visit."),
+            seg("me", 12, "But you have to call them now. This is serious."),
+            seg("room2", 18, "I heard you. I'm an adult and I want to decide this myself."),
+            seg("me", 24, "If you don't call, you're being irresponsible. I know how these things go."),
+            seg("room2", 31, "Can we please stop talking about this? I need a break."),
+            seg("me", 36, "Just one more thing, you have to listen to me."),
+        ]),
+        ("calm", [
+            seg("me", 0, "What time works for the inspection on Tuesday?"),
+            seg("room2", 5, "Ten in the morning is good for me."),
+            seg("me", 9, "Great, I'll put it on the calendar and send the address."),
+            seg("room2", 14, "Thanks, see you then."),
+        ]),
+    ]
+    let cfg = Config.load()
+    var fails = 0
+    for (name, segs) in scenarios {
+        var m = Meeting.blank()
+        m.segments = segs
+        let started = Date()
+        do {
+            let cue = try runBlocking { try await MeetingCoach.evaluate(m, meetingNow: (segs.last?.start ?? 0) + 4, recent: [], config: cfg) }
+            let want = name == "pushy"
+            let ok = (cue != nil) == want
+            if !ok { fails += 1 }
+            print("\(ok ? "PASS" : "FAIL") — \(name): \(cue == nil ? "quiet" : "cue") in \(String(format: "%.1f", Date().timeIntervalSince(started)))s")
+            if let cue { print("    [\(cue.signal)] \(cue.cue)\n    say: \(cue.say ?? "-")\n    why: \(cue.reason ?? "-")") }
+        } catch { fails += 1; print("FAIL — \(name): \(error)") }
+    }
+    check: do {
+        let parsed = MeetingCoach.parse("```json\n{\"show\":true,\"cue\":\"Pause\",\"say\":\"Let's pause.\",\"reason\":\"asked to stop\",\"signal\":\"deescalation\"}\n```")
+        print("\(parsed?.signal == "deescalation" ? "PASS" : "FAIL") — parse tolerates a fenced reply")
+        print("\(MeetingCoach.parse("{\"show\":false}") == nil ? "PASS" : "FAIL") — quiet parses to nil")
+    }
+    exit(fails == 0 ? 0 : 1)
+
 case "paste-test":
     // Every offline Advanced Paste transform, the suggestions and the icons.
     var fails = 0
@@ -829,7 +950,13 @@ case "meeting-test":
     if let i = args.firstIndex(of: "--notes"), args.count > i + 1 { notes = args[i + 1] }
     do {
         let started = Date()
-        var m = try runBlocking { try await meetingTestRun(me: meFile, them: themFile, locale: locale) }
+        // --room <enroll-audio|none>: label in-room speakers on the "me" file.
+        var enrollment: [Float]? = nil
+        if let i = args.firstIndex(of: "--room"), args.count > i + 1 {
+            enrollment = args[i + 1] == "none" ? [] : ((try? AudioConverter(sampleRate: 16_000).resampleAudioFile(URL(fileURLWithPath: args[i + 1]))) ?? [])
+        }
+        let roomEnrollment = enrollment
+        var m = try runBlocking { try await meetingTestRun(me: meFile, them: themFile, locale: locale, roomEnrollment: roomEnrollment) }
         m.notes = notes
         if let i = args.firstIndex(of: "--agenda"), args.count > i + 1 { m.agenda = args[i + 1] }
         FileHandle.standardError.write("(\(m.segments.count) segments in \(String(format: "%.1f", Date().timeIntervalSince(started)))s)\n".data(using: .utf8)!)

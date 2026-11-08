@@ -33,8 +33,9 @@ enum MeetingLive {
     }
 
     static let instructions = """
-    You assist the user LIVE during a meeting. "Me" is the user; "Them" is everyone \
-    else on the call. From the transcript so far (and the user's notes), return \
+    You assist the user LIVE during a meeting. "Me" is the user; "Speaker 1/2/3…" are \
+    other people in the room (told apart by voice — labels can be wrong); "Them" is \
+    everyone on the call. From the transcript so far (and the user's notes), return \
     EXACTLY this Markdown and nothing else:
 
     ## Action items
@@ -48,7 +49,7 @@ enum MeetingLive {
 
     Rules: an action item is something a specific person committed to or was \
     asked to do — one item per person per task, the owner FIRST: the person's \
-    name when anyone says it (e.g. "Dana"), otherwise "Me" or "Them" — or \
+    name when anyone says it (e.g. "Dana"), otherwise "Me", "Speaker 2" or "Them" — or \
     "Unassigned" when something clearly needs doing but nobody took it. Leave the \
     due part off entirely unless a time was stated — never write "ASAP" or guess. \
     At most 8 action items, 3 questions, 5 decisions. Questions target what was \
@@ -119,7 +120,7 @@ enum MeetingLive {
 
     static let askInstructions = """
     Answer the user's question about the meeting from the transcript (and their \
-    notes). "Me" is the user; "Them" is everyone else. One to three sentences, \
+    notes). "Me" is the user; "Speaker N" are others in the room; "Them" is the call. One to three sentences, \
     plain text. If it wasn't discussed, say so briefly — never guess.
     """
 
@@ -149,7 +150,7 @@ enum MeetingLive {
         }.prefix(20).map { $0 }
     }
 
-    static func attributed(live: String?, answers: [Answer], agenda: String? = nil) -> NSAttributedString {
+    static func attributed(live: String?, answers: [Answer], agenda: String? = nil, cue: MeetingCoach.Cue? = nil) -> NSAttributedString {
         var live = live
         let hasAgendaSection = live?.range(of: #"(?m)^#+\s*Agenda"#, options: .regularExpression) != nil
         let items = agendaItems(agenda)
@@ -191,6 +192,31 @@ enum MeetingLive {
                                   range: NSRange(location: start, length: (mark as NSString).length))
                 if mark == "○" { out.addAttribute(.foregroundColor, value: NSColor.textColor,
                                                    range: NSRange(location: start + 2, length: (text as NSString).length)) }
+            }
+        }
+        // The coach's latest cue sits on top: one move, one sentence, why.
+        if let cue {
+            let para = NSMutableParagraphStyle()
+            para.paragraphSpacing = 4
+            var h = head
+            h[.foregroundColor] = NSColor.systemOrange
+            h[.paragraphStyle] = para
+            let age = Int(Date().timeIntervalSince(cue.at))
+            let when = age < 60 ? "just now" : "\(age / 60) min ago"
+            out.append(NSAttributedString(string: "COACH · \(when)\n", attributes: h))
+            var c = bold
+            c[.paragraphStyle] = para
+            out.append(NSAttributedString(string: cue.cue + "\n", attributes: c))
+            if let say = cue.say {
+                var s = body
+                s[.font] = NSFontManager.shared.convert(NSFont.systemFont(ofSize: 13.5), toHaveTrait: .italicFontMask)
+                s[.paragraphStyle] = para
+                out.append(NSAttributedString(string: "“\(say)”\n", attributes: s))
+            }
+            if let reason = cue.reason {
+                var r = dim
+                r[.font] = NSFont.systemFont(ofSize: 12)
+                out.append(NSAttributedString(string: reason + "\n", attributes: r))
             }
         }
         var ownerFirst = false  // under "Action items" (or the older "Next steps")
@@ -251,6 +277,9 @@ final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     private let status = NSTextField(labelWithString: "")
     var onAsk: ((String) -> Void)?
     var onRefresh: (() -> Void)?
+    /// Coach on/off from the panel (MeetingCoach).
+    var onCoachToggle: (() -> Void)?
+    private let coachButton = NSButton()
     /// Fired when the user closes it with ✕ (hide() doesn't fire it).
     var onUserClose: (() -> Void)?
 
@@ -298,6 +327,12 @@ final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
         refresh.bezelStyle = .texturedRounded
         refresh.isBordered = false
         refresh.toolTip = "Refresh now"
+        coachButton.image = NSImage(systemSymbolName: "person.wave.2", accessibilityDescription: "Coach")
+        coachButton.bezelStyle = .texturedRounded
+        coachButton.isBordered = false
+        coachButton.target = self
+        coachButton.action = #selector(coachClicked)
+        setCoach(MeetingCoach.enabled)
         status.font = .systemFont(ofSize: 11)
         status.textColor = .secondaryLabelColor
         status.lineBreakMode = .byTruncatingTail
@@ -311,7 +346,7 @@ final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
         ground.frame = content.bounds
         ground.autoresizingMask = [.width, .height]
         content.addSubview(ground)
-        for v in [scroll, askField, refresh, status] as [NSView] {
+        for v in [scroll, askField, refresh, coachButton, status] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(v)
         }
@@ -325,7 +360,9 @@ final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
             askField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -10),
             askField.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -6),
             status.leadingAnchor.constraint(equalTo: askField.leadingAnchor, constant: 2),
-            status.trailingAnchor.constraint(equalTo: refresh.leadingAnchor, constant: -6),
+            status.trailingAnchor.constraint(equalTo: coachButton.leadingAnchor, constant: -6),
+            coachButton.centerYAnchor.constraint(equalTo: status.centerYAnchor),
+            coachButton.trailingAnchor.constraint(equalTo: refresh.leadingAnchor, constant: -6),
             status.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -8),
             refresh.centerYAnchor.constraint(equalTo: status.centerYAnchor),
             refresh.trailingAnchor.constraint(equalTo: askField.trailingAnchor),
@@ -362,6 +399,13 @@ final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     }
 
     @objc private func refreshClicked() { onRefresh?() }
+    @objc private func coachClicked() { onCoachToggle?() }
+
+    /// Orange while the coach listens; dim when it's off.
+    func setCoach(_ on: Bool) {
+        coachButton.contentTintColor = on ? .systemOrange : .tertiaryLabelColor
+        coachButton.toolTip = on ? "Coach is on — click to turn it off" : "Coach is off — click for private cues during the conversation"
+    }
 
     func windowWillClose(_ notification: Notification) {
         onUserClose?()

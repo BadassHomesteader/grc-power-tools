@@ -577,7 +577,10 @@ final class AppController {
                 // waveform (levels only flow while streaming) — a slow analyzer
                 // start looks like "hints never swap" to the user.
                 log("controller: analyzer ready in \(Int(Date().timeIntervalSince(analyzerStarted) * 1000))ms, streaming begins")
-                self.audio.beginRecording { buffer in utt.feed(buffer) }
+                // Also keep this dictation's audio as a sample of YOUR voice —
+                // meetings enroll it so room speakers know which one is "Me".
+                VoiceSample.shared.begin()
+                self.audio.beginRecording { buffer in utt.feed(buffer); VoiceSample.shared.append(buffer) }
             } catch {
                 guard self.cycle == gen else { return }
                 self.fail("Speech engine failed: \(error.localizedDescription)")
@@ -607,6 +610,12 @@ final class AppController {
         // Stop live feed only if streaming already began; in the raced case the
         // whole utterance still sits in the held ring and is flushed below.
         if audio.isStreaming { audio.endRecording() }
+        // A real dictation (long enough, loud enough) is a clean sample of the
+        // user's voice; keep it once the last buffers are through.
+        let keepVoice = heldMs >= 1500 && utterancePeak >= 0.22
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
+            if keepVoice { VoiceSample.shared.commit() } else { VoiceSample.shared.discard() }
+        }
 
         state = .processing
         onStateChange?(.processing)
@@ -630,7 +639,10 @@ final class AppController {
             // starting, so beginRecording never ran. Flush the ring now and give
             // the audio queue a beat to drain into the analyzer.
             if !self.audio.isStreaming {
-                self.audio.beginRecording { buffer in utt.feed(buffer) }
+                // Also keep this dictation's audio as a sample of YOUR voice —
+                // meetings enroll it so room speakers know which one is "Me".
+                VoiceSample.shared.begin()
+                self.audio.beginRecording { buffer in utt.feed(buffer); VoiceSample.shared.append(buffer) }
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 self.audio.endRecording()
             }
@@ -737,6 +749,7 @@ final class AppController {
         log(String(format: "controller: utterance peak level %.2f (canceled; waveform swap threshold 0.22)", utterancePeak))
         maxUtteranceTimer?.invalidate()
         audio.endRecording()
+        VoiceSample.shared.discard()
         let utt = utterance
         let st = startTask
         utterance = nil
