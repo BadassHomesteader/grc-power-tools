@@ -151,7 +151,11 @@ enum MeetingLive {
         }.prefix(20).map { $0 }
     }
 
-    static func attributed(live: String?, answers: [Answer], agenda: String? = nil, cue: MeetingCoach.Cue? = nil) -> NSAttributedString {
+    /// Coach cues shown at once, newest first; older ones drop off.
+    static let cuesShown = 5
+
+    static func attributed(live: String?, answers: [Answer], agenda: String? = nil,
+                           cues: [MeetingCoach.Cue] = [], acked: Set<UUID> = []) -> NSAttributedString {
         var live = live
         let hasAgendaSection = live?.range(of: #"(?m)^#+\s*Agenda"#, options: .regularExpression) != nil
         let items = agendaItems(agenda)
@@ -195,29 +199,61 @@ enum MeetingLive {
                                                    range: NSRange(location: start + 2, length: (text as NSString).length)) }
             }
         }
-        // The coach's latest cue sits on top: one move, one sentence, why.
-        if let cue {
-            let para = NSMutableParagraphStyle()
-            para.paragraphSpacing = 4
+        // Coach cues sit on top, newest first: one move, one sentence, why.
+        // Each has a checkbox (link "coach://<id>"); a checked cue is done —
+        // it collapses to one dim, struck-through line. Click again to undo.
+        if !cues.isEmpty {
+            let indent: CGFloat = 22
+            func style(first: CGFloat, spacing: CGFloat) -> NSParagraphStyle {
+                let p = NSMutableParagraphStyle()
+                p.firstLineHeadIndent = first
+                p.headIndent = indent
+                p.tabStops = [NSTextTab(textAlignment: .left, location: indent)]
+                p.paragraphSpacing = spacing
+                return p
+            }
             var h = head
             h[.foregroundColor] = NSColor.systemOrange
-            h[.paragraphStyle] = para
-            let age = Int(Date().timeIntervalSince(cue.at))
-            let when = age < 60 ? "just now" : "\(age / 60) min ago"
-            out.append(NSAttributedString(string: "COACH · \(when)\n", attributes: h))
-            var c = bold
-            c[.paragraphStyle] = para
-            out.append(NSAttributedString(string: cue.cue + "\n", attributes: c))
-            if let say = cue.say {
-                var s = body
-                s[.font] = NSFontManager.shared.convert(NSFont.systemFont(ofSize: 13.5), toHaveTrait: .italicFontMask)
-                s[.paragraphStyle] = para
-                out.append(NSAttributedString(string: "“\(say)”\n", attributes: s))
-            }
-            if let reason = cue.reason {
+            out.append(NSAttributedString(string: "COACH\n", attributes: h))
+            let shown = Array(cues.suffix(cuesShown).reversed())
+            for (n, cue) in shown.enumerated() {
+                let done = acked.contains(cue.id)
+                let last = n == shown.count - 1
+                let age = Int(Date().timeIntervalSince(cue.at))
+                let when = age < 60 ? "just now" : "\(age / 60) min ago"
+                var box: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
+                    .foregroundColor: done ? NSColor.systemGreen : NSColor.systemOrange,
+                    .toolTip: done ? "Done — click to uncheck" : "Click when done or acknowledged",
+                ]
+                if let url = URL(string: "coach://\(cue.id.uuidString)") { box[.link] = url }
+                if done {
+                    let lineStart = out.length
+                    out.append(NSAttributedString(string: "☑", attributes: box))
+                    var t = dim
+                    out.append(NSAttributedString(string: "\t", attributes: t))   // no strike under the gap
+                    t[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+                    out.append(NSAttributedString(string: cue.cue + "\n", attributes: t))
+                    out.addAttribute(.paragraphStyle, value: style(first: 0, spacing: last ? 10 : 4),
+                                     range: NSRange(location: lineStart, length: out.length - lineStart))
+                    continue
+                }
+                let lineStart = out.length
+                out.append(NSAttributedString(string: "☐", attributes: box))
+                out.append(NSAttributedString(string: "\t" + cue.cue + "\n", attributes: bold))
+                out.addAttribute(.paragraphStyle, value: style(first: 0, spacing: 3),
+                                 range: NSRange(location: lineStart, length: out.length - lineStart))
+                if let say = cue.say {
+                    var s = body
+                    s[.font] = NSFontManager.shared.convert(NSFont.systemFont(ofSize: 13.5), toHaveTrait: .italicFontMask)
+                    s[.paragraphStyle] = style(first: indent, spacing: 3)
+                    out.append(NSAttributedString(string: "“\(say)”\n", attributes: s))
+                }
                 var r = dim
                 r[.font] = NSFont.systemFont(ofSize: 12)
-                out.append(NSAttributedString(string: reason + "\n", attributes: r))
+                r[.paragraphStyle] = style(first: indent, spacing: last ? 10 : 8)
+                out.append(NSAttributedString(string: [cue.reason, when].compactMap { $0 }.joined(separator: " · ") + "\n",
+                                              attributes: r))
             }
         }
         var ownerFirst = false  // under "Action items" (or the older "Next steps")
@@ -271,7 +307,7 @@ enum MeetingLive {
 /// Non-activating, so clicking it doesn't pull focus from Teams/Zoom — only the
 /// Ask field takes the keyboard, and only while you're typing in it.
 @MainActor
-final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
+final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate {
     private let panel: NSPanel
     private let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 330, height: 380))
     private let askField = NSTextField()
@@ -280,6 +316,8 @@ final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     var onRefresh: (() -> Void)?
     /// Coach on/off from the panel (MeetingCoach).
     var onCoachToggle: (() -> Void)?
+    /// A coach cue's checkbox was clicked (its id).
+    var onCoachAck: ((UUID) -> Void)?
     private let coachButton = NSButton()
     /// Fired when the user closes it with ✕ (hide() doesn't fire it).
     var onUserClose: (() -> Void)?
@@ -308,6 +346,8 @@ final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
         scroll.drawsBackground = false
         textView.isEditable = false
         textView.isSelectable = true
+        textView.delegate = self
+        textView.linkTextAttributes = [.cursor: NSCursor.pointingHand]
         textView.drawsBackground = false
         textView.textContainerInset = NSSize(width: 6, height: 8)
         textView.minSize = .zero
@@ -402,9 +442,16 @@ final class MeetingLivePanel: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     @objc private func refreshClicked() { onRefresh?() }
     @objc private func coachClicked() { onCoachToggle?() }
 
-    /// Orange while the coach listens; dim when it's off.
+    /// Coach checkbox clicks (links "coach://<id>").
+    func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+        guard let url = link as? URL, url.scheme == "coach", let s = url.host, let id = UUID(uuidString: s) else { return false }
+        onCoachAck?(id)
+        return true
+    }
+
+    /// Green while the coach listens; red when it's off.
     func setCoach(_ on: Bool) {
-        coachButton.contentTintColor = on ? .systemOrange : .tertiaryLabelColor
+        coachButton.contentTintColor = on ? .systemGreen : .systemRed
         coachButton.toolTip = on ? "Coach is on — click to turn it off" : "Coach is off — click for private cues during the conversation"
     }
 

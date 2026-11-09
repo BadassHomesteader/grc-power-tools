@@ -62,6 +62,8 @@ enum MeetingCoach {
     }
 
     struct Cue: Equatable {
+        /// For the done/acknowledged checkbox (in memory, like the cues).
+        let id = UUID()
         let at: Date
         let cue: String
         let say: String?

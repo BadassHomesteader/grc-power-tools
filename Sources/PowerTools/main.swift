@@ -340,8 +340,11 @@ case "coach-preview":
         let cue = MeetingCoach.Cue(at: Date().addingTimeInterval(-20), cue: "They asked to stop. Pause this topic without adding final points.",
                                    say: "You're right. I'm worried, but I'll step back. Let's take a break.",
                                    reason: "Speaker 2 asked to stop at 0:31; you continued at 0:36.", signal: "deescalation")
+        let older = MeetingCoach.Cue(at: Date().addingTimeInterval(-300), cue: "Ask what they heard you worrying about.",
+                                     say: nil, reason: nil, signal: "unheard_concern")
         let live = "## Action items\n- Me — send the inspection address — today\n\n## Questions to ask\n- What would help you feel in charge of this?"
-        p.update(title: "Kitchen table talk", content: MeetingLive.attributed(live: live, answers: [], cue: cue), status: "Updated 7:42 PM · Coach on")
+        p.update(title: "Kitchen table talk", content: MeetingLive.attributed(live: live, answers: [], cues: [older, cue], acked: [older.id]),
+                 status: "Updated 7:42 PM · Coach on")
         RunLoop.main.run(until: Date().addingTimeInterval(0.5))
         if let rep = p.snapshot(), let data = rep.representation(using: .png, properties: [:]) {
             try? data.write(to: URL(fileURLWithPath: out)); print("wrote \(out)")

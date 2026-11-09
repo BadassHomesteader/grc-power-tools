@@ -1009,6 +1009,8 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
     private var answers: [String: [MeetingLive.Answer]] = [:]
     // Coach (MeetingCoach.swift): cues live in memory only, never in the file.
     private var coachCues: [String: [MeetingCoach.Cue]] = [:]
+    /// Cues the user checked off (done / acknowledged).
+    private var coachAcked: Set<UUID> = []
     private var coachSegCount: [String: Int] = [:]
     private var coachAt = Date.distantPast
     private var coachBusy = false
@@ -1519,7 +1521,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         suppressTextEvents = true
         textView.isEditable = false
         textView.textStorage?.setAttributedString(MeetingLive.attributed(live: m.live, answers: answers[m.id] ?? [], agenda: m.agenda,
-                                                                           cue: coachCues[m.id]?.last))
+                                                                           cues: coachCues[m.id] ?? [], acked: coachAcked))
         suppressTextEvents = false
         if recordingID == m.id {
             hint.stringValue = liveBusy.contains(m.id) ? "Reading the conversation so far…"
@@ -1552,7 +1554,7 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
         guard let p = livePanel, p.isVisible, let id = recordingID ?? selectedID,
               let m = meetings.first(where: { $0.id == id }) else { return }
         p.update(title: m.displayTitle, content: MeetingLive.attributed(live: m.live, answers: answers[id] ?? [], agenda: m.agenda,
-                                                                        cue: coachCues[id]?.last),
+                                                                        cues: coachCues[id] ?? [], acked: coachAcked),
                  status: liveStatus(id) + (MeetingCoach.enabled ? " · Coach on" : ""))
     }
 
@@ -1569,15 +1571,27 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
             }
             p.onUserClose = { UserDefaults.standard.set(false, forKey: Self.livePanelPref) }
             p.onCoachToggle = { [weak self] in self?.setCoach(!MeetingCoach.enabled) }
+            p.onCoachAck = { [weak self] in self?.toggleCoachAck($0) }
             livePanel = p
         }
         livePanel?.show()
         updatePanel()
     }
 
+    /// Check / uncheck a coach cue, in the Live tab and the panel.
+    private func toggleCoachAck(_ cue: UUID) {
+        if coachAcked.remove(cue) == nil { coachAcked.insert(cue) }
+        if let id = recordingID ?? selectedID { updateLiveViews(id) }
+    }
+
     private func buildCoachMenu() {
         coachPopup.removeAllItems()
         coachPopup.addItem(withTitle: MeetingCoach.enabled ? "Coach: On" : "Coach: Off")
+        // Green when on, red when off — readable at a glance.
+        coachPopup.itemArray.first?.attributedTitle = NSAttributedString(
+            string: MeetingCoach.enabled ? "● Coach: On" : "● Coach: Off",
+            attributes: [.foregroundColor: MeetingCoach.enabled ? NSColor.systemGreen : NSColor.systemRed,
+                         .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)])
         coachPopup.addItem(withTitle: MeetingCoach.enabled ? "Turn coach off" : "Turn coach on")
         coachPopup.addItem(withTitle: "Edit coach prompt…")
         for item in coachPopup.itemArray.dropFirst() { item.target = self; item.action = #selector(coachMenuPicked(_:)) }
@@ -2004,6 +2018,10 @@ final class MeetingNotesController: NSWindowController, NSWindowDelegate, NSTabl
 
     /// A click on a speaker's name in the transcript.
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+        if let url = link as? URL, url.scheme == "coach", let s = url.host, let cue = UUID(uuidString: s) {
+            toggleCoachAck(cue)
+            return true
+        }
         guard let url = link as? URL, url.scheme == "speaker", let label = url.host,
               let id = selectedID, let i = index(id) else { return false }
         let named = meetings[i].speakerNames?[label] != nil
