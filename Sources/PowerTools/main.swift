@@ -331,6 +331,31 @@ case "diarize-test":
         print("FAIL — \(error)"); exit(1)
     }
 
+case "voice-sample-test":
+    // The dictation → voice-sample path on a file: 1024-frame buffers through
+    // VoiceSample.append (like AudioCapture's tap), then how much was gathered.
+    // Does not touch the real voice-sample file.
+    guard args.count >= 2 else { print("usage: voice-sample-test <audio>"); exit(2) }
+    do {
+        let file = try AVAudioFile(forReading: URL(fileURLWithPath: args[1]))
+        let v = VoiceSample()
+        v.begin()
+        var frames = 0
+        while file.framePosition < file.length {
+            guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 1024) else { break }
+            try file.read(into: buf, frameCount: 1024)
+            if buf.frameLength == 0 { break }
+            frames += Int(buf.frameLength)
+            v.append(buf)
+        }
+        let input = Double(frames) / file.processingFormat.sampleRate
+        let got = Double(v.gathered) / VoiceSample.rate
+        print(String(format: "input %.1f s at %.0f Hz x%d → gathered %.1f s at 16 kHz", input, file.processingFormat.sampleRate,
+                     file.processingFormat.channelCount, got))
+        print(got >= input * 0.9 ? "PASS" : "FAIL — the dictation path loses the audio")
+        exit(got >= input * 0.9 ? 0 : 1)
+    } catch { print("FAIL — \(error)"); exit(1) }
+
 case "coach-preview":
     // The Live panel with a coach cue on top, rendered to a PNG.
     let out = args.count >= 2 ? args[1] : "coach-preview.png"

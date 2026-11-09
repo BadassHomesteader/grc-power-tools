@@ -609,7 +609,10 @@ final class AppController {
 
         // Stop live feed only if streaming already began; in the raced case the
         // whole utterance still sits in the held ring and is flushed below.
-        if audio.isStreaming { audio.endRecording() }
+        // Captured BEFORE endRecording: afterwards isStreaming is always false,
+        // so the race-window block below runs for every dictation.
+        let streamedLive = audio.isStreaming
+        if streamedLive { audio.endRecording() }
         // A real dictation (long enough, loud enough) is a clean sample of the
         // user's voice; keep it once the last buffers are through.
         let keepVoice = heldMs >= 1500 && utterancePeak >= 0.22
@@ -641,8 +644,15 @@ final class AppController {
             if !self.audio.isStreaming {
                 // Also keep this dictation's audio as a sample of YOUR voice —
                 // meetings enroll it so room speakers know which one is "Me".
-                VoiceSample.shared.begin()
-                self.audio.beginRecording { buffer in utt.feed(buffer); VoiceSample.shared.append(buffer) }
+                // Only in the real race (streaming never began): after a live
+                // dictation, begin() here wiped the audio just gathered (no
+                // voice sample was ever saved, v1.107.0–1.108.1), and the ring
+                // flushed here is post-release audio — maybe other voices.
+                if !streamedLive { VoiceSample.shared.begin() }
+                self.audio.beginRecording { buffer in
+                    utt.feed(buffer)
+                    if !streamedLive { VoiceSample.shared.append(buffer) }
+                }
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 self.audio.endRecording()
             }

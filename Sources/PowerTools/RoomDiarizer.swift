@@ -259,12 +259,19 @@ final class VoiceSample: @unchecked Sendable {
     /// Keep this dictation: append it, trim to the newest 30 s, save.
     func commit() {
         let take = lock.withLock { () -> [Float] in defer { current = [] }; return current }
-        guard take.count >= Int(Self.rate * 1.5) else { return }
+        guard take.count >= Int(Self.rate * 1.5) else {
+            log(String(format: "voice: dictation not kept as voice sample — only %.1f s of audio gathered", Double(take.count) / Self.rate))
+            return
+        }
         var all = (Self.load() ?? []) + take
         let keep = Int(Self.rate * Self.keepSeconds)
         if all.count > keep { all.removeFirst(all.count - keep) }
         Self.save(all)
+        log(String(format: "voice: kept %.1f s of this dictation — voice sample now %.1f s", Double(take.count) / Self.rate, Self.seconds))
     }
+
+    /// Samples gathered since begin() — for `voice-sample-test`.
+    var gathered: Int { lock.withLock { current.count } }
 
     func discard() { lock.withLock { current = [] } }
 
@@ -275,7 +282,7 @@ final class VoiceSample: @unchecked Sendable {
 
     static func save(_ samples: [Float]) {
         let data = samples.withUnsafeBufferPointer { Data(buffer: $0) }
-        try? data.write(to: url, options: .atomic)
+        do { try data.write(to: url, options: .atomic) } catch { log("voice: saving the voice sample failed: \(error)") }
     }
 
     static var seconds: Double { Double(load()?.count ?? 0) / rate }
